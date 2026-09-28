@@ -28,3 +28,30 @@ pub fn get_init_error() -> Option<String> {
 pub fn get_app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
+
+pub struct WindowMaterial(pub &'static str);
+
+#[tauri::command]
+pub fn get_window_material(material: tauri::State<'_, WindowMaterial>) -> &'static str {
+    material.0
+}
+
+/// Called on the main thread before showing the window. The frontend tints the
+/// translucent chrome separately and keeps the reading surface opaque.
+pub fn window_material(_window: &tauri::WebviewWindow) -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        use window_vibrancy::{
+            apply_liquid_glass, apply_vibrancy, LiquidGlassOptions, NSVisualEffectMaterial,
+        };
+        let options = LiquidGlassOptions::default().opaque(false);
+        match apply_liquid_glass(_window, options) {
+            Ok(()) => return "liquid-glass",
+            Err(error) => log::info!("Liquid Glass unavailable, using sidebar material: {error}"),
+        }
+        if apply_vibrancy(_window, NSVisualEffectMaterial::Sidebar, None, None).is_ok() {
+            return "vibrancy";
+        }
+    }
+    "solid"
+}

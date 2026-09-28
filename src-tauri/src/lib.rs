@@ -50,6 +50,10 @@ pub fn run() {
             commands::answer_ssh_prompt,
             // 窗口 / 元信息
             commands::set_window_theme,
+            commands::get_window_material,
+            commands::init_native_page_tools,
+            commands::update_native_page_tools,
+            commands::destroy_native_page_tools,
             commands::get_init_error,
             commands::get_app_version,
             // agent
@@ -130,6 +134,9 @@ pub fn run() {
             // 窗口在 tauri.conf.json 里是 visible: false，等前端挂载好再显示，
             // 避免深色模式下先闪一帧白底。
             if let Some(window) = app.get_webview_window("main") {
+                let material = commands::window_material(&window);
+                log::info!("Window material: {material}");
+                app.manage(commands::WindowMaterial(material));
                 let _ = window.show();
             }
             Ok(())

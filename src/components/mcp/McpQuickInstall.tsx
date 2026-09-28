@@ -67,7 +67,17 @@ export function McpQuickInstall({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState("");
-  useUnsavedProject(false, busy);
+  // Parsing resets generated IDs; only editable fields determine whether a
+  // draft would be lost when navigating through the persistent sidebar.
+  const [original] = useState(() =>
+    JSON.stringify({ entry: { ...entry, id: "" }, raw }),
+  );
+  useUnsavedProject(
+    !!text.trim() ||
+      (entry !== null &&
+        JSON.stringify({ entry: { ...entry, id: "" }, raw }) !== original),
+    busy,
+  );
   function choose(item: ParsedMcp) {
     const definition = item.definition;
     setRaw(JSON.stringify(definition, null, 2));

@@ -761,7 +761,7 @@ export function TargetProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function TargetPicker() {
+export function TargetPicker({ compact = false }: { compact?: boolean }) {
   const ctx = useContext(Context);
   const active = useTarget();
   const pending = useTargetBusy();
@@ -771,16 +771,19 @@ export function TargetPicker() {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
-          variant="outline"
-          className={`max-w-48 gap-2 ${!ctx.connecting && active.id !== "local" ? (active.connected ? "text-emerald-600 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-400" : "text-destructive hover:text-destructive") : ""}`}
+          variant={compact ? "ghost" : "outline"}
+          aria-label={compact ? active.name : undefined}
+          className={`${compact ? "h-9 w-9 shrink-0 rounded-xl p-0 text-muted-foreground" : "max-w-48 gap-2"} ${!ctx.connecting && active.id !== "local" ? (active.connected ? "text-emerald-600 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-400" : "text-destructive hover:text-destructive") : ""}`}
           title={
-            ctx.connecting
-              ? ctx.stage
-              : active.id === "local"
-                ? "本机"
-                : active.connected
-                  ? "已连接"
-                  : "已断开，点击重新连接"
+            compact
+              ? `管理目标：${active.name}`
+              : ctx.connecting
+                ? ctx.stage
+                : active.id === "local"
+                  ? "本机"
+                  : active.connected
+                    ? "已连接"
+                    : "已断开，点击重新连接"
           }
           disabled={!!ctx.connecting || ctx.changingConnections || pending > 0}
         >
@@ -791,13 +794,17 @@ export function TargetPicker() {
           ) : (
             <Server className="h-5 w-5" />
           )}
-          <span className="truncate">
+          <span className={compact ? "sr-only" : "truncate"}>
             {ctx.connecting ? "连接中…" : active.name}
           </span>
-          <ChevronDown className="h-4 w-4" />
+          {!compact && <ChevronDown className="h-4 w-4" />}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-72">
+      <DropdownMenuContent
+        side={compact ? "right" : "bottom"}
+        align={compact ? "end" : "start"}
+        className="w-72"
+      >
         <DropdownMenuItem onSelect={() => guard(() => void ctx.choose())}>
           <Monitor className="mr-2 h-4 w-4" />
           本机{active.id === "local" && <Check className="ml-auto h-4 w-4" />}

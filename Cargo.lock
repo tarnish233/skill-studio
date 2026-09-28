@@ -2706,6 +2706,7 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
 ]
 
 [[package]]
@@ -4231,7 +4232,7 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "skill-studio"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -4247,6 +4248,7 @@ dependencies = [
  "skill-studio-core",
  "skill-studio-mcp",
  "skill-studio-service",
+ "swift-rs",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -4258,11 +4260,12 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "uuid",
+ "window-vibrancy 0.8.0",
 ]
 
 [[package]]
 name = "skill-studio-core"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4286,7 +4289,7 @@ dependencies = [
 
 [[package]]
 name = "skill-studio-mcp"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4309,7 +4312,7 @@ dependencies = [
 
 [[package]]
 name = "skill-studio-remote"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "fs2",
  "serde",
@@ -4321,7 +4324,7 @@ dependencies = [
 
 [[package]]
 name = "skill-studio-service"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "log",
  "serde",
@@ -4640,7 +4643,7 @@ dependencies = [
  "url",
  "webkit2gtk",
  "webview2-com",
- "window-vibrancy",
+ "window-vibrancy 0.6.0",
  "windows 0.61.3",
 ]
 
@@ -5787,6 +5790,22 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "raw-window-handle",
  "windows-sys 0.59.0",
+ "windows-version",
+]
+
+[[package]]
+name = "window-vibrancy"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe6461139557c2245c3b9b34de2092e7af39460bf97ef4723bc5feb0cf66f831"
+dependencies = [
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
+ "raw-window-handle",
+ "windows-sys 0.60.2",
  "windows-version",
 ]
 

@@ -101,10 +101,12 @@
 }
 
 /* ── Tauri 窗口拖拽区 ─────────────────────────────────── */
-[data-tauri-drag-region] {
+[data-tauri-drag-region]:not([data-tauri-drag-region="false"]) {
   -webkit-app-region: drag;
+  user-select: none;
 }
 
+[data-tauri-drag-region="false"],
 [data-tauri-no-drag],
 [data-tauri-drag-region] .no-drag {
   -webkit-app-region: no-drag;
@@ -175,4 +177,44 @@ body {
   .border-border-dragging {
     border-color: hsl(var(--primary) / 0.6);
   }
+}
+
+/* The native material is exposed only around the opaque reading surface. */
+.app-shell {
+  --app-chrome-size: 56px;
+  --app-toolbar-height: 48px;
+  background: hsl(240 5% 96%);
+}
+.dark .app-shell {
+  background: hsl(240 5% 14%);
+}
+.app-content {
+  border-top: 1px solid hsl(var(--border) / 0.6);
+  border-left: 1px solid hsl(var(--border) / 0.6);
+  border-top-left-radius: 16px;
+}
+html[data-window-material] body {
+  background: transparent;
+}
+/* Keep a 60% reading tint over the native glass; never fade controls or text. */
+html[data-window-material] .app-shell {
+  background: hsl(240 5% 96% / 0.6);
+}
+html.dark[data-window-material] .app-shell {
+  background: hsl(240 5% 14% / 0.6);
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  html[data-window-material] .app-shell {
+    background: hsl(240 5% 96%);
+  }
+  html.dark[data-window-material] .app-shell {
+    background: hsl(240 5% 14%);
+  }
+}
+
+/* A native toolbar can open a dialog while WKWebView's animation clock is
+   suspended. Keep modal controls visible and let Radix unmount them immediately. */
+html[data-window-material] [data-slot="dialog-overlay"],
+html[data-window-material] [data-slot="dialog-content"] {
+  animation: none;
 }

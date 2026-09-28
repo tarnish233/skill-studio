@@ -122,7 +122,7 @@ describe("窗口壳与侧栏导航", () => {
 });
 
 describe("设置视图", () => {
-  it("进入设置后侧栏收起，靠返回键退出，并回到进入前停留的视图", async () => {
+  it("进入设置后侧栏保持可见，返回键回到进入前停留的视图", async () => {
     withAgents();
     const user = userEvent.setup();
     renderWithProviders(<App />);
@@ -137,7 +137,7 @@ describe("设置视图", () => {
 
     await user.click(screen.getByRole("button", { name: "设置" }));
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("设置");
-    expect(screen.queryByRole("navigation", { name: "主导航" })).toBeNull();
+    expect(screen.getByRole("navigation", { name: "主导航" })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "返回" }));
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Codex");
@@ -221,7 +221,11 @@ it("header search and create actions follow the current page without leaking sea
     screen.getByRole("heading", { name: "安装 skill" }),
   ).toBeInTheDocument();
   fireEvent.click(header.getByRole("button", { name: "返回" }));
-  fireEvent.click(header.getByRole("button", { name: /Codex/ }));
+  fireEvent.click(
+    within(screen.getByRole("navigation")).getByRole("button", {
+      name: /Codex/,
+    }),
+  );
   expect(header.getByRole("textbox")).toHaveValue("");
   await screen.findByText("Dev");
   fireEvent.change(header.getByRole("textbox"), { target: { value: "Write" } });
@@ -229,7 +233,11 @@ it("header search and create actions follow the current page without leaking sea
   fireEvent.click(header.getByRole("button", { name: "新建分组" }));
   expect(screen.getByLabelText("分组名称")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "取消" }));
-  fireEvent.click(header.getByRole("button", { name: "项目" }));
+  fireEvent.click(
+    within(screen.getByRole("navigation")).getByRole("button", {
+      name: "项目",
+    }),
+  );
   await screen.findByText("Site");
   fireEvent.change(header.getByRole("textbox"), { target: { value: "Docs" } });
   expect(screen.queryByText("Site")).toBeNull();
@@ -270,7 +278,7 @@ it.each([false, true])(
   },
 );
 
-it("guards project drafts when leaving through the top navigation and search", async () => {
+it("guards project drafts when leaving through the sidebar and search", async () => {
   withAgents();
   localStorage.setItem("skill-studio-view", "projects");
   handlers.set("list_projects", () => [makeProject()]);
@@ -279,7 +287,12 @@ it("guards project drafts when leaving through the top navigation and search", a
   fireEvent.click(await screen.findByText("webapp"));
   fireEvent.click(await screen.findByRole("checkbox", { name: "Alpha" }));
   const header = within(screen.getByRole("banner"));
-  fireEvent.click(header.getByRole("button", { name: "设置" }));
+  fireEvent.click(
+    within(screen.getByRole("complementary", { name: "侧边栏" })).getByRole(
+      "button",
+      { name: "设置" },
+    ),
+  );
   expect(await screen.findByRole("dialog")).toHaveTextContent("放弃未保存");
   fireEvent.click(screen.getByRole("button", { name: "继续编辑" }));
   fireEvent.change(header.getByRole("textbox"), { target: { value: "other" } });

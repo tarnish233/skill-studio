@@ -28,7 +28,7 @@ interface NavSwitcherProps<T extends string> {
   onSelect: (id: T) => void;
 }
 
-/** Compact, grouped navigation in the window toolbar. */
+/** Compact, grouped navigation in the persistent sidebar. */
 export function NavSwitcher<T extends string>({
   sections,
   active,
@@ -39,15 +39,15 @@ export function NavSwitcher<T extends string>({
   const reduceMotion = useReducedMotion();
   return (
     <LayoutGroup id={layoutId}>
-      <div className="flex w-max items-center gap-2">
+      <div className="flex w-full flex-col items-center gap-2">
         {sections
           .filter((section) => section.items.length > 0)
           .map((section, i) => (
             <div
               key={section.label ?? i}
               role="group"
-              aria-label={section.label ?? "Skill 库"}
-              className="flex items-center gap-1 rounded-xl bg-muted p-1"
+              aria-label={section.label ?? "Hub"}
+              className="flex w-full flex-col items-center gap-1 border-t border-border/70 pt-2 first:border-t-0 first:pt-0"
             >
               {section.items.map(
                 ({ id, label, icon, badge, disabledReason }) => {
@@ -58,6 +58,7 @@ export function NavSwitcher<T extends string>({
                       <TooltipTrigger asChild>
                         <button
                           type="button"
+                          data-tauri-no-drag
                           onClick={() => {
                             if (!disabledReason) onSelect(id);
                           }}
@@ -66,14 +67,14 @@ export function NavSwitcher<T extends string>({
                           aria-current={active === id ? "page" : undefined}
                           aria-pressed={selected === id ? true : undefined}
                           className={cn(
-                            "relative isolate inline-flex h-9 w-10 shrink-0 items-center justify-center rounded-xl-inner transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            "relative isolate inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                             disabledReason
                               ? "cursor-default text-muted-foreground opacity-40"
                               : selected === id
                                 ? "text-foreground"
                                 : isActive
-                                  ? "bg-background text-foreground shadow-sm"
-                                  : "text-muted-foreground hover:bg-background/50 hover:text-foreground",
+                                  ? "bg-foreground/[0.07] text-foreground"
+                                  : "text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground",
                           )}
                         >
                           {selected === id && (
@@ -85,7 +86,7 @@ export function NavSwitcher<T extends string>({
                                 duration: reduceMotion ? 0 : 0.22,
                                 ease: [0.22, 1, 0.36, 1],
                               }}
-                              className="pointer-events-none absolute inset-0 -z-10 rounded-xl-inner bg-background shadow-sm"
+                              className="pointer-events-none absolute inset-0 -z-10 rounded-xl bg-foreground/[0.07]"
                             />
                           )}
                           <span
@@ -103,7 +104,7 @@ export function NavSwitcher<T extends string>({
                           )}
                         </button>
                       </TooltipTrigger>
-                      <TooltipContent side="bottom">
+                      <TooltipContent side="right">
                         {disabledReason ?? description}
                       </TooltipContent>
                     </Tooltip>

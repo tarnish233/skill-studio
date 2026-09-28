@@ -1,4 +1,10 @@
-import { createContext, useContext } from "react";
+import {
+  createContext,
+  useContext,
+  useId,
+  useLayoutEffect,
+  useRef,
+} from "react";
 import { createPortal } from "react-dom";
 import { Plus, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,11 +14,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import type { NativePageToolsBridge } from "@/hooks/useNativePageTools";
 import { cn } from "@/lib/utils";
 
 export const PageToolsContext = createContext<{
   search: HTMLElement | null;
   add: HTMLElement | null;
+  native?: NativePageToolsBridge;
 } | null>(null);
 
 export function PageTools({
@@ -31,15 +39,43 @@ export function PageTools({
   createDisabledReason?: string;
 }) {
   const hosts = useContext(PageToolsContext);
+  const id = useId();
+  const owner = `${hosts?.native?.scope ?? ""}:${id}`;
+  const callbacks = useRef({ onQueryChange, onCreate });
+  callbacks.current = { onQueryChange, onCreate };
+  const register = hosts?.native?.register;
+  const hasCreate = !!onCreate;
+  useLayoutEffect(
+    () =>
+      register?.({
+        owner,
+        query,
+        placeholder,
+        createLabel,
+        createDisabledReason,
+        onQueryChange: (value) => callbacks.current.onQueryChange(value),
+        onCreate: hasCreate ? () => callbacks.current.onCreate?.() : undefined,
+      }),
+    [
+      register,
+      owner,
+      query,
+      placeholder,
+      createLabel,
+      createDisabledReason,
+      hasCreate,
+    ],
+  );
+  if (hosts?.native?.ready) return null;
   const search = (
-    <div className={`relative min-w-0 ${hosts ? "w-full" : "w-52 max-w-full"}`}>
-      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+    <div className={`relative min-w-0 ${hosts ? "w-full" : "w-48 max-w-full"}`}>
+      <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
       <Input
         aria-label={placeholder}
         placeholder={placeholder}
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
-        className="h-9 pl-8 pr-8"
+        className="h-8 pl-8 pr-8 text-[13px]"
       />
       {query && (
         <button
@@ -64,13 +100,13 @@ export function PageTools({
         if (!createDisabledReason) onCreate?.();
       }}
       className={cn(
-        "h-9 w-9 shrink-0 rounded-full",
+        "h-8 w-8 shrink-0 rounded-full",
         createDisabledReason
           ? "cursor-default bg-muted text-muted-foreground hover:bg-muted hover:text-muted-foreground"
           : "bg-blue-500 text-white shadow-md shadow-blue-500/20 hover:bg-blue-600",
       )}
     >
-      <Plus className="h-5 w-5" />
+      <Plus className="h-4 w-4" />
     </Button>
   );
   const add = createDisabledReason ? (

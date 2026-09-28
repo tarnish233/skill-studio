@@ -15,12 +15,15 @@ doctest    = false
 [build-dependencies]
 tauri-build = { version = "2.4.0", features = [] }
 
+[target.'cfg(target_os = "macos")'.build-dependencies]
+swift-rs = { version = "1.0.8", features = ["build"] }
+
 [dependencies]
 skill-studio-mcp = { path = "../crates/mcp" }
 skill-studio-service = { path = "../crates/service" }
 skill-studio-core = { path = "../crates/core" }
 
-tauri      = { version = "2.8.2", features = ["protocol-asset", "image-png"] }
+tauri      = { version = "2.8.2", features = ["protocol-asset", "image-png", "macos-private-api"] }
 serde      = { workspace = true }
 serde_json = { workspace = true }
 thiserror  = { workspace = true }
@@ -41,6 +44,7 @@ tauri-plugin-process      = "2"
 tauri-plugin-window-state = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+window-vibrancy = "0.8"
 objc2         = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSColor"] }
 

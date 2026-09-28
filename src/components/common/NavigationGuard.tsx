@@ -88,7 +88,7 @@ function GuardProvider({ children }: { children: React.ReactNode }) {
           if (!open) setPending(null);
         }}
         title="放弃未保存的修改？"
-        description="修改尚未写入项目。离开后将丢弃这些修改。"
+        description="修改尚未保存。离开后将丢弃这些修改。"
         confirmText="放弃修改并离开"
         cancelText="继续编辑"
         onConfirm={() => {

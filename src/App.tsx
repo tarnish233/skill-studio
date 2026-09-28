@@ -14,11 +14,13 @@ import {
   useTargetConnecting,
 } from "@/components/targets/TargetProvider";
 import { SkillStudioIcon } from "@/components/common/SkillStudioIcon";
+import { SidebarAction } from "@/components/common/SidebarAction";
 import {
   NavigationGuard,
   useNavigationGuard,
 } from "@/components/common/NavigationGuard";
 import { InstallSkillsPage } from "@/pages/InstallSkillsPage";
+import { useNativePageTools } from "@/hooks/useNativePageTools";
 import { PageToolsContext } from "@/components/common/PageTools";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -93,7 +95,7 @@ function AppContent() {
   useEffect(() => {
     localStorage.setItem("skill-studio-resource", resource);
   }, [resource]);
-  const [hubSlide, setHubSlide] = useState(0);
+  const [pageSlide, setPageSlide] = useState(0);
   const [searchHost, setSearchHost] = useState<HTMLDivElement | null>(null);
   const [addHost, setAddHost] = useState<HTMLDivElement | null>(null);
   const [mcpEditor, setMcpEditor] = useState<McpEditorState | null>(null);
@@ -102,6 +104,11 @@ function AppContent() {
     mcpEnabled && view === "mcp" && target.id === "local" ? mcpEditor : null;
   const isSettings = view === "settings";
   const isSubpage = isSettings || view === "install" || !!activeMcpEditor;
+  const nativeTools = useNativePageTools(
+    { search: searchHost, add: addHost },
+    !isSubpage && !connecting && !initError,
+    `${target.id}:${activeResource}:${view}`,
+  );
 
   // 设置页的返回目标 = 进入设置之前停留的那个视图
   const backTarget = useRef<ViewId>("library");
@@ -253,200 +260,181 @@ function AppContent() {
     }
   };
 
+  const navigate = (next: ViewId) => {
+    if (next === view && !activeMcpEditor) return;
+    requestNavigation(() => {
+      const order: ViewId[] = [
+        ...sections.flatMap((section) => section.items.map((item) => item.id)),
+        "settings",
+      ];
+      const from = order.indexOf(view);
+      const to = order.indexOf(next);
+      setPageSlide(from >= 0 && to >= 0 ? Math.sign(to - from) * 14 : 0);
+      if (next === "library" || (next === "mcp" && mcpEnabled)) {
+        setResource(next === "mcp" ? "mcp" : "skills");
+      }
+      setMcpEditor(null);
+      setView(next);
+    });
+  };
+
   return (
-    <PageToolsContext.Provider value={{ search: searchHost, add: addHost }}>
+    <PageToolsContext.Provider
+      value={{ search: searchHost, add: addHost, native: nativeTools }}
+    >
       <TooltipProvider delayDuration={300}>
         <div
           {...(connecting ? { inert: "" } : {})}
           aria-busy={connecting}
-          className="flex h-screen flex-col overflow-hidden bg-background text-foreground selection:bg-primary/30"
-          style={{ overflowX: "hidden", paddingTop: DRAG_BAR_HEIGHT }}
+          className="app-shell flex h-screen flex-col overflow-hidden text-foreground selection:bg-primary/30"
         >
-          {/* ① 顶部拖拽条：macOS 让位给红绿灯 */}
           <div
             data-tauri-drag-region
-            className="fixed left-0 right-0 top-0 z-[70] flex items-center justify-end px-2"
+            className="fixed left-0 top-0 z-[70] w-[var(--app-chrome-size)]"
             style={{ height: DRAG_BAR_HEIGHT }}
           />
-
-          <header
-            data-tauri-drag-region
-            className={`z-50 shrink-0 gap-y-3 bg-background px-6 pb-4 pt-5 ${
-              isSubpage
-                ? "flex items-start justify-between gap-x-6"
-                : "grid grid-cols-[auto_minmax(8rem,1fr)_auto_auto] items-center gap-x-3"
-            }`}
-          >
-            <div
-              className={`flex min-h-11 min-w-0 items-center gap-3 ${isSettings ? "flex-1" : "col-start-1 row-start-1"}`}
-              data-tauri-no-drag
-            >
-              {isSubpage && (
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-9 w-9 rounded-xl text-muted-foreground"
-                  title="返回"
-                  aria-label="返回"
-                  onClick={() =>
-                    requestNavigation(() =>
-                      activeMcpEditor
-                        ? setMcpEditor(null)
-                        : setView(backTarget.current),
-                    )
-                  }
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                </Button>
-              )}
-              {!isSubpage && <SkillStudioIcon className="h-8 w-8" />}
-              <span
-                aria-hidden="true"
-                className={`whitespace-nowrap text-xl font-semibold leading-7 tracking-tight ${isSubpage ? "text-foreground" : "text-blue-500"}`}
-              >
-                {isSubpage
-                  ? activeMcpEditor
-                    ? mcpEditorTitle(activeMcpEditor)
-                    : titles[view]
-                  : import.meta.env.DEV
-                    ? "Skill Studio Debug"
-                    : "Skill Studio"}
-              </span>
-              <h1 className="sr-only">
-                {activeMcpEditor
-                  ? mcpEditorTitle(activeMcpEditor)
-                  : (titles[view] ?? "Skill Studio")}
-              </h1>
-              {!isSubpage && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground"
-                  title="设置"
-                  aria-label="设置"
-                  onClick={() => requestNavigation(() => setView("settings"))}
-                >
-                  <SettingsIcon className="h-4 w-4" />
-                </Button>
-              )}
-              {!isSubpage && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground"
-                  title="重新扫描"
-                  aria-label="重新扫描"
-                  onClick={refresh}
-                >
-                  <RefreshCw className="h-4 w-4" />
-                </Button>
-              )}
-              <TargetPicker />
-              {isSettings && (
-                <motion.p
-                  layout="position"
-                  transition={{
-                    duration: reduceMotion ? 0 : 0.2,
-                    ease: "easeOut",
-                  }}
-                  className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground"
-                >
-                  当前管理目标：{target.name} ·
-                  目录、管理策略与备份属于此目标；外观与服务器连接属于桌面应用。
-                </motion.p>
-              )}
-            </div>
-            {!isSubpage && (
-              <>
-                <div
-                  ref={setSearchHost}
-                  className="col-start-2 row-start-1 w-full min-w-0 max-w-52 justify-self-end"
-                  data-tauri-no-drag
-                />
-                <nav
-                  aria-label="主导航"
-                  className="col-start-3 row-start-1 min-w-0"
-                  data-tauri-no-drag
-                >
-                  <NavSwitcher
-                    sections={sections}
-                    active={view}
-                    selected={activeResource === "mcp" ? "mcp" : "library"}
-                    onSelect={(next) => {
-                      if (next !== view)
-                        requestNavigation(() => {
-                          const nextResource =
-                            next === "mcp" && mcpEnabled
-                              ? "mcp"
-                              : next === "library"
-                                ? "skills"
-                                : resource;
-                          setHubSlide(
-                            nextResource !== resource
-                              ? nextResource === "mcp"
-                                ? 14
-                                : -14
-                              : 0,
-                          );
-                          if (
-                            next === "library" ||
-                            (next === "mcp" && mcpEnabled)
-                          )
-                            setResource(next === "mcp" ? "mcp" : "skills");
-                          setView(next);
-                        });
-                    }}
-                  />
-                </nav>
-                <div
-                  ref={setAddHost}
-                  className="col-start-4 row-start-1 w-9 justify-self-end"
-                  data-tauri-no-drag
-                />
-              </>
-            )}
-          </header>
-
           <div className="flex min-h-0 flex-1">
-            <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              {initError && (
-                <div className="mx-6 mt-4 flex items-start gap-2 rounded-xl border border-amber-500/50 bg-amber-500/10 px-4 py-3">
-                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                  <div className="min-w-0 flex-1 text-xs leading-relaxed">
-                    <p className="font-medium">配置未能正常加载</p>
-                    <p className="pt-0.5 text-muted-foreground">{initError}</p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setInitError(null)}
-                  >
-                    知道了
-                  </Button>
-                </div>
-              )}
-              <fieldset
-                disabled={!target.connected && !isSettings}
-                className={`flex min-h-0 min-w-0 flex-1 flex-col ${!target.connected && !isSettings ? "pointer-events-none opacity-60" : ""}`}
-              >
-                <motion.div
-                  key={
-                    view.startsWith(AGENT_PREFIX)
-                      ? `agent:${activeResource}`
-                      : view
+            <aside
+              data-tauri-drag-region="deep"
+              aria-label="侧边栏"
+              className="app-sidebar flex w-[var(--app-chrome-size)] shrink-0 flex-col items-center pb-3"
+              style={{ paddingTop: DRAG_BAR_HEIGHT + 8 }}
+            >
+              <div className="mb-3 flex h-11 w-full shrink-0 items-center justify-center">
+                <SidebarAction
+                  label="Skill Studio · 返回 Hub"
+                  onClick={() =>
+                    navigate(activeResource === "mcp" ? "mcp" : "library")
                   }
-                  className="flex min-h-0 flex-1 flex-col overflow-hidden px-6"
-                  initial={reduceMotion ? false : { opacity: 0, x: hubSlide }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{
-                    duration: reduceMotion ? 0 : 0.22,
-                    ease: [0.22, 1, 0.36, 1],
-                  }}
                 >
-                  {content()}
-                </motion.div>
-              </fieldset>
-            </main>
+                  <SkillStudioIcon className="h-7 w-7" />
+                </SidebarAction>
+              </div>
+              <nav
+                aria-label="主导航"
+                className="min-h-0 w-full flex-1 overflow-y-auto px-2 pb-3"
+              >
+                <NavSwitcher
+                  sections={sections}
+                  active={view}
+                  selected={activeResource === "mcp" ? "mcp" : "library"}
+                  onSelect={navigate}
+                />
+              </nav>
+              <div className="flex w-full shrink-0 flex-col items-center gap-1 pt-3">
+                <SidebarAction label="重新扫描" onClick={refresh}>
+                  <RefreshCw className="h-5 w-5" />
+                </SidebarAction>
+                <TargetPicker compact />
+                <SidebarAction
+                  label="设置"
+                  active={isSettings}
+                  onClick={() => navigate("settings")}
+                >
+                  <SettingsIcon className="h-5 w-5" />
+                </SidebarAction>
+              </div>
+            </aside>
+            <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
+              <header
+                data-tauri-drag-region="deep"
+                className="flex h-[var(--app-toolbar-height)] shrink-0 items-center gap-4 px-6"
+              >
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  {isSubpage && (
+                    <Button
+                      data-tauri-no-drag
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 shrink-0 rounded-xl text-muted-foreground"
+                      title="返回"
+                      aria-label="返回"
+                      onClick={() =>
+                        activeMcpEditor
+                          ? requestNavigation(() => setMcpEditor(null))
+                          : navigate(backTarget.current)
+                      }
+                    >
+                      <ArrowLeft className="h-5 w-5" />
+                    </Button>
+                  )}
+                  <div className="flex min-w-0 items-center gap-3">
+                    <h1 className="shrink-0 text-xl font-semibold leading-5 tracking-tight">
+                      {activeMcpEditor
+                        ? mcpEditorTitle(activeMcpEditor)
+                        : (titles[view] ?? "Skill Studio")}
+                    </h1>
+                    {isSettings ? (
+                      <p
+                        className="truncate text-[11px] text-muted-foreground"
+                        title={`当前管理目标：${target.name} · 目录、管理策略与备份属于此目标；外观与服务器连接属于桌面应用。`}
+                      >
+                        当前管理目标：{target.name} ·
+                        目录、管理策略与备份属于此目标；外观与服务器连接属于桌面应用。
+                      </p>
+                    ) : (
+                      <p className="truncate text-[11px] text-muted-foreground">
+                        {target.name}
+                        {view.startsWith(AGENT_PREFIX) || view === "projects"
+                          ? ` · ${activeResource === "mcp" ? "MCP" : "Skill"} 管理`
+                          : ""}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {!isSubpage && (
+                  <div
+                    className="flex shrink-0 items-center gap-3"
+                    data-tauri-drag-region="false"
+                    data-tauri-no-drag
+                  >
+                    <div ref={setSearchHost} className="h-8 w-48 min-w-0" />
+                    <div ref={setAddHost} className="h-8 w-8 shrink-0" />
+                  </div>
+                )}
+              </header>
+              <main className="app-content flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+                {initError && (
+                  <div className="mx-6 mt-4 flex items-start gap-2 rounded-xl border border-amber-500/50 bg-amber-500/10 px-4 py-3">
+                    <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                    <div className="min-w-0 flex-1 text-xs leading-relaxed">
+                      <p className="font-medium">配置未能正常加载</p>
+                      <p className="pt-0.5 text-muted-foreground">
+                        {initError}
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setInitError(null)}
+                    >
+                      知道了
+                    </Button>
+                  </div>
+                )}
+                <fieldset
+                  disabled={!target.connected && !isSettings}
+                  className={`flex min-h-0 min-w-0 flex-1 flex-col ${!target.connected && !isSettings ? "pointer-events-none opacity-60" : ""}`}
+                >
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-6">
+                    <motion.div
+                      key={`${view}:${activeResource}`}
+                      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+                      // Transparent native windows can delay animation frames while
+                      // inactive. Keep content visible from its very first paint.
+                      initial={reduceMotion ? false : { y: pageSlide }}
+                      animate={{ y: 0 }}
+                      transition={{
+                        duration: reduceMotion ? 0 : 0.22,
+                        ease: [0.22, 1, 0.36, 1],
+                      }}
+                    >
+                      {content()}
+                    </motion.div>
+                  </div>
+                </fieldset>
+              </main>
+            </section>
           </div>
         </div>
       </TooltipProvider>

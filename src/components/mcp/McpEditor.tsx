@@ -49,7 +49,8 @@ function McpExistingEditor({ row, onClose, onSaved }: EditorProps) {
     JSON.stringify(entry.definition, null, 2),
   );
   const [busy, setBusy] = useState(false);
-  useUnsavedProject(false, busy);
+  const [original] = useState(() => JSON.stringify({ entry, raw }));
+  useUnsavedProject(JSON.stringify({ entry, raw }) !== original, busy);
   const { definition, error } = readDefinition(raw);
   const effective = {
     ...entry,

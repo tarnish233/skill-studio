@@ -16,3 +16,6 @@ pub use window::*;
 
 pub mod mcp;
 pub use mcp::*;
+
+pub mod native_page_tools;
+pub use native_page_tools::*;

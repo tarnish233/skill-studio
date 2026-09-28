@@ -30,6 +30,24 @@ function readStoredTheme(): Theme {
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(readStoredTheme);
 
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<string>("get_window_material")
+      .then((material) => {
+        if (
+          !cancelled &&
+          (material === "liquid-glass" || material === "vibrancy")
+        ) {
+          document.documentElement.dataset.windowMaterial = material;
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      delete document.documentElement.dataset.windowMaterial;
+    };
+  }, []);
+
   // 把 theme 落到 <html> 的 class 上。light 也显式加类，方便按 .light 选择器覆写。
   useEffect(() => {
     const root = document.documentElement;
