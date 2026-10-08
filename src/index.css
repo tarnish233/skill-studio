@@ -182,16 +182,18 @@ body {
 /* The native material is exposed only around the opaque reading surface. */
 .app-shell {
   --app-chrome-size: 56px;
-  --app-toolbar-height: 48px;
+  --app-toolbar-height: 36px;
   background: hsl(240 5% 96%);
 }
 .dark .app-shell {
   background: hsl(240 5% 14%);
 }
 .app-content {
-  border-top: 1px solid hsl(var(--border) / 0.6);
-  border-left: 1px solid hsl(var(--border) / 0.6);
-  border-top-left-radius: 16px;
+  /* Reveal the same native glass underlay along the remaining two edges. */
+  margin: 0 6px 6px 0;
+  border: 1px solid hsl(var(--border) / 0.6);
+  border-radius: 16px;
+  box-shadow: 0 1px 3px hsl(0 0% 0% / 0.04);
 }
 html[data-window-material] body {
   background: transparent;

@@ -181,7 +181,12 @@ function AppContent() {
           .map((a) => ({
             id: `${AGENT_PREFIX}${a.id}` as ViewId,
             label: a.displayName,
-            icon: <AgentIcon agentId={a.id} />,
+            icon: (
+              <AgentIcon
+                agentId={a.id}
+                className={a.id === "pi" ? "scale-90" : undefined}
+              />
+            ),
             badge: a.detected
               ? undefined
               : isDetecting
@@ -300,7 +305,7 @@ function AppContent() {
               className="app-sidebar flex w-[var(--app-chrome-size)] shrink-0 flex-col items-center pb-3"
               style={{ paddingTop: DRAG_BAR_HEIGHT + 8 }}
             >
-              <div className="mb-3 flex h-11 w-full shrink-0 items-center justify-center">
+              <div className="mb-2 flex h-11 w-full shrink-0 items-center justify-center">
                 <SidebarAction
                   label="Skill Studio · 返回 Hub"
                   onClick={() =>
@@ -310,6 +315,10 @@ function AppContent() {
                   <SkillStudioIcon className="h-7 w-7" />
                 </SidebarAction>
               </div>
+              <div
+                aria-hidden="true"
+                className="mb-2 w-10 shrink-0 border-t border-border/70"
+              />
               <nav
                 aria-label="主导航"
                 className="min-h-0 w-full flex-1 overflow-y-auto px-2 pb-3"
@@ -338,9 +347,9 @@ function AppContent() {
             <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
               <header
                 data-tauri-drag-region="deep"
-                className="flex h-[var(--app-toolbar-height)] shrink-0 items-center gap-4 px-6"
+                className="grid h-[var(--app-toolbar-height)] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 px-6"
               >
-                <div className="flex min-w-0 flex-1 items-center gap-3">
+                <div className="flex min-w-0 items-center">
                   {isSubpage && (
                     <Button
                       data-tauri-no-drag
@@ -358,33 +367,39 @@ function AppContent() {
                       <ArrowLeft className="h-5 w-5" />
                     </Button>
                   )}
-                  <div className="flex min-w-0 items-center gap-3">
-                    <h1 className="shrink-0 text-xl font-semibold leading-5 tracking-tight">
-                      {activeMcpEditor
-                        ? mcpEditorTitle(activeMcpEditor)
-                        : (titles[view] ?? "Skill Studio")}
-                    </h1>
-                    {isSettings ? (
-                      <p
-                        className="truncate text-[11px] text-muted-foreground"
-                        title={`当前管理目标：${target.name} · 目录、管理策略与备份属于此目标；外观与服务器连接属于桌面应用。`}
-                      >
-                        当前管理目标：{target.name} ·
-                        目录、管理策略与备份属于此目标；外观与服务器连接属于桌面应用。
-                      </p>
-                    ) : (
-                      <p className="truncate text-[11px] text-muted-foreground">
-                        {target.name}
-                        {view.startsWith(AGENT_PREFIX) || view === "projects"
-                          ? ` · ${activeResource === "mcp" ? "MCP" : "Skill"} 管理`
-                          : ""}
-                      </p>
-                    )}
-                  </div>
+                </div>
+                <div className="flex min-w-0 max-w-sm items-baseline justify-center gap-3">
+                  <h1 className="shrink-0 text-xl font-semibold leading-5 tracking-tight">
+                    {activeMcpEditor
+                      ? mcpEditorTitle(activeMcpEditor)
+                      : (titles[view] ?? "Skill Studio")}
+                  </h1>
+                  {isSettings ? (
+                    <p
+                      className="truncate text-[11px] leading-none text-muted-foreground"
+                      title={`当前管理目标：${target.name} · 目录、管理策略与备份属于此目标；外观与服务器连接属于桌面应用。`}
+                    >
+                      当前管理目标：{target.name} ·
+                      目录、管理策略与备份属于此目标；外观与服务器连接属于桌面应用。
+                    </p>
+                  ) : (
+                    <p className="truncate text-[11px] leading-none text-muted-foreground">
+                      {target.name}
+                      {view.startsWith(AGENT_PREFIX) || view === "projects"
+                        ? ` · ${activeResource === "mcp" ? "MCP" : "Skill"} 管理`
+                        : ""}
+                    </p>
+                  )}
                 </div>
                 {!isSubpage && (
                   <div
-                    className="flex shrink-0 items-center gap-3"
+                    className="flex items-center justify-self-end gap-3"
+                    // Offset the 24px header padding and half of the 32px add
+                    // host so its center has equal top and right insets.
+                    style={{
+                      marginRight:
+                        "calc(var(--app-toolbar-height) / 2 - 2.5rem)",
+                    }}
                     data-tauri-drag-region="false"
                     data-tauri-no-drag
                   >

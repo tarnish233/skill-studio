@@ -4232,7 +4232,7 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "skill-studio"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -4265,7 +4265,7 @@ dependencies = [
 
 [[package]]
 name = "skill-studio-core"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4289,7 +4289,7 @@ dependencies = [
 
 [[package]]
 name = "skill-studio-mcp"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4312,7 +4312,7 @@ dependencies = [
 
 [[package]]
 name = "skill-studio-remote"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "fs2",
  "serde",
@@ -4324,7 +4324,7 @@ dependencies = [
 
 [[package]]
 name = "skill-studio-service"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "log",
  "serde",
