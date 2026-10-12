@@ -261,8 +261,8 @@ pub fn activate(
         // Group activation enables its new bindings, not the Hub template. The
         // checks above still reject an existing manually disabled target.
         match agent_id {
-            "codex" | "grok" => installed["enabled"] = json!(true),
-            "opencode" | "pi" => installed["disabled"] = json!(false),
+            "codex" | "grok" | "pi" => installed["enabled"] = json!(true),
+            "opencode" => installed["disabled"] = json!(false),
             _ => {}
         }
         let target = Target {

@@ -1,6 +1,6 @@
 # MCP Hub
 
-MCP Hub 自动发现并管理 Claude Code、Codex、OpenCode v2、Pi（需 pi-mcp-adapter）和 Grok Build 的 MCP 配置。配置管理与后台网关独立：网关关闭时仍可扫描、编辑、保存和同步直连配置。
+MCP Hub 自动发现并管理 Claude Code、Codex、OpenCode v2、Pi（0.99.0+）和 Grok Build 的 MCP 配置。配置管理与后台网关独立：网关关闭时仍可扫描、编辑、保存和同步直连配置。
 
 ## 添加与接入
 
@@ -26,12 +26,12 @@ codex mcp add hf-mcp-server --url "https://huggingface.co/mcp?login"
 | Claude Code         | `~/.claude.json`                      | `.mcp.json`，或全局文件中的项目本地条目          |
 | Codex               | `~/.codex/config.toml`                | `.codex/config.toml`                             |
 | OpenCode v2         | `~/.config/opencode/opencode.json(c)` | `opencode.json(c)`、`.opencode/opencode.json(c)` |
-| Pi + pi-mcp-adapter | `~/.pi/agent/mcp.json`                | `.pi/mcp.json`                                   |
+| Pi 0.99.0+ | `~/.pi/agent/mcp.json`                | `.pi/mcp.json`                                   |
 | Grok Build          | `~/.grok/config.toml`                 | `.grok/config.toml`                              |
 
 沿用设置中的 Agent 目录覆盖和 Agent 环境变量。OpenCode 同时扫描 `OPENCODE_CONFIG_DIR`、`OPENCODE_CONFIG`；写入优先选择已有配置，避免新建同级竞争文件。仅支持 OpenCode v2，v1 配置需先迁移。修改 JSONC 时保留其他属性与注释。
 
-Pi 通过第三方 [pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter) 接入，需先运行 `pi install npm:pi-mcp-adapter` 并重启 Pi。Studio 只管理上述 Pi 专属文件，不会安装扩展、不改写 Pi 的包设置或其他 Agent 的共享配置；未安装扩展时，保存的 MCP 配置不会在 Pi 中生效。适配器的共享输入、导入与插件设置仍由适配器管理。
+Pi 0.99.0 起原生支持 MCP，无需安装扩展。Studio 管理上述原生配置文件，使用 `enabled` 表示启停状态，并保留 `oauth`、`exposure`、`toolExposure` 等配置字段。保存后在 Pi 中运行 `/reload`，通过 `/mcp` 查看连接或登录状态；项目配置需先在 Pi 中信任该项目。旧 pi-mcp-adapter 的 `disabled` 不再作为原生启停依据；升级后请检查原先停用的服务并使用 `enabled: false`。适配器专属设置不会自动转换。
 
 | 连接方式    | 运行与登录                                          | 网关关闭时           |
 | ----------- | --------------------------------------------------- | -------------------- |
@@ -42,7 +42,7 @@ Pi 通过第三方 [pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter
 
 ## Agent MCP 分组
 
-在 Claude Code、Codex、OpenCode v2、Pi（需 pi-mcp-adapter）和 Grok Build 页面切换到 **MCP 分组**，操作与 Skill 分组一致：新建组合、从 MCP Hub 勾选服务、保存后点击 **启用**。每个 Agent 同时启用一个 MCP 分组，Skill 分组独立保留。支持搜索、编辑和拖动排序；使用中的组需要先停用才能删除。
+在 Claude Code、Codex、OpenCode v2、Pi（0.99.0+）和 Grok Build 页面切换到 **MCP 分组**，操作与 Skill 分组一致：新建组合、从 MCP Hub 勾选服务、保存后点击 **启用**。每个 Agent 同时启用一个 MCP 分组，Skill 分组独立保留。支持搜索、编辑和拖动排序；使用中的组需要先停用才能删除。
 
 同一个 MCP 可被多个组引用。保存组不会立即写入 Agent 配置；使用中的成员配置或成员列表改变后显示 **有待应用修改**，点击 **应用修改** 更新。缺失成员会保留提示，需要移除或补齐后才能启用。
 
@@ -94,7 +94,7 @@ Gateway 模式的 Agent 配置仅包含 Studio 启动命令和服务标识，不
 
 ### 本机管理
 
-- 本机 Claude Code、Codex、OpenCode v2、Pi（需 pi-mcp-adapter）和 Grok Build；不包含插件在运行时注入的 MCP，也不遍历未登记的项目目录。
+- 本机 Claude Code、Codex、OpenCode v2、Pi（0.99.0+）和 Grok Build；不包含插件在运行时注入的 MCP，也不遍历未登记的项目目录。
 - 自定义 Claude 配置目录暂不扫描或写入其全局 MCP，界面会提示；可使用项目作用域。
 - 直连可保留扩展字段和相对工作目录。分发到其他位置后，相对路径的含义由目标 Agent 的工作目录决定。
 - SSE 可以作为 Claude 直连配置管理；Codex、OpenCode v2、Pi、Grok 的本次 Studio 接入及 Studio 网关仅支持 stdio 和 Streamable HTTP。
@@ -112,4 +112,4 @@ cargo clippy -p skill-studio-mcp -p skill-studio --all-targets -- -D warnings
 
 协议与认证采用 [官方 Rust SDK](https://github.com/modelcontextprotocol/rust-sdk)。配置格式参考 [Claude Code MCP](https://code.claude.com/docs/en/mcp) 和 [Codex MCP](https://developers.openai.com/codex/mcp)。新增流程参考 [CC Switch 的 MCP 表单](https://github.com/farion1231/cc-switch/blob/06082e189d65e6d6dbadc35dacdac1ce6c79d89a/src/components/mcp/McpFormModal.tsx)。
 
-新增 Agent 格式依据：[OpenCode v2 MCP](https://opencode.ai/v2/docs/mcp-servers)、[Pi 适配器](https://github.com/nicobailon/pi-mcp-adapter)、[Grok Build MCP](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/07-mcp-servers.md)。
+新增 Agent 格式依据：[OpenCode v2 MCP](https://opencode.ai/v2/docs/mcp-servers)、[Pi 原生 MCP](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/mcp.md)、[Grok Build MCP](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/07-mcp-servers.md)。

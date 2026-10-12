@@ -467,11 +467,11 @@ pub fn save(
             installed.push(prior.clone());
             continue;
         }
-        native::check_activation(
-            &read_text(&target.path)?.unwrap_or_default(),
-            &target.agent,
-            &target.key,
-        )?;
+        let text = match files.get(&target.path) {
+            Some(change) => change.after.clone().unwrap_or_default(),
+            None => read_text(&target.path)?.unwrap_or_default(),
+        };
+        native::check_activation(&text, &target.agent, &target.key)?;
         let value = if entry.mode == "gateway" {
             let mut adapter =
                 json!({"type":"stdio","command":executable,"args":["--mcp-client",entry.id,dir]});

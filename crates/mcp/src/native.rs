@@ -11,7 +11,7 @@ pub fn canonical(value: &Value, agent: &str) -> Value {
                 map.insert("headers".into(), headers);
             }
         }
-        if matches!(agent, "opencode" | "pi") {
+        if agent == "opencode" {
             if let Some(disabled) = map.get("disabled").and_then(Value::as_bool) {
                 map.remove("disabled");
                 map.insert("enabled".into(), json!(!disabled));
@@ -128,16 +128,11 @@ pub fn for_agent(definition: &Value, agent: &str) -> Result<Value> {
             map.remove("cwd");
         }
     } else if agent == "grok" || agent == "pi" {
-        // Grok infers HTTP from URL; Pi's adapter has no transport type field.
+        // Grok and native Pi infer the transport from command or URL.
         if map.get("type").and_then(Value::as_str) == Some("sse") {
             bail!("此 Agent 的 Studio 接入仅支持 stdio 和 Streamable HTTP");
         }
         map.remove("type");
-        if agent == "pi" {
-            if let Some(enabled) = map.remove("enabled").and_then(|v| v.as_bool()) {
-                map.insert("disabled".into(), json!(!enabled));
-            }
-        }
         if map.get("cwd").is_some_and(Value::is_null) {
             map.remove("cwd");
         }
@@ -221,12 +216,30 @@ pub fn entries<'a>(
         .transpose()
 }
 pub fn enabled(value: &Value, agent: &str) -> bool {
-    if matches!(agent, "pi" | "opencode") && value["disabled"].as_bool() == Some(true) {
+    if agent == "opencode" && value["disabled"].as_bool() == Some(true) {
         return false;
     }
     value["enabled"].as_bool().unwrap_or(true)
 }
 pub fn check_activation(text: &str, agent: &str, key: &str) -> Result<()> {
+    if agent == "pi" {
+        if key.is_empty()
+            || !key
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        {
+            bail!("Pi MCP 名称仅支持英文字母、数字、横线和下划线");
+        }
+        let doc = document(text, agent)?;
+        if let Some(entries) = entries(&doc, agent)? {
+            if entries
+                .keys()
+                .any(|name| name != key && name.replace('-', "_") == key.replace('-', "_"))
+            {
+                bail!("Pi MCP 名称「{key}」与已有配置冲突：横线和下划线视为相同字符");
+            }
+        }
+    }
     if agent == "grok" {
         let first = key.bytes().next();
         if first.is_none_or(|b| !b.is_ascii_alphabetic() && b != b'_')

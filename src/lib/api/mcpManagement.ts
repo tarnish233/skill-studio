@@ -84,10 +84,7 @@ export function canonical(
     value.headers = value.http_headers;
     delete value.http_headers;
   }
-  if (
-    (agent === "pi" || agent === "opencode") &&
-    typeof value.disabled === "boolean"
-  ) {
+  if (agent === "opencode" && typeof value.disabled === "boolean") {
     value.enabled = !value.disabled;
     delete value.disabled;
   }

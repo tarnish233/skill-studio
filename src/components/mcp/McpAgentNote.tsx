@@ -4,12 +4,10 @@ import { mcpAgentName } from "@/lib/mcpAgents";
 function NoteText({ agent }: { agent: string }) {
   return agent === "pi" ? (
     <>
-      Pi 通过 pi-mcp-adapter 扩展使用 MCP。请先在终端运行{" "}
-      <code className="select-text break-words">
-        pi install npm:pi-mcp-adapter
-      </code>
-      ，再重启 Pi。Studio 管理 Pi 专属配置，不会自动安装扩展或改动其他 Agent
-      的共享配置。
+      Pi 0.99.0 及以上原生支持 MCP，无需安装扩展。保存后在 Pi 中运行{" "}
+      <code className="select-text">/reload</code>，通过{" "}
+      <code className="select-text">/mcp</code> 查看连接状态。项目配置需先在 Pi
+      中信任该项目。
     </>
   ) : (
     <>

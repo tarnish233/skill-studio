@@ -66,7 +66,7 @@ it("opens all three Agents in both Skill and MCP navigation", async () => {
   }
 });
 
-it("restores Pi MCP view and explains its adapter dependency", async () => {
+it("restores Pi MCP view and provides native MCP usage help", async () => {
   setup();
   localStorage.setItem("skill-studio-view", "agent:pi");
   localStorage.setItem("skill-studio-resource", "mcp");

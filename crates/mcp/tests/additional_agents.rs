@@ -271,6 +271,10 @@ fn activating_groups_enables_new_direct_bindings_without_changing_hub_definition
                 groups::activate(&dir, agent, Some("group"), &path, Path::new("/studio")).unwrap();
                 let installed = read(&path, agent, "sample").unwrap();
                 assert!(native::enabled(&installed, agent), "{agent}: {installed}");
+                if agent == "pi" {
+                    assert_eq!(installed["enabled"], true);
+                    assert!(installed.get("disabled").is_none());
+                }
                 let mut expected = definition.clone();
                 expected["enabled"] = json!(true);
                 assert_eq!(native::canonical(&installed, agent), expected);
@@ -505,4 +509,74 @@ fn grok_user_disable_list_also_applies_to_project_sources() {
     );
     assert!(!scan.discovered[0].sources[0].enabled);
     assert!(!scan.discovered[0].server.as_ref().unwrap().enabled);
+}
+
+#[test]
+fn pi_native_state_and_options_survive_round_trip() {
+    for enabled in [true, false] {
+        let definition = json!({
+            "type": "http", "url": "https://example.com/mcp",
+            "enabled": enabled, "disabled": enabled,
+            "oauth": {"clientId": "pi-client"},
+            "exposure": "deferred", "toolExposure": {"search": "direct"},
+            "timeout": 90
+        });
+        let native = native::for_agent(&definition, "pi").unwrap();
+        assert_eq!(native["enabled"], enabled);
+        assert_eq!(native::enabled(&native, "pi"), enabled);
+        assert_eq!(native::canonical(&native, "pi"), definition);
+    }
+    // Adapter-only flags must not override the native client's actual state.
+    let legacy = json!({"command": "demo", "disabled": true});
+    assert!(native::enabled(&legacy, "pi"));
+    assert!(native::canonical(&legacy, "pi").get("enabled").is_none());
+    let native = native::for_agent(
+        &json!({"type": "stdio", "command": "demo", "enabled": false}),
+        "pi",
+    )
+    .unwrap();
+    assert_eq!(native["enabled"], false);
+    assert!(native.get("disabled").is_none());
+}
+
+#[test]
+fn pi_rejects_invalid_and_colliding_names_without_partial_writes() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("studio");
+    let path = temp.path().join("mcp.json");
+    let original = r#"{"mcpServers":{"a-b":{"command":"keep"}}}"#;
+    fs::write(&path, original).unwrap();
+    for name in ["", "bad.name", "with space", "中文", "a_b"] {
+        let mut binding = target(&path, "pi", None);
+        binding.key = name.into();
+        assert!(management::save(
+            &dir,
+            entry("direct"),
+            vec![binding],
+            Path::new("/studio"),
+            None
+        )
+        .is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        assert!(management::read(&dir).unwrap().entries.is_empty());
+    }
+    assert!(native::check_activation(original, "pi", "a-b").is_ok());
+    assert!(native::check_activation(original, "pi", "valid_2").is_ok());
+
+    // Check staged edits too: two targets in one save must not bypass validation.
+    let fresh = temp.path().join("new.json");
+    let mut first = target(&fresh, "pi", None);
+    first.key = "x-y".into();
+    let mut second = first.clone();
+    second.key = "x_y".into();
+    assert!(management::save(
+        &dir,
+        entry("direct"),
+        vec![first, second],
+        Path::new("/studio"),
+        None
+    )
+    .is_err());
+    assert!(!fresh.exists());
+    assert!(management::read(&dir).unwrap().entries.is_empty());
 }
