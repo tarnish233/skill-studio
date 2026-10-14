@@ -8,3 +8,8 @@ coverage/
 src-tauri/gen/
 __pycache__/
 src-tauri/resources/remote/skill-studio-remote-linux-*
+# 含内网地址、公司 NFS 路径的验证记录不入库
+/docs/testing/2026-09-17-remote-desktop.md
+/docs/testing/2026-09-17-remote-helper.md
+/docs/testing/2026-09-17-remote-helper-results.json
+/docs/testing/2026-09-17-remote-nfs-results.json
