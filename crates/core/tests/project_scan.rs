@@ -48,8 +48,10 @@ fn preview_reads_document_and_rejects_missing_invalid_and_oversized_files() {
     let temp = tempfile::tempdir().unwrap();
     assert!(read_skill_document(temp.path()).is_err());
     let path = temp.path().join("SKILL.md");
-    fs::write(&path, "# Preview\n正文").unwrap();
-    assert_eq!(read_skill_document(temp.path()).unwrap(), "# Preview\n正文");
+    fs::write(&path, "---\nname: preview\n---\n# Preview\n正文").unwrap();
+    let document = read_skill_document(temp.path()).unwrap();
+    assert_eq!(document.frontmatter.name.as_deref(), Some("preview"));
+    assert_eq!(document.body, "# Preview\n正文");
     fs::write(&path, [0xff]).unwrap();
     assert!(read_skill_document(temp.path()).is_err());
     fs::write(&path, vec![b'x'; 1024 * 1024 + 1]).unwrap();

@@ -119,7 +119,12 @@ pub fn import_local_skill(state: &AppState, path: String) -> Result<Skill, Strin
     state.install_catalog_skill(&prepared).map_err(String::from)
 }
 
-pub fn read_skill_document(state: &AppState, path: std::path::PathBuf) -> Result<String, String> {
+/// 确认路径属于当前列表中的 skill。
+///
+/// 预览与“用默认应用打开”都会拿到前端持有的旧路径：列表刷新、skill 被移走或换成
+/// 另一个目录后，旧路径可能指向别处。统一在这里拦截，避免拿着陈旧路径去读文件或
+/// 交给系统打开。
+pub fn ensure_known_skill(state: &AppState, path: &std::path::Path) -> Result<(), String> {
     let config = state.config();
     let mut known = state
         .studio()
@@ -127,10 +132,11 @@ pub fn read_skill_document(state: &AppState, path: std::path::PathBuf) -> Result
         .map_err(String::from)?
         .iter()
         .any(|s| {
-            s.skill.source_path == path
-                || s.agents
-                    .values()
-                    .any(|a| a.target_path == path || a.entry_paths.contains(&path))
+            s.skill.source_path.as_path() == path
+                || s.agents.values().any(|a| {
+                    a.target_path.as_path() == path
+                        || a.entry_paths.iter().any(|p| p.as_path() == path)
+                })
         });
     if !known {
         for p in &config.projects {
@@ -139,7 +145,7 @@ pub fn read_skill_document(state: &AppState, path: std::path::PathBuf) -> Result
                 .project_local_skills(&config, p)
                 .map_err(String::from)?
                 .iter()
-                .any(|s| s.storage_path == path)
+                .any(|s| s.storage_path.as_path() == path)
             {
                 known = true;
                 break;
@@ -149,5 +155,13 @@ pub fn read_skill_document(state: &AppState, path: std::path::PathBuf) -> Result
     if !known {
         return Err("skill 已变化或不在当前列表中，请刷新后重试".into());
     }
+    Ok(())
+}
+
+pub fn read_skill_document(
+    state: &AppState,
+    path: std::path::PathBuf,
+) -> Result<skill_studio_core::services::scanner::SkillDocument, String> {
+    ensure_known_skill(state, &path)?;
     skill_studio_core::services::scanner::read_skill_document(&path).map_err(Into::into)
 }

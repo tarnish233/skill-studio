@@ -399,7 +399,13 @@ fn desktop_project_group_and_hub_workflow_uses_the_remote_home() {
         "read_skill_document",
         json!({"path":adopted["result"]["sourcePath"]}),
     );
-    assert!(document["result"].as_str().unwrap().contains("name: probe"));
+    // 预览返回结构化文档：frontmatter 单拎出来，正文不再带 YAML 头
+    assert_eq!(document["result"]["frontmatter"]["name"], "probe");
+    assert_eq!(document["result"]["body"], "Test\n");
+    assert!(document["result"]["raw"]
+        .as_str()
+        .unwrap()
+        .contains("name: probe"));
     drop(session);
     let mut session = Session::start(home.path(), true);
     assert_eq!(

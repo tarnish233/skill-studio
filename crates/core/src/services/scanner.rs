@@ -89,30 +89,74 @@ pub struct CopySidecar {
     pub copied_at: i64,
 }
 
+/// `SKILL.md` 的结构化预览：原文、frontmatter、去掉 frontmatter 的正文。
+///
+/// 预览要展示的是正文，不能把 YAML 头当成两行 `---` 一起渲染；解析规则与扫描
+/// 共用 [`frontmatter_parts`]，避免预览和列表页对同一份文件给出两种结论。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDocument {
+    /// 原始文件内容（含 BOM），供需要对照或复制的调用方使用
+    pub raw: String,
+    /// frontmatter 解析结果；没有 frontmatter 时为默认值
+    pub frontmatter: Frontmatter,
+    /// 去掉 frontmatter 块之后的正文
+    pub body: String,
+}
+
+/// frontmatter 的解析结果与它在原文中的边界
+struct FrontmatterParts {
+    frontmatter: Frontmatter,
+    /// 正文起始字节；`None` 表示没有可剥离的 frontmatter 块
+    body_start: Option<usize>,
+}
+
 /// 解析 `SKILL.md` 的 frontmatter。
 ///
 /// 容错到底：读不到、没有 frontmatter、YAML 坏掉，都不报错 —— 一个坏 skill
 /// 不该让整次扫描失败，调用方会回落到目录名。
 pub fn parse_frontmatter(skill_md: &Path) -> Frontmatter {
-    let Ok(raw) = fs::read_to_string(skill_md) else {
-        return Frontmatter::default();
-    };
+    match fs::read_to_string(skill_md) {
+        Ok(raw) => frontmatter_parts(&raw).frontmatter,
+        Err(_) => Frontmatter::default(),
+    }
+}
+
+/// 拆出 frontmatter 与正文起点。
+fn frontmatter_parts(raw: &str) -> FrontmatterParts {
     // 某些编辑器会写 BOM；frontmatter 只有在 `---` 位于**首行**时才生效
     let content = raw.trim_start_matches('\u{feff}');
+    let bom = raw.len() - content.len();
+    let missing_fence = || FrontmatterParts {
+        frontmatter: Frontmatter {
+            malformed: true,
+            error: Some("frontmatter 缺少结束标记 ---".into()),
+            ..Default::default()
+        },
+        // 没有闭合标记就说不清正文从哪开始，整篇照原样展示，由调用方给出提示
+        body_start: None,
+    };
     if content.lines().next().map(str::trim_end) != Some("---") {
-        return Frontmatter::default();
+        return FrontmatterParts {
+            frontmatter: Frontmatter::default(),
+            body_start: None,
+        };
     }
     // 首个 `---` 之后再找闭合的 `---`
     let rest = &content[3..];
     let Some(end) = find_closing_fence(rest) else {
-        return Frontmatter {
-            malformed: true,
-            error: Some("frontmatter 缺少结束标记 ---".into()),
-            ..Default::default()
-        };
+        return missing_fence();
     };
-    let block = &rest[..end];
+    // 闭合围栏整行都属于 frontmatter，不能只跳到行首
+    let closing = rest[end..].split_inclusive('\n').next().map_or(0, str::len);
+    FrontmatterParts {
+        frontmatter: parse_frontmatter_block(&rest[..end]),
+        body_start: Some(bom + 3 + end + closing),
+    }
+}
 
+/// 解析 frontmatter 块本身（不含两行 `---`）
+fn parse_frontmatter_block(block: &str) -> Frontmatter {
     match serde_yaml::from_str::<BTreeMap<String, serde_yaml::Value>>(block) {
         Ok(map) => {
             let as_string = |key: &str| -> Option<String> {
@@ -405,8 +449,8 @@ pub fn validate_sync_source(source: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Bounded, plain-text preview. Never execute or render document HTML.
-pub fn read_skill_document(directory: &Path) -> Result<String> {
+/// Bounded preview: raw text plus frontmatter split, never rendered or executed.
+pub fn read_skill_document(directory: &Path) -> Result<SkillDocument> {
     use std::io::Read;
     const LIMIT: u64 = 1024 * 1024;
     let path = directory.join(SKILL_FILE);
@@ -426,7 +470,23 @@ pub fn read_skill_document(directory: &Path) -> Result<String> {
     if bytes.len() > LIMIT as usize {
         return Err(Error::invalid("SKILL.md 超过预览大小限制"));
     }
-    String::from_utf8(bytes).map_err(|_| Error::invalid("SKILL.md 不是有效的 UTF-8 文本"))
+    let raw =
+        String::from_utf8(bytes).map_err(|_| Error::invalid("SKILL.md 不是有效的 UTF-8 文本"))?;
+    let parts = frontmatter_parts(&raw);
+    let body = match parts.body_start {
+        Some(start) => raw
+            .get(start..)
+            .unwrap_or_default()
+            .trim_start_matches(['\r', '\n'])
+            .to_string(),
+        // 无法确定 frontmatter 边界时按整篇展示（BOM 会让正文多出一个不可见字符）
+        None => raw.trim_start_matches('\u{feff}').to_string(),
+    };
+    Ok(SkillDocument {
+        raw,
+        frontmatter: parts.frontmatter,
+        body,
+    })
 }
 
 #[cfg(test)]
@@ -504,6 +564,51 @@ mod tests {
     fn missing_file_yields_empty_frontmatter() {
         let fm = parse_frontmatter(Path::new("/definitely/not/here/SKILL.md"));
         assert_eq!(fm, Frontmatter::default());
+    }
+
+    #[test]
+    fn preview_splits_frontmatter_from_body() {
+        let d = tempfile::tempdir().unwrap();
+        let s = d.path().join("x");
+        let raw = "---\nname: x\ndescription: d\ncontext: fork\n---\n\n# 标题\n正文";
+        write_skill(&s, raw);
+        let doc = read_skill_document(&s).unwrap();
+        assert_eq!(doc.raw, raw);
+        assert_eq!(doc.frontmatter.name.as_deref(), Some("x"));
+        assert_eq!(doc.frontmatter.extra_keys, vec!["context"]);
+        assert_eq!(doc.body, "# 标题\n正文");
+    }
+
+    #[test]
+    fn preview_without_frontmatter_keeps_whole_document() {
+        let d = tempfile::tempdir().unwrap();
+        let s = d.path().join("x");
+        write_skill(&s, "\u{feff}# 只有标题\n");
+        let doc = read_skill_document(&s).unwrap();
+        assert_eq!(doc.frontmatter, Frontmatter::default());
+        assert_eq!(doc.body, "# 只有标题\n");
+        assert_eq!(doc.raw, "\u{feff}# 只有标题\n");
+    }
+
+    #[test]
+    fn preview_keeps_unclosed_fence_with_its_warning() {
+        let d = tempfile::tempdir().unwrap();
+        let s = d.path().join("x");
+        let raw = "---\nname: x\n\n正文";
+        write_skill(&s, raw);
+        let doc = read_skill_document(&s).unwrap();
+        assert!(doc.frontmatter.malformed);
+        assert_eq!(doc.body, raw);
+    }
+
+    #[test]
+    fn preview_strips_empty_frontmatter_block() {
+        let d = tempfile::tempdir().unwrap();
+        let s = d.path().join("x");
+        write_skill(&s, "---\n---\n正文\n");
+        let doc = read_skill_document(&s).unwrap();
+        assert_eq!(doc.frontmatter, Frontmatter::default());
+        assert_eq!(doc.body, "正文\n");
     }
 
     #[test]

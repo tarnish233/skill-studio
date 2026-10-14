@@ -148,11 +148,36 @@ pub async fn import_local_skill(state: State<'_, AppState>, path: String) -> Res
 pub async fn read_skill_document(
     state: State<'_, AppState>,
     path: std::path::PathBuf,
-) -> Result<String, String> {
+) -> Result<skill_studio_core::services::scanner::SkillDocument, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         skill_studio_service::skills::read_skill_document(&state, path)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 用系统默认程序打开 skill 的 `SKILL.md`（Finder／资源管理器里的“打开方式”默认应用）。
+///
+/// 路径先按当前列表校一遍再交给系统，避免前端持有刷新前的旧路径时打开到别的文件。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn open_skill_document(
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+    path: std::path::PathBuf,
+) -> Result<(), String> {
+    let state = state.inner().clone();
+    let directory = path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        skill_studio_service::skills::ensure_known_skill(&state, &directory)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(
+            path.join("SKILL.md").to_string_lossy().into_owned(),
+            None::<&str>,
+        )
+        .map_err(|e| format!("无法用默认应用打开：{e}"))
 }

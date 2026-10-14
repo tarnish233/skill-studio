@@ -61,6 +61,7 @@ pub fn run() {
             // skill
             commands::scan_skills,
             commands::read_skill_document,
+            commands::open_skill_document,
             commands::register_skills,
             commands::unregister_skills,
             commands::set_skill_enabled,

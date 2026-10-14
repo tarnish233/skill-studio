@@ -75,6 +75,11 @@ export const skillsApi = {
     return await invoke("release_from_hub", { skillId });
   },
 
+  /** 用系统默认程序打开预览的 SKILL.md（目录由后端拼接，不在这里算路径） */
+  async openDocument(path: string): Promise<void> {
+    await invoke("open_skill_document", { path });
+  },
+
   async prune(): Promise<number> {
     return await invoke("prune_missing");
   },
