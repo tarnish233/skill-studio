@@ -809,6 +809,23 @@ function LocalMcpPage({
                       <p className="break-all text-xs text-muted-foreground">
                         {s.path} · {s.key}
                       </p>
+                      {s.projectOverrides?.map((override) => (
+                        <p
+                          key={`${override.path}:${override.key}`}
+                          className="mt-2 break-all text-xs text-muted-foreground"
+                        >
+                          {override.scope}
+                          {override.enabled === false
+                            ? " · 已停用"
+                            : override.enabled
+                              ? " · 已启用"
+                              : ""}
+                          {" · 项目级覆盖"}
+                          <span className="block">
+                            {override.path} · {override.key}
+                          </span>
+                        </p>
+                      ))}
                     </div>
                   ))}
                 </div>

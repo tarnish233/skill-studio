@@ -40,6 +40,16 @@ pub fn scan_files(
     }
     (files, warnings)
 }
+/// A Pi project entry that only changes the user-level server of the same name.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectOverride {
+    pub path: PathBuf,
+    pub scope: String,
+    pub key: String,
+    /// `None` when the override does not set `enabled` (for example exposure only).
+    pub enabled: Option<bool>,
+}
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Source {
@@ -52,6 +62,9 @@ pub struct Source {
     pub gateway: bool,
     pub project: Option<String>,
     pub definition: Value,
+    /// Project-level Pi overrides of this user-level source. Not separate servers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub project_overrides: Vec<ProjectOverride>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -96,6 +109,7 @@ pub fn scan(files: &[ScanFile], managed: &[Server], studio_dir: &Path) -> ScanRe
     let mut result = ScanResult::default();
     let mut seen = std::collections::HashSet::new();
     let mut grok_disabled = std::collections::HashSet::new();
+    let mut pi_overrides = Vec::new();
     for file in files {
         if !seen.insert((file.agent.clone(), file.path.clone(), file.scope.clone())) {
             continue;
@@ -120,9 +134,14 @@ pub fn scan(files: &[ScanFile], managed: &[Server], studio_dir: &Path) -> ScanRe
             }
         };
         match crate::native::entries(&doc, &file.agent) {
-            Ok(Some(entries)) => {
-                read_entries(&mut result, file, &json!(entries), managed, studio_dir)
-            }
+            Ok(Some(entries)) => read_entries(
+                &mut result,
+                file,
+                &json!(entries),
+                managed,
+                studio_dir,
+                &mut pi_overrides,
+            ),
             Ok(None) => {}
             Err(e) => result
                 .warnings
@@ -147,11 +166,13 @@ pub fn scan(files: &[ScanFile], managed: &[Server], studio_dir: &Path) -> ScanRe
                         &project["mcpServers"],
                         managed,
                         studio_dir,
+                        &mut pi_overrides,
                     );
                 }
             }
         }
     }
+    apply_pi_project_overrides(&mut result, pi_overrides);
     for discovered in &mut result.discovered {
         for source in &mut discovered.sources {
             if source.agent == "grok" && grok_disabled.contains(&source.key) {
@@ -167,12 +188,60 @@ pub fn scan(files: &[ScanFile], managed: &[Server], studio_dir: &Path) -> ScanRe
 fn connection_eq(a: &Server, b: &Server) -> bool {
     serde_json::to_value(&a.connection).ok() == serde_json::to_value(&b.connection).ok()
 }
+struct PiOverride {
+    key: String,
+    path: PathBuf,
+    scope: String,
+    enabled: Option<bool>,
+}
+/// Pi treats a project entry with no command, url, or type as an override of the
+/// user-level server. `-` and `_` are the same character in a server name.
+fn is_pi_project_file(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == "mcp.json")
+        && path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == ".pi")
+}
+fn pi_server_name(name: &str) -> String {
+    name.replace('-', "_")
+}
+fn apply_pi_project_overrides(result: &mut ScanResult, overrides: Vec<PiOverride>) {
+    for override_entry in overrides {
+        let name = pi_server_name(&override_entry.key);
+        let mut matched = false;
+        for discovered in &mut result.discovered {
+            for source in &mut discovered.sources {
+                if source.agent == "pi"
+                    && source.scope == "用户全局"
+                    && pi_server_name(&source.key) == name
+                {
+                    source.project_overrides.push(ProjectOverride {
+                        path: override_entry.path.clone(),
+                        scope: override_entry.scope.clone(),
+                        key: override_entry.key.clone(),
+                        enabled: override_entry.enabled,
+                    });
+                    matched = true;
+                }
+            }
+        }
+        if !matched {
+            result.warnings.push(format!(
+                "{}：{} 是 Pi 项目级覆盖，只调整同名用户级服务的启停或工具暴露，没有找到对应的用户级配置",
+                override_entry.path.display(),
+                override_entry.key
+            ));
+        }
+    }
+}
 fn read_entries(
     result: &mut ScanResult,
     file: &ScanFile,
     entries: &Value,
     managed: &[Server],
     studio_dir: &Path,
+    pi_overrides: &mut Vec<PiOverride>,
 ) {
     if entries.is_null() {
         return;
@@ -192,6 +261,24 @@ fn read_entries(
                 agent: file.agent.clone(),
                 path: file.path.clone(),
                 scope: file.scope.clone(),
+            });
+            continue;
+        }
+        // A project entry without a connection overrides the user-level server.
+        // It must not become its own Hub card.
+        if file.agent == "pi"
+            && is_pi_project_file(&file.path)
+            && entry.as_object().is_some_and(|map| {
+                !map.contains_key("command")
+                    && !map.contains_key("url")
+                    && !map.contains_key("type")
+            })
+        {
+            pi_overrides.push(PiOverride {
+                key: key.clone(),
+                path: file.path.clone(),
+                scope: file.scope.clone(),
+                enabled: entry.get("enabled").and_then(Value::as_bool),
             });
             continue;
         }
@@ -231,6 +318,7 @@ fn read_entries(
             gateway,
             project: file.scope.strip_prefix("项目本地 · ").map(str::to_owned),
             definition: entry.clone(),
+            project_overrides: Vec::new(),
         };
         let managed_id = own
             .or_else(|| {
@@ -551,5 +639,161 @@ command='/usr/local/bin/node_repl'
             .unwrap();
         assert!(orphan.server.is_none());
         assert!(orphan.issue.as_ref().unwrap().contains("循环"));
+    }
+
+    fn write_scan(root: &Path, name: &str, agent: &str, scope: &str, value: &Value) -> ScanFile {
+        let path = root.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, serde_json::to_string(value).unwrap()).unwrap();
+        ScanFile {
+            agent: agent.into(),
+            path,
+            scope: scope.into(),
+        }
+    }
+
+    #[test]
+    fn pi_project_overrides_stay_on_the_user_level_server() {
+        let temp = tempfile::tempdir().unwrap();
+        let studio = temp.path().join("studio");
+        let studio_arg = studio.display().to_string();
+        let server = normalize(
+            "hf-mcp-server",
+            "managed-id",
+            &json!({"url":"https://huggingface.co/mcp"}),
+            "claude",
+        )
+        .unwrap();
+        let global = write_scan(
+            temp.path(),
+            "agent/mcp.json",
+            "pi",
+            "用户全局",
+            &json!({"mcpServers":{"hf-mcp-server":{
+                "command":"/app/studio",
+                "args":["--mcp-client","managed-id", studio_arg],
+                "enabled": true
+            }}}),
+        );
+        let project_dir = temp.path().join("open_mole/.pi");
+        let project = write_scan(
+            &project_dir,
+            "mcp.json",
+            "pi",
+            "项目 · open_mole",
+            &json!({"mcpServers":{
+                "hf-mcp-server":{"enabled": false},
+                "rea":{"command":"rea","args":["mcp"]}
+            }}),
+        );
+        let exposure = write_scan(
+            &temp.path().join("other/.pi"),
+            "mcp.json",
+            "pi",
+            "项目 · other",
+            &json!({"mcpServers":{"hf_mcp_server":{"exposure":"direct","toolExposure":{"search":"hidden"}}}}),
+        );
+        let paths = (
+            global.path.clone(),
+            project.path.clone(),
+            exposure.path.clone(),
+        );
+        let before = (
+            std::fs::read(&paths.0).unwrap(),
+            std::fs::read(&paths.1).unwrap(),
+            std::fs::read(&paths.2).unwrap(),
+        );
+        let result = scan(&[global, project, exposure], &[server], &studio);
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        assert_eq!(result.discovered.len(), 2);
+        let managed = result
+            .discovered
+            .iter()
+            .find(|d| d.name == "hf-mcp-server")
+            .unwrap();
+        assert_eq!(managed.managed_id.as_deref(), Some("managed-id"));
+        assert_eq!(managed.sources.len(), 1);
+        let source = &managed.sources[0];
+        assert!(source.enabled);
+        assert!(source.gateway);
+        assert_eq!(source.project_overrides.len(), 2);
+        assert_eq!(source.project_overrides[0].enabled, Some(false));
+        assert_eq!(source.project_overrides[0].scope, "项目 · open_mole");
+        assert!(source.project_overrides[1].enabled.is_none());
+        assert_eq!(source.project_overrides[1].key, "hf_mcp_server");
+        assert!(result.discovered.iter().any(|d| d.name == "rea"));
+        assert!(!serde_json::to_value(managed)
+            .unwrap()
+            .to_string()
+            .contains("hidden"));
+        assert_eq!(
+            (
+                std::fs::read(&paths.0).unwrap(),
+                std::fs::read(&paths.1).unwrap(),
+                std::fs::read(&paths.2).unwrap(),
+            ),
+            before
+        );
+    }
+
+    #[test]
+    fn pi_overrides_do_not_hide_real_servers_or_unmatched_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let global = write_scan(
+            temp.path(),
+            "agent/mcp.json",
+            "pi",
+            "用户全局",
+            &json!({"mcpServers":{
+                "tools":{"command":"demo"},
+                "partial":{"enabled": false}
+            }}),
+        );
+        let replaced = write_scan(
+            &temp.path().join("work/.pi"),
+            "mcp.json",
+            "pi",
+            "项目 · work",
+            &json!({"mcpServers":{"tools":{"command":"other"}}}),
+        );
+        let orphan = write_scan(
+            &temp.path().join("missing/.pi"),
+            "mcp.json",
+            "pi",
+            "项目 · missing",
+            &json!({"mcpServers":{"gone":{"enabled": false}}}),
+        );
+        let result = scan(&[global, replaced, orphan], &[], temp.path());
+        let names: Vec<_> = result.discovered.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"tools"));
+        assert!(names.contains(&"partial"));
+        assert!(!names.contains(&"gone"));
+        assert_eq!(
+            result
+                .discovered
+                .iter()
+                .filter(|d| d.name == "tools")
+                .count(),
+            2
+        );
+        let user_tools = result
+            .discovered
+            .iter()
+            .find(|d| d.name == "tools" && d.sources[0].scope == "用户全局")
+            .unwrap();
+        assert!(user_tools.sources[0].project_overrides.is_empty());
+        assert!(result
+            .warnings
+            .iter()
+            .any(|warning| { warning.contains("gone") && warning.contains("项目级覆盖") }));
+        assert!(result
+            .discovered
+            .iter()
+            .find(|d| d.name == "partial")
+            .unwrap()
+            .issue
+            .is_some());
     }
 }

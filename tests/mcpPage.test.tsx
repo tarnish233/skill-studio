@@ -135,6 +135,71 @@ it("parses pasted configurations in the unified add flow and lets users choose a
     params: { entry: { definition: { startup_timeout_sec: 120 } } },
   });
 });
+it("shows a Pi project override on the managed server instead of a second card", async () => {
+  handlers.set("mcp_request", ({ method }) =>
+    method === "list"
+      ? {
+          ...empty,
+          entries: [
+            {
+              id: "managed-id",
+              name: "hf-mcp-server",
+              mode: "gateway",
+              definition: { type: "http", url: "https://huggingface.co/mcp" },
+              oauth: false,
+              clientId: null,
+              scopes: [],
+              bindings: [],
+            },
+          ],
+          discovered: [
+            {
+              id: "found",
+              name: "hf-mcp-server",
+              server: null,
+              managedId: "managed-id",
+              issue: null,
+              sources: [
+                {
+                  id: "source-pi",
+                  agent: "pi",
+                  path: "/Users/me/.pi/agent/mcp.json",
+                  scope: "用户全局",
+                  project: null,
+                  key: "hf-mcp-server",
+                  enabled: true,
+                  gateway: true,
+                  definition: {
+                    command: "/app/studio",
+                    args: ["--mcp-client", "managed-id", "/studio"],
+                  },
+                  projectOverrides: [
+                    {
+                      path: "/work/open_mole/.pi/mcp.json",
+                      scope: "项目 · open_mole",
+                      key: "hf-mcp-server",
+                      enabled: false,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }
+      : method === "gatewayCheck"
+        ? { issue: null }
+        : null,
+  );
+  renderWithProviders(<McpPage />);
+  expect(await screen.findAllByText("hf-mcp-server")).toHaveLength(1);
+  fireEvent.click(
+    screen.getByRole("button", { name: "查看 hf-mcp-server 的来源" }),
+  );
+  const override = await screen.findByText(/项目 · open_mole/);
+  expect(override).toHaveTextContent("已停用");
+  expect(override).toHaveTextContent("项目级覆盖");
+  expect(override).toHaveTextContent("open_mole/.pi/mcp.json");
+});
 it("allows managing discovered client extensions directly, but blocks incompatible gateway mode", async () => {
   const definition = { command: "node", startup_timeout_sec: 120 };
   handlers.set("mcp_request", ({ method }) =>

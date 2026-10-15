@@ -19,6 +19,13 @@ export interface McpServer {
 export const mcpRequest = <T>(method: string, params: unknown = {}) =>
   invoke<T>("mcp_request", { method, params });
 
+export interface McpProjectOverride {
+  path: string;
+  scope: string;
+  key: string;
+  /** Null when the override changes exposure without setting enabled. */
+  enabled: boolean | null;
+}
 export interface McpSource {
   id: string;
   project: string | null;
@@ -29,6 +36,8 @@ export interface McpSource {
   key: string;
   enabled: boolean;
   gateway: boolean;
+  /** Pi project entries that only override this user-level server. */
+  projectOverrides?: McpProjectOverride[];
 }
 export interface DiscoveredMcp {
   id: string;
