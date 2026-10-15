@@ -343,7 +343,7 @@ it("uses the app subpage header and preserves Hub search when returning", async 
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(screen.getByRole("navigation", { name: "主导航" })).toBeVisible();
   expect(screen.queryByText("网关已关闭")).not.toBeInTheDocument();
-  expect(localStorage.getItem("skill-studio-view")).toBe("mcp");
+  expect(localStorage.getItem("skill-studio-view")).toBe("hub");
   fireEvent.click(screen.getByRole("button", { name: "返回" }));
   expect(screen.getByRole("heading", { name: "MCP Hub" })).toBeInTheDocument();
   expect(

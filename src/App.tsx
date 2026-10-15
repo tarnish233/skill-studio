@@ -3,6 +3,8 @@ import {
   readInitialView,
   initialResource,
   VIEW_STORAGE_KEY,
+  RESOURCE_STORAGE_KEY,
+  type Resource,
   type StaticView,
   type ViewId,
 } from "@/lib/initialView";
@@ -26,7 +28,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, useReducedMotion } from "framer-motion";
 import {
-  Plug,
   ArrowLeft,
   FolderGit2,
   Layers,
@@ -54,8 +55,7 @@ const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28;
 const AGENT_PREFIX = "agent:";
 
 const STATIC_TITLES: Record<StaticView, string> = {
-  mcp: "MCP Hub",
-  library: "Skill Hub",
+  hub: "Hub",
   projects: "项目",
   settings: "设置",
   install: "安装 skill",
@@ -87,21 +87,21 @@ function AppContent() {
   const [view, setView] = useState<ViewId>(() =>
     readInitialView(settings, target.id),
   );
-  const [resource, setResource] = useState<"skills" | "mcp">(() =>
+  const [resource, setResource] = useState<Resource>(() =>
     initialResource(view, settings),
   );
   const activeResource = mcpEnabled ? resource : "skills";
   const remoteMcp = target.id !== "local" && activeResource === "mcp";
   useEffect(() => {
-    localStorage.setItem("skill-studio-resource", resource);
+    localStorage.setItem(RESOURCE_STORAGE_KEY, resource);
   }, [resource]);
-  const [pageSlide, setPageSlide] = useState(0);
+  const [pageSlide, setPageSlide] = useState({ x: 0, y: 0 });
   const [searchHost, setSearchHost] = useState<HTMLDivElement | null>(null);
   const [addHost, setAddHost] = useState<HTMLDivElement | null>(null);
   const [mcpEditor, setMcpEditor] = useState<McpEditorState | null>(null);
   useEffect(() => setMcpEditor(null), [target.id]);
   const activeMcpEditor =
-    mcpEnabled && view === "mcp" && target.id === "local" ? mcpEditor : null;
+    mcpEnabled && view === "hub" && target.id === "local" ? mcpEditor : null;
   const isSettings = view === "settings";
   const isSubpage = isSettings || view === "install" || !!activeMcpEditor;
   const nativeTools = useNativePageTools(
@@ -111,13 +111,12 @@ function AppContent() {
   );
 
   // 设置页的返回目标 = 进入设置之前停留的那个视图
-  const backTarget = useRef<ViewId>("library");
+  const backTarget = useRef<ViewId>("hub");
   useEffect(() => {
     if (settings?.manageMcp !== false) return;
     setResource("skills");
     setMcpEditor(null);
-    if (backTarget.current === "mcp") backTarget.current = "library";
-    if (view === "mcp") setView("library");
+    if (view === "install") setView("hub");
   }, [settings?.manageMcp, view]);
   useEffect(() => {
     if (view !== "settings" && view !== "install") {
@@ -133,9 +132,8 @@ function AppContent() {
         (settings?.disabledAgents?.includes(id.slice(AGENT_PREFIX.length)) ||
           (activeResource === "mcp" &&
             !supportsMcp(id.slice(AGENT_PREFIX.length)))));
-    const hub = activeResource === "mcp" ? "mcp" : "library";
-    if (disabledView(backTarget.current)) backTarget.current = hub;
-    if (disabledView(view)) setView(hub);
+    if (disabledView(backTarget.current)) backTarget.current = "hub";
+    if (disabledView(view)) setView("hub");
   }, [settings?.disabledAgents, view, activeResource, remoteMcp]);
 
   // 启动期错误（例如配置文件坏了）要让用户看见，而不是静默用默认值跑
@@ -147,31 +145,25 @@ function AppContent() {
   }, []);
 
   const titles = useMemo(() => {
-    const map: Record<string, string> = { ...STATIC_TITLES };
+    const map: Record<string, string> = {
+      ...STATIC_TITLES,
+      hub: activeResource === "mcp" ? "MCP Hub" : "Skill Hub",
+    };
     for (const a of agents) {
       map[`${AGENT_PREFIX}${a.id}`] = a.displayName;
     }
     return map;
-  }, [agents]);
+  }, [agents, activeResource]);
 
   const sections = useMemo<NavSection<ViewId>[]>(
     () => [
       {
         items: [
           {
-            id: "library",
-            label: STATIC_TITLES.library,
+            id: "hub",
+            label: "Hub",
             icon: <Layers className="h-5 w-5" />,
           },
-          ...(mcpEnabled
-            ? [
-                {
-                  id: "mcp" as ViewId,
-                  label: "MCP Hub",
-                  icon: <Plug className="h-5 w-5" />,
-                },
-              ]
-            : []),
         ],
       },
       {
@@ -213,14 +205,7 @@ function AppContent() {
         ],
       },
     ],
-    [
-      agents,
-      activeResource,
-      mcpEnabled,
-      remoteMcp,
-      isDetecting,
-      detectionFailed,
-    ],
+    [agents, activeResource, remoteMcp, isDetecting, detectionFailed],
   );
 
   const refresh = () => {
@@ -238,8 +223,8 @@ function AppContent() {
       );
     }
     switch (view) {
-      case "mcp":
-        return mcpEnabled ? (
+      case "hub":
+        return activeResource === "mcp" ? (
           <McpPage editor={mcpEditor} onEditorChange={setMcpEditor} />
         ) : (
           <LibraryPage
@@ -274,12 +259,32 @@ function AppContent() {
       ];
       const from = order.indexOf(view);
       const to = order.indexOf(next);
-      setPageSlide(from >= 0 && to >= 0 ? Math.sign(to - from) * 14 : 0);
-      if (next === "library" || (next === "mcp" && mcpEnabled)) {
-        setResource(next === "mcp" ? "mcp" : "skills");
-      }
+      setPageSlide({
+        x: 0,
+        y: from >= 0 && to >= 0 ? Math.sign(to - from) * 14 : 0,
+      });
       setMcpEditor(null);
       setView(next);
+    });
+  };
+
+  const switchResource = (next: Resource) => {
+    if (next === activeResource || (next === "mcp" && !mcpEnabled)) return;
+    requestNavigation(() => {
+      const unavailable = (id: ViewId) =>
+        (id.startsWith(AGENT_PREFIX) &&
+          (settings?.disabledAgents?.includes(id.slice(AGENT_PREFIX.length)) ||
+            (next === "mcp" && !supportsMcp(id.slice(AGENT_PREFIX.length))))) ||
+        (next === "mcp" &&
+          target.id !== "local" &&
+          (id === "projects" || id.startsWith(AGENT_PREFIX)));
+      if (unavailable(backTarget.current)) backTarget.current = "hub";
+      if (view === "install" || !!mcpEditor || unavailable(view))
+        setView("hub");
+      setMcpEditor(null);
+      // The toggle sits left (Skill) → right (MCP); slide content the same way.
+      setPageSlide({ x: next === "mcp" ? 14 : -14, y: 0 });
+      setResource(next);
     });
   };
 
@@ -308,9 +313,7 @@ function AppContent() {
               <div className="mb-2 flex h-11 w-full shrink-0 items-center justify-center">
                 <SidebarAction
                   label="Skill Studio · 返回 Hub"
-                  onClick={() =>
-                    navigate(activeResource === "mcp" ? "mcp" : "library")
-                  }
+                  onClick={() => navigate("hub")}
                 >
                   <SkillStudioIcon className="h-7 w-7" />
                 </SidebarAction>
@@ -326,7 +329,6 @@ function AppContent() {
                 <NavSwitcher
                   sections={sections}
                   active={view}
-                  selected={activeResource === "mcp" ? "mcp" : "library"}
                   onSelect={navigate}
                 />
               </nav>
@@ -349,7 +351,7 @@ function AppContent() {
                 data-tauri-drag-region="deep"
                 className="grid h-[var(--app-toolbar-height)] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 px-6"
               >
-                <div className="flex min-w-0 items-center">
+                <div className="flex min-w-0 items-center gap-2">
                   {isSubpage && (
                     <Button
                       data-tauri-no-drag
@@ -366,6 +368,27 @@ function AppContent() {
                     >
                       <ArrowLeft className="h-5 w-5" />
                     </Button>
+                  )}
+                  {mcpEnabled && (
+                    <div
+                      role="group"
+                      aria-label="资源类型"
+                      data-tauri-no-drag
+                      className="flex shrink-0 items-center rounded-lg bg-foreground/[0.05] p-0.5"
+                    >
+                      {(["skills", "mcp"] as const).map((option) => (
+                        <button
+                          key={option}
+                          type="button"
+                          aria-label={option === "skills" ? "Skill" : "MCP"}
+                          aria-pressed={activeResource === option}
+                          onClick={() => switchResource(option)}
+                          className={`rounded-md px-2.5 py-1 text-xs font-medium leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${activeResource === option ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                        >
+                          {option === "skills" ? "Skill" : "MCP"}
+                        </button>
+                      ))}
+                    </div>
                   )}
                 </div>
                 <div className="flex min-w-0 max-w-sm items-baseline justify-center gap-3">
@@ -385,9 +408,6 @@ function AppContent() {
                   ) : (
                     <p className="truncate text-[11px] leading-none text-muted-foreground">
                       {target.name}
-                      {view.startsWith(AGENT_PREFIX) || view === "projects"
-                        ? ` · ${activeResource === "mcp" ? "MCP" : "Skill"} 管理`
-                        : ""}
                     </p>
                   )}
                 </div>
@@ -437,8 +457,12 @@ function AppContent() {
                       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
                       // Transparent native windows can delay animation frames while
                       // inactive. Keep content visible from its very first paint.
-                      initial={reduceMotion ? false : { y: pageSlide }}
-                      animate={{ y: 0 }}
+                      initial={
+                        reduceMotion
+                          ? false
+                          : { x: pageSlide.x, y: pageSlide.y, opacity: 0.4 }
+                      }
+                      animate={{ x: 0, y: 0, opacity: 1 }}
                       transition={{
                         duration: reduceMotion ? 0 : 0.22,
                         ease: [0.22, 1, 0.36, 1],

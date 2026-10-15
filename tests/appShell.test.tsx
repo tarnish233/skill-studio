@@ -36,14 +36,17 @@ describe("窗口壳与侧栏导航", () => {
         nav.queryByRole("button", { name: /Codex/ }),
       ).not.toBeInTheDocument();
     });
-    expect(nav.getByRole("button", { name: "Skill Hub" })).toBeInTheDocument();
+    expect(nav.getByRole("button", { name: "Hub" })).toBeInTheDocument();
   });
 
   it("首次启动默认停在「Skill Hub」并高亮该项", async () => {
     withAgents();
     renderWithProviders(<App />);
     const active = await screen.findByRole("button", { current: "page" });
-    expect(active.textContent).toBe("Skill Hub");
+    expect(active.textContent).toBe("Hub");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
+      "Skill Hub",
+    );
   });
 
   it("侧栏按 agent 列表动态生成", async () => {
@@ -151,7 +154,7 @@ describe("设置视图", () => {
     const user = userEvent.setup();
     renderWithProviders(<App />);
     await user.click(screen.getByRole("button", { name: "设置" }));
-    expect(localStorage.getItem("skill-studio-view")).toBe("library");
+    expect(localStorage.getItem("skill-studio-view")).toBe("hub");
   });
 
   it("旧版本存下的 settings 不会让应用启动就停在设置页", async () => {
@@ -183,7 +186,7 @@ describe("设置视图", () => {
 it("navigation replaces the body immediately without waiting for exit animation", async () => {
   withAgents();
   renderWithProviders(<App />);
-  await screen.findByRole("button", { name: "Skill Hub" });
+  await screen.findByRole("button", { name: "Hub" });
   fireEvent.click(screen.getByRole("button", { name: "项目" }));
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("项目");
   expect(
@@ -302,15 +305,16 @@ it("guards project drafts when leaving through the sidebar and search", async ()
   expect(calls.filter((c) => c.command === "update_project")).toHaveLength(0);
 });
 
-it("uses the selected Hub to scope Agent and project pages without a second resource selector", async () => {
+it("uses the header resource toggle to scope Agent and project pages", async () => {
   withAgents();
   handlers.set("list_projects", () => [
     makeProject({ id: "p", name: "Demo", root: "/work/demo" }),
   ]);
   const user = userEvent.setup();
   renderWithProviders(<App />);
-  let nav = within(screen.getByRole("navigation", { name: "主导航" }));
-  await user.click(await nav.findByRole("button", { name: "MCP Hub" }));
+  const nav = within(screen.getByRole("navigation", { name: "主导航" }));
+  const header = within(screen.getByRole("banner"));
+  await user.click(await header.findByRole("button", { name: "MCP" }));
   await user.click(await nav.findByRole("button", { name: "Codex" }));
   expect(
     await screen.findByRole("button", { name: "新建 MCP 分组" }),
@@ -318,7 +322,7 @@ it("uses the selected Hub to scope Agent and project pages without a second reso
   expect(
     screen.queryByRole("tablist", { name: "资源类型" }),
   ).not.toBeInTheDocument();
-  expect(nav.getByRole("button", { name: "MCP Hub" })).toHaveAttribute(
+  expect(header.getByRole("button", { name: "MCP" })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
@@ -345,8 +349,7 @@ it("uses the selected Hub to scope Agent and project pages without a second reso
   await user.click(screen.getByRole("button", { name: "设置" }));
   await user.click(screen.getByRole("button", { name: "返回" }));
   expect(screen.getByText("管理各项目的 MCP 接入")).toBeInTheDocument();
-  nav = within(screen.getByRole("navigation", { name: "主导航" }));
-  await user.click(nav.getByRole("button", { name: "Skill Hub" }));
+  await user.click(header.getByRole("button", { name: "Skill" }));
   await user.click(nav.getByRole("button", { name: "Codex" }));
   expect(
     await screen.findByRole("button", { name: "新建分组" }),
@@ -382,13 +385,13 @@ it("hides MCP navigation and returns a saved MCP view to Skill management when d
   renderWithProviders(<App />);
   const nav = within(await screen.findByRole("navigation", { name: "主导航" }));
   await waitFor(() =>
-    expect(nav.getByRole("button", { name: "Skill Hub" })).toHaveAttribute(
+    expect(nav.getByRole("button", { name: "Hub" })).toHaveAttribute(
       "aria-current",
       "page",
     ),
   );
   expect(
-    nav.queryByRole("button", { name: "MCP Hub" }),
+    screen.queryByRole("group", { name: "资源类型" }),
   ).not.toBeInTheDocument();
   expect(screen.queryByText("网关已关闭")).not.toBeInTheDocument();
   expect(calls.filter((call) => call.command === "mcp_request")).toHaveLength(
@@ -407,21 +410,24 @@ it("returns from MCP settings to Skill Hub when management is turned off", async
   });
   const user = userEvent.setup();
   renderWithProviders(<App />);
-  const nav = within(screen.getByRole("navigation", { name: "主导航" }));
-  await user.click(await nav.findByRole("button", { name: "MCP Hub" }));
+  const header = within(screen.getByRole("banner"));
+  await user.click(await header.findByRole("button", { name: "MCP" }));
   await user.click(screen.getByRole("button", { name: "设置" }));
   await user.click(
     await screen.findByRole("switch", { name: "启用 MCP 管理" }),
   );
   await waitFor(() => expect(settings.manageMcp).toBe(false));
   await user.click(screen.getByRole("button", { name: "返回" }));
-  const skill = await within(
+  const hub = await within(
     screen.getByRole("navigation", { name: "主导航" }),
-  ).findByRole("button", { name: "Skill Hub" });
-  await waitFor(() => expect(skill).toHaveAttribute("aria-current", "page"));
+  ).findByRole("button", { name: "Hub" });
+  await waitFor(() => expect(hub).toHaveAttribute("aria-current", "page"));
   expect(
-    screen.queryByRole("button", { name: "MCP Hub" }),
+    screen.queryByRole("group", { name: "资源类型" }),
   ).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
+    "Skill Hub",
+  );
 });
 
 it("reuses shared Skill data and the page container when switching Agents, while manual refresh still fetches", async () => {
@@ -472,7 +478,8 @@ it("reuses the MCP snapshot when switching Agents", async () => {
   const user = userEvent.setup();
   renderWithProviders(<App />);
   const nav = within(screen.getByRole("navigation", { name: "主导航" }));
-  await user.click(await nav.findByRole("button", { name: "MCP Hub" }));
+  const header = within(screen.getByRole("banner"));
+  await user.click(await header.findByRole("button", { name: "MCP" }));
   await screen.findByText("网关已关闭");
   await user.click(await nav.findByRole("button", { name: "Claude Code" }));
   await screen.findByRole("button", { name: "新建 MCP 分组" });

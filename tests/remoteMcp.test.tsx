@@ -210,7 +210,9 @@ it("keeps remote MCP navigation in place without allowing unsupported actions", 
         (call.args as { method?: string })?.method === "mcp_request",
     ),
   ).toBe(false);
-  fireEvent.click(nav.getByRole("button", { name: "Skill Hub" }));
+  fireEvent.click(
+    within(screen.getByRole("banner")).getByRole("button", { name: "Skill" }),
+  );
   expect(await nav.findByRole("button", { name: /Codex/ })).toBe(codex);
   expect(nav.getByRole("button", { name: "项目" })).toBe(projects);
   expect(codex).not.toHaveAttribute("aria-disabled", "true");

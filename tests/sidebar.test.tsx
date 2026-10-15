@@ -13,8 +13,9 @@ it("keeps sidebar navigation mounted across Agent, settings and Hub pages", asyn
   renderWithProviders(<App />);
   const sidebar = screen.getByRole("complementary", { name: "侧边栏" });
   const nav = within(sidebar).getByRole("navigation", { name: "主导航" });
+  const header = within(screen.getByRole("banner"));
   const agent = await within(nav).findByRole("button", { name: "Claude Code" });
-  fireEvent.click(within(nav).getByRole("button", { name: "MCP Hub" }));
+  fireEvent.click(await header.findByRole("button", { name: "MCP" }));
   fireEvent.click(agent);
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
     "Claude Code",
@@ -25,7 +26,11 @@ it("keeps sidebar navigation mounted across Agent, settings and Hub pages", asyn
   expect(within(nav).getByRole("button", { name: "Claude Code" })).toBe(agent);
   fireEvent.click(screen.getByRole("button", { name: "返回" }));
   expect(screen.getByPlaceholderText("搜索 MCP 分组…")).toBeVisible();
-  fireEvent.click(within(nav).getByRole("button", { name: "Skill Hub" }));
+  fireEvent.click(header.getByRole("button", { name: "Skill" }));
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    "Claude Code",
+  );
+  fireEvent.click(within(nav).getByRole("button", { name: "Hub" }));
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
     "Skill Hub",
   );
@@ -45,7 +50,7 @@ it("leaves the MCP editor when the currently selected Hub is clicked", async () 
   );
   fireEvent.click(
     within(screen.getByRole("navigation")).getByRole("button", {
-      name: "MCP Hub",
+      name: "Hub",
     }),
   );
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(

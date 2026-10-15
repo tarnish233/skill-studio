@@ -1,10 +1,11 @@
 import type { Settings } from "@/types";
 import { supportsMcp } from "@/lib/mcpAgents";
 
-export type StaticView =
-  "mcp" | "library" | "projects" | "settings" | "install";
+export type StaticView = "hub" | "projects" | "settings" | "install";
 export type ViewId = StaticView | `agent:${string}`;
+export type Resource = "skills" | "mcp";
 export const VIEW_STORAGE_KEY = "skill-studio-view";
+export const RESOURCE_STORAGE_KEY = "skill-studio-resource";
 
 /** Resolve persisted navigation only against the loaded settings. */
 export function readInitialView(
@@ -12,42 +13,38 @@ export function readInitialView(
   targetId = "local",
 ): ViewId {
   const stored = localStorage.getItem(VIEW_STORAGE_KEY);
-  let view: ViewId =
-    stored &&
-    (stored === "mcp" ||
-      stored === "projects" ||
-      stored === "library" ||
-      stored.startsWith("agent:"))
+  // The old two-Hub navigation persisted "library" or "mcp" as a view.
+  const view: ViewId =
+    stored === "projects" || stored?.startsWith("agent:")
       ? (stored as ViewId)
-      : "library";
+      : "hub";
   const mcp = initialResource(view, settings) === "mcp";
-  const hub = mcp ? "mcp" : "library";
-  if (view === "mcp" && settings?.manageMcp === false) view = "library";
   if (view.startsWith("agent:")) {
     const agent = view.slice("agent:".length);
     if (
       settings?.disabledAgents?.includes(agent) ||
       (mcp && !supportsMcp(agent))
     )
-      view = hub;
+      return "hub";
   }
   if (
     targetId !== "local" &&
     mcp &&
     (view === "projects" || view.startsWith("agent:"))
   )
-    view = hub;
+    return "hub";
   return view;
 }
 
-export function initialResource(
-  view: ViewId,
-  settings?: Settings,
-): "skills" | "mcp" {
+export function initialResource(view: ViewId, settings?: Settings): Resource {
   if (settings?.manageMcp === false) return "skills";
-  if (view === "mcp") return "mcp";
-  if (view === "library") return "skills";
-  return localStorage.getItem("skill-studio-resource") === "mcp"
+  // Honor the legacy Hub even if the old resource preference disagrees.
+  if (view === "hub") {
+    const storedView = localStorage.getItem(VIEW_STORAGE_KEY);
+    if (storedView === "mcp") return "mcp";
+    if (storedView === "library") return "skills";
+  }
+  return localStorage.getItem(RESOURCE_STORAGE_KEY) === "mcp"
     ? "mcp"
     : "skills";
 }

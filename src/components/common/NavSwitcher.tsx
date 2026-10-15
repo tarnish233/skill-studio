@@ -24,7 +24,6 @@ export interface NavSection<T extends string> {
 interface NavSwitcherProps<T extends string> {
   sections: NavSection<T>[];
   active: T;
-  selected?: T;
   onSelect: (id: T) => void;
 }
 
@@ -32,7 +31,6 @@ interface NavSwitcherProps<T extends string> {
 export function NavSwitcher<T extends string>({
   sections,
   active,
-  selected,
   onSelect,
 }: NavSwitcherProps<T>) {
   const layoutId = useId();
@@ -51,7 +49,7 @@ export function NavSwitcher<T extends string>({
             >
               {section.items.map(
                 ({ id, label, icon, badge, disabledReason }) => {
-                  const isActive = active === id || selected === id;
+                  const isActive = active === id;
                   const description = badge ? `${label} · ${badge}` : label;
                   return (
                     <Tooltip key={id}>
@@ -65,22 +63,19 @@ export function NavSwitcher<T extends string>({
                           aria-label={description}
                           aria-disabled={disabledReason ? true : undefined}
                           aria-current={active === id ? "page" : undefined}
-                          aria-pressed={selected === id ? true : undefined}
                           className={cn(
                             "relative isolate inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                             disabledReason
                               ? "cursor-default text-muted-foreground opacity-40"
-                              : selected === id
+                              : isActive
                                 ? "text-foreground"
-                                : isActive
-                                  ? "bg-foreground/[0.07] text-foreground"
-                                  : "text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground",
+                                : "text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground",
                           )}
                         >
-                          {selected === id && (
+                          {isActive && (
                             <motion.span
                               aria-hidden="true"
-                              layoutId="hub-selection"
+                              layoutId="nav-selection"
                               initial={false}
                               transition={{
                                 duration: reduceMotion ? 0 : 0.22,

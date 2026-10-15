@@ -48,7 +48,9 @@ it("opens all three Agents in both Skill and MCP navigation", async () => {
     ).toBeEnabled();
     expect(screen.getByRole("button", { name: "新建分组" })).toBeEnabled();
   }
-  fireEvent.click(nav.getByRole("button", { name: "MCP Hub" }));
+  fireEvent.click(
+    within(screen.getByRole("banner")).getByRole("button", { name: "MCP" }),
+  );
   for (const agent of skillOnlyAgents) {
     fireEvent.click(nav.getByRole("button", { name: agent.displayName }));
     expect(
@@ -60,7 +62,9 @@ it("opens all three Agents in both Skill and MCP navigation", async () => {
   }
   expect(nav.getByRole("button", { name: "Claude Code" })).toBeVisible();
   expect(nav.getByRole("button", { name: "Codex" })).toBeVisible();
-  fireEvent.click(nav.getByRole("button", { name: "Skill Hub" }));
+  fireEvent.click(
+    within(screen.getByRole("banner")).getByRole("button", { name: "Skill" }),
+  );
   for (const agent of skillOnlyAgents) {
     expect(nav.getByRole("button", { name: agent.displayName })).toBeVisible();
   }

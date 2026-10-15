@@ -144,13 +144,13 @@ describe("startup readiness", () => {
   it("resolves disabled MCP and hidden Agents before choosing startup queries", () => {
     localStorage.setItem("skill-studio-view", "mcp");
     expect(readInitialView({ ...defaultSettings(), manageMcp: false })).toBe(
-      "library",
+      "hub",
     );
     localStorage.setItem("skill-studio-view", "agent:codex");
     expect(
       readInitialView({ ...defaultSettings(), disabledAgents: ["codex"] }),
-    ).toBe("library");
+    ).toBe("hub");
     localStorage.setItem("skill-studio-view", "settings");
-    expect(readInitialView(defaultSettings())).toBe("library");
+    expect(readInitialView(defaultSettings())).toBe("hub");
   });
 });
