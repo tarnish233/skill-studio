@@ -5,13 +5,7 @@ use skill_studio_core::{models::config::AppConfig, services::studio::Studio};
 use std::fs;
 use support::Env;
 
-fn make(
-    env: &Env,
-    studio: &Studio,
-    config: &mut AppConfig,
-    group: &str,
-    names: &[&str],
-) -> String {
+fn make(env: &Env, studio: &Studio, config: &mut AppConfig, group: &str, names: &[&str]) -> String {
     for name in names {
         if !env.hub().join(name).exists() {
             env.write_simple_skill(&env.hub(), name);

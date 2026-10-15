@@ -803,30 +803,57 @@ fn group_can_be_active_for_two_agents_at_once() {
     let dir = root.path().join("studio");
     let claude = root.path().join("claude.json");
     let codex = root.path().join("config.toml");
-    save(&dir, entry(json!({"type":"stdio","command":"a"}), "direct"), vec![], Path::new("/app"), None).unwrap();
+    save(
+        &dir,
+        entry(json!({"type":"stdio","command":"a"}), "direct"),
+        vec![],
+        Path::new("/app"),
+        None,
+    )
+    .unwrap();
     groups::save_group(&dir, group("shared", &["sample"]), vec![]).unwrap();
     groups::activate(&dir, "claude", Some("shared"), &claude, Path::new("/app")).unwrap();
     groups::activate(&dir, "codex", Some("shared"), &codex, Path::new("/app")).unwrap();
     let catalog = read(&dir).unwrap();
     assert_eq!(catalog.active_groups["claude"].group_id, "shared");
     assert_eq!(catalog.active_groups["codex"].group_id, "shared");
-    assert!(native::entry(&std::fs::read_to_string(&claude).unwrap(), "claude", None, "Sample")
-        .unwrap()
-        .is_some());
-    assert!(native::entry(&std::fs::read_to_string(&codex).unwrap(), "codex", None, "Sample")
-        .unwrap()
-        .is_some());
+    assert!(native::entry(
+        &std::fs::read_to_string(&claude).unwrap(),
+        "claude",
+        None,
+        "Sample"
+    )
+    .unwrap()
+    .is_some());
+    assert!(native::entry(
+        &std::fs::read_to_string(&codex).unwrap(),
+        "codex",
+        None,
+        "Sample"
+    )
+    .unwrap()
+    .is_some());
     // Stopping claude's copy must not disturb codex's independent one.
     groups::activate(&dir, "claude", None, &claude, Path::new("/app")).unwrap();
-    assert!(native::entry(&std::fs::read_to_string(&claude).unwrap(), "claude", None, "Sample")
-        .unwrap()
-        .is_none());
+    assert!(native::entry(
+        &std::fs::read_to_string(&claude).unwrap(),
+        "claude",
+        None,
+        "Sample"
+    )
+    .unwrap()
+    .is_none());
     let catalog = read(&dir).unwrap();
     assert!(!catalog.active_groups.contains_key("claude"));
     assert_eq!(catalog.active_groups["codex"].group_id, "shared");
-    assert!(native::entry(&std::fs::read_to_string(&codex).unwrap(), "codex", None, "Sample")
-        .unwrap()
-        .is_some());
+    assert!(native::entry(
+        &std::fs::read_to_string(&codex).unwrap(),
+        "codex",
+        None,
+        "Sample"
+    )
+    .unwrap()
+    .is_some());
 }
 
 #[test]

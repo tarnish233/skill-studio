@@ -1,5 +1,4 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it } from "vitest";
 import { McpGroupsPage } from "@/pages/McpGroupsPage";
 import { renderWithProviders } from "./utils/render";
@@ -72,26 +71,24 @@ beforeEach(() => {
   });
 });
 async function open() {
-  const user = userEvent.setup();
   renderWithProviders(<McpGroupsPage />);
   expect(screen.getByRole("tab", { name: /^分组/ })).toHaveAttribute(
     "data-state",
     "active",
   );
   await screen.findByRole("button", { name: "编辑 开发" });
-  return user;
 }
 it("shows a shared MCP group once, and each Agent's icon toggles only that Agent, without starting the gateway", async () => {
   status.groups!.push({ ...group, id: "other", name: "Codex only" });
-  const user = await open();
+  await open();
   // 分组不再按 Agent 过滤：两个组同时可见
   expect(screen.getByText("Codex only")).toBeInTheDocument();
-  await user.click(
+  fireEvent.click(
     within(card("开发")).getByRole("button", { name: "为 Claude Code 启用" }),
   );
   await screen.findByText("使用中");
   expect(screen.getByRole("button", { name: "删除 开发" })).toBeDisabled();
-  await user.click(
+  fireEvent.click(
     within(card("开发")).getByRole("button", { name: "为 Claude Code 停用" }),
   );
   await waitFor(() =>
@@ -113,12 +110,12 @@ it("shows a shared MCP group once, and each Agent's icon toggles only that Agent
   ]);
 });
 it("lets two Agents activate the same shared group independently", async () => {
-  const user = await open();
-  await user.click(
+  await open();
+  fireEvent.click(
     within(card("开发")).getByRole("button", { name: "为 Claude Code 启用" }),
   );
   await screen.findByText("使用中");
-  await user.click(
+  fireEvent.click(
     within(card("开发")).getByRole("button", { name: "为 Codex 启用" }),
   );
   await waitFor(() =>
@@ -147,10 +144,10 @@ it("saves membership without applying it, and re-clicking the Agent icon re-appl
   status.activeGroups = {
     claude: { groupId: "g1", entries: [entry], bindings: [] },
   };
-  const user = await open();
-  await user.click(screen.getByRole("button", { name: "编辑 开发" }));
-  await user.click(screen.getByRole("checkbox", { name: "选择 Work" }));
-  await user.click(screen.getByRole("button", { name: "保存" }));
+  await open();
+  fireEvent.click(screen.getByRole("button", { name: "编辑 开发" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "选择 Work" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await screen.findByText("有待应用修改");
   expect(methods()).toContain("saveGroup");
   expect(methods()).not.toContain("activateGroup");
@@ -181,13 +178,13 @@ it("records discovered MCP references without adopting or activating on save", a
       managedId: null,
     },
   ];
-  const user = await open();
-  await user.click(screen.getByRole("button", { name: "新建 MCP 分组" }));
+  await open();
+  fireEvent.click(screen.getByRole("button", { name: "新建 MCP 分组" }));
   fireEvent.change(screen.getByRole("textbox", { name: "MCP 分组名称" }), {
     target: { value: "浏览器" },
   });
-  await user.click(screen.getByRole("checkbox", { name: "选择 Scan" }));
-  await user.click(screen.getByRole("button", { name: "保存" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "选择 Scan" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await waitFor(() => expect(methods()).toContain("saveGroup"));
   expect(
     calls.find(
@@ -241,7 +238,7 @@ it("does not duplicate Hub entries when group activation changes the native enab
 });
 
 it("uses the same group-first navigation and toolbar flow as Skills", async () => {
-  const user = await open();
+  await open();
   expect(screen.getByRole("tab", { name: /^分组/ })).toHaveAttribute(
     "data-state",
     "active",
@@ -249,12 +246,18 @@ it("uses the same group-first navigation and toolbar flow as Skills", async () =
   expect(
     screen.getByRole("button", { name: "新建 MCP 分组" }),
   ).toBeInTheDocument();
-  await user.click(screen.getByRole("tab", { name: /^已配置 MCP/ }));
+  fireEvent.mouseDown(screen.getByRole("tab", { name: /^已配置 MCP/ }), {
+    button: 0,
+    ctrlKey: false,
+  });
   expect(screen.getAllByRole("button", { name: "添加 MCP" })).toHaveLength(1);
-  await user.click(screen.getByRole("button", { name: "添加 MCP" }));
+  fireEvent.click(screen.getByRole("button", { name: "添加 MCP" }));
   const dialog = await screen.findByRole("dialog");
-  await user.click(within(dialog).getByRole("button", { name: "取消" }));
-  await user.click(screen.getByRole("tab", { name: /^未托管 MCP/ }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+  fireEvent.mouseDown(screen.getByRole("tab", { name: /^未托管 MCP/ }), {
+    button: 0,
+    ctrlKey: false,
+  });
   expect(
     screen.getByRole("textbox", { name: "搜索已配置 MCP…" }),
   ).toBeInTheDocument();

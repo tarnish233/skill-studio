@@ -27,11 +27,7 @@ impl Studio {
         if name.is_empty() {
             return Err(Error::invalid("分组名不能为空"));
         }
-        if config
-            .groups
-            .iter()
-            .any(|g| g.name == name && g.id != id)
-        {
+        if config.groups.iter().any(|g| g.name == name && g.id != id) {
             return Err(Error::invalid("已存在同名分组"));
         }
         let mut seen = HashSet::new();

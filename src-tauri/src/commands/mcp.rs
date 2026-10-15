@@ -204,10 +204,9 @@ pub async fn mcp_request(
                     }
                     groups::save_group(&task_dir, group, imports)
                 }
-                "removeGroup" => groups::remove_group(
-                    &task_dir,
-                    params["id"].as_str().context("缺少分组 ID")?,
-                ),
+                "removeGroup" => {
+                    groups::remove_group(&task_dir, params["id"].as_str().context("缺少分组 ID")?)
+                }
                 "reorderGroups" => groups::reorder(
                     &task_dir,
                     &serde_json::from_value::<Vec<String>>(params["ids"].clone())?,
