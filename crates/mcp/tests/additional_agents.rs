@@ -175,7 +175,6 @@ fn groups_and_project_removal_restore_each_agents_original_definition() {
             &dir,
             groups::Group {
                 id: "group".into(),
-                agent: agent.into(),
                 name: "work".into(),
                 entry_ids: vec!["sample".into()],
                 references: vec![],
@@ -257,7 +256,6 @@ fn activating_groups_enables_new_direct_bindings_without_changing_hub_definition
                 &dir,
                 groups::Group {
                     id: "group".into(),
-                    agent: agent.into(),
                     name: "work".into(),
                     entry_ids: vec!["sample".into()],
                     references: vec![],
@@ -345,7 +343,6 @@ fn disabled_entries_and_variable_references_remain_agent_owned() {
             &dir,
             groups::Group {
                 id: "group".into(),
-                agent: agent.into(),
                 name: "work".into(),
                 entry_ids: vec!["sample".into()],
                 references: vec![],

@@ -155,7 +155,7 @@ fn manual_policy_does_not_block_group_switches_or_rewrite_native_configuration()
                 .skill
                 .id;
             studio
-                .save_agent_group(&mut c, group.into(), agent, group, vec![id])
+                .save_group(&mut c, group.into(), group, vec![id])
                 .unwrap();
             studio
                 .activate_agent_group(&mut c, agent, Some(group))

@@ -1,14 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-/// A saved skill combination. Agent-owned groups are activated exclusively;
-/// legacy shared groups remain available to existing project bindings.
+/// A saved skill combination, shared across agents. Each agent independently
+/// decides whether this group is its current active combination (see
+/// `AppConfig::active_groups`), so the same group can be active for several
+/// agents at once without being duplicated per agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Group {
     pub id: String,
-    /// None denotes a legacy shared group; retained for existing project bindings.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_id: Option<String>,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -36,7 +35,6 @@ impl Group {
     pub fn new(id: String, name: String) -> Self {
         Self {
             id,
-            agent_id: None,
             name,
             description: None,
             icon: None,

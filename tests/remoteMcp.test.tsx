@@ -187,9 +187,9 @@ it("keeps remote MCP navigation in place without allowing unsupported actions", 
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
     "MCP Hub",
   );
-  const codex = nav.getByRole("button", { name: /Codex/ });
+  const groups = nav.getByRole("button", { name: "分组" });
   const projects = nav.getByRole("button", { name: "项目" });
-  for (const button of [codex, projects]) {
+  for (const button of [groups, projects]) {
     expect(button).toBeVisible();
     expect(button).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(button);
@@ -213,8 +213,8 @@ it("keeps remote MCP navigation in place without allowing unsupported actions", 
   fireEvent.click(
     within(screen.getByRole("banner")).getByRole("button", { name: "Skill" }),
   );
-  expect(await nav.findByRole("button", { name: /Codex/ })).toBe(codex);
+  expect(await nav.findByRole("button", { name: "分组" })).toBe(groups);
   expect(nav.getByRole("button", { name: "项目" })).toBe(projects);
-  expect(codex).not.toHaveAttribute("aria-disabled", "true");
+  expect(groups).not.toHaveAttribute("aria-disabled", "true");
   expect(projects).not.toHaveAttribute("aria-disabled", "true");
 });

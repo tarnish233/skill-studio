@@ -22,11 +22,7 @@ pub fn create_group(
     }
     state
         .mutate(|_, config| {
-            if config
-                .groups
-                .iter()
-                .any(|g| g.name == name && g.agent_id.is_none())
-            {
+            if config.groups.iter().any(|g| g.name == name) {
                 return Err(Error::invalid(format!("已存在同名分组: {name}")));
             }
             let mut group = Group::new(uuid_v4(), name);
@@ -53,11 +49,11 @@ pub fn update_group(
                 if new_name.is_empty() {
                     return Err(Error::invalid("分组名不能为空"));
                 }
-                if config.groups.iter().any(|g| {
-                    g.name == new_name
-                        && g.id != group_id
-                        && g.agent_id == config.group(&group_id).and_then(|g| g.agent_id.clone())
-                }) {
+                if config
+                    .groups
+                    .iter()
+                    .any(|g| g.name == new_name && g.id != group_id)
+                {
                     return Err(Error::invalid(format!("已存在同名分组: {new_name}")));
                 }
             }
@@ -159,22 +155,15 @@ fn uuid_v4() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-pub fn save_agent_group(
+pub fn save_group(
     state: &AppState,
     group_id: Option<String>,
-    agent_id: String,
     name: String,
     skill_ids: Vec<String>,
 ) -> Result<Group, String> {
     state
         .mutate(|studio, config| {
-            studio.save_agent_group(
-                config,
-                group_id.unwrap_or_else(uuid_v4),
-                &agent_id,
-                &name,
-                skill_ids,
-            )
+            studio.save_group(config, group_id.unwrap_or_else(uuid_v4), &name, skill_ids)
         })
         .map_err(Into::into)
 }

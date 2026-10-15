@@ -54,18 +54,8 @@ describe("token 体量汇总", () => {
     expect(projectSkillIds(project, [])).toEqual(["a"]);
   });
 
-  it("归属别的 agent 的分组不计入 —— 后端根本不会为它写文件", () => {
-    const groups = [makeGroup({ id: "g1", agentId: "codex", skillIds: ["b"] })];
-    const project = makeProject({
-      agentIds: ["claude-code"],
-      skillIds: ["a"],
-      groupIds: ["g1"],
-    });
-    expect(projectSkillIds(project, groups)).toEqual(["a"]);
-  });
-
-  it("归属为空的旧共享分组对每个勾选的 agent 都展开", () => {
-    const groups = [makeGroup({ id: "g1", agentId: null, skillIds: ["b"] })];
+  it("分组不区分当年用哪个 Agent 创建，绑定后其成员全部并进来", () => {
+    const groups = [makeGroup({ id: "g1", skillIds: ["b"] })];
     const project = makeProject({
       agentIds: ["claude-code"],
       skillIds: ["a"],
@@ -74,10 +64,10 @@ describe("token 体量汇总", () => {
     expect(projectSkillIds(project, groups).sort()).toEqual(["a", "b"]);
   });
 
-  it("多个 agent 各自归属的分组求并集，重叠成员只算一次", () => {
+  it("绑定多个分组求并集，重叠成员只算一次", () => {
     const groups = [
-      makeGroup({ id: "g1", agentId: "claude-code", skillIds: ["a"] }),
-      makeGroup({ id: "g2", agentId: "codex", skillIds: ["a", "b"] }),
+      makeGroup({ id: "g1", skillIds: ["a"] }),
+      makeGroup({ id: "g2", skillIds: ["a", "b"] }),
     ];
     const project = makeProject({
       agentIds: ["claude-code", "codex"],

@@ -1,4 +1,3 @@
-import { supportsMcp } from "@/lib/mcpAgents";
 import {
   readInitialView,
   initialResource,
@@ -8,7 +7,7 @@ import {
   type StaticView,
   type ViewId,
 } from "@/lib/initialView";
-import { AgentMcpGroups } from "@/pages/AgentMcpGroups";
+import { McpGroupsPage } from "@/pages/McpGroupsPage";
 import { McpProjectsPage } from "@/pages/McpProjectsPage";
 import {
   TargetPicker,
@@ -30,6 +29,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import {
   ArrowLeft,
   FolderGit2,
+  Group as GroupIcon,
   Layers,
   RefreshCw,
   Settings as SettingsIcon,
@@ -37,12 +37,11 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { AgentIcon } from "@/components/common/AgentIcon";
 import { NavSwitcher, type NavSection } from "@/components/common/NavSwitcher";
-import { useAgents, useSettings, useSkillsAutoRefresh } from "@/hooks/useData";
+import { useSettings, useSkillsAutoRefresh } from "@/hooks/useData";
 import { systemApi } from "@/lib/api";
 import { isLinux, isWindows } from "@/lib/platform";
-import { AgentPage } from "@/pages/AgentGroupsPage";
+import { GroupsPage } from "@/pages/GroupsPage";
 import { LibraryPage } from "@/pages/LibraryPage";
 import { ProjectsPage } from "@/pages/ProjectsPage";
 import { McpPage, mcpEditorTitle, type McpEditorState } from "@/pages/McpPage";
@@ -52,10 +51,9 @@ import { SettingsPage } from "@/pages/SettingsPage";
 // Windows / Linux 自带或自绘标题栏，不留空。
 const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28;
 
-const AGENT_PREFIX = "agent:";
-
 const STATIC_TITLES: Record<StaticView, string> = {
   hub: "Hub",
+  groups: "分组",
   projects: "项目",
   settings: "设置",
   install: "安装 skill",
@@ -73,13 +71,8 @@ function AppContent() {
   const target = useTarget();
   const connecting = useTargetConnecting();
   const requestNavigation = useNavigationGuard();
-  const { data: allAgents = [], isDetecting, detectionFailed } = useAgents();
   const { data: settings } = useSettings();
   const mcpEnabled = settings ? settings.manageMcp !== false : false;
-  const agents = useMemo(
-    () => allAgents.filter((a) => !settings?.disabledAgents?.includes(a.id)),
-    [allAgents, settings?.disabledAgents],
-  );
   const queryClient = useQueryClient();
   useSkillsAutoRefresh();
 
@@ -127,14 +120,10 @@ function AppContent() {
 
   useEffect(() => {
     const disabledView = (id: ViewId) =>
-      (remoteMcp && (id === "projects" || id.startsWith(AGENT_PREFIX))) ||
-      (id.startsWith(AGENT_PREFIX) &&
-        (settings?.disabledAgents?.includes(id.slice(AGENT_PREFIX.length)) ||
-          (activeResource === "mcp" &&
-            !supportsMcp(id.slice(AGENT_PREFIX.length)))));
+      remoteMcp && (id === "projects" || id === "groups");
     if (disabledView(backTarget.current)) backTarget.current = "hub";
     if (disabledView(view)) setView("hub");
-  }, [settings?.disabledAgents, view, activeResource, remoteMcp]);
+  }, [view, remoteMcp]);
 
   // 启动期错误（例如配置文件坏了）要让用户看见，而不是静默用默认值跑
   useEffect(() => {
@@ -144,16 +133,13 @@ function AppContent() {
       .catch(() => setInitError(null));
   }, []);
 
-  const titles = useMemo(() => {
-    const map: Record<string, string> = {
+  const titles = useMemo<Record<string, string>>(
+    () => ({
       ...STATIC_TITLES,
       hub: activeResource === "mcp" ? "MCP Hub" : "Skill Hub",
-    };
-    for (const a of agents) {
-      map[`${AGENT_PREFIX}${a.id}`] = a.displayName;
-    }
-    return map;
-  }, [agents, activeResource]);
+    }),
+    [activeResource],
+  );
 
   const sections = useMemo<NavSection<ViewId>[]>(
     () => [
@@ -167,29 +153,17 @@ function AppContent() {
         ],
       },
       {
-        label: "AGENT",
-        items: agents
-          .filter((a) => activeResource === "skills" || supportsMcp(a.id))
-          .map((a) => ({
-            id: `${AGENT_PREFIX}${a.id}` as ViewId,
-            label: a.displayName,
-            icon: (
-              <AgentIcon
-                agentId={a.id}
-                className={a.id === "pi" ? "scale-90" : undefined}
-              />
-            ),
-            badge: a.detected
-              ? undefined
-              : isDetecting
-                ? "检测中"
-                : detectionFailed
-                  ? "检测失败"
-                  : "未装",
+        label: "分组",
+        items: [
+          {
+            id: "groups",
+            label: STATIC_TITLES.groups,
+            icon: <GroupIcon className="h-5 w-5" />,
             disabledReason: remoteMcp
               ? "远程 MCP 暂不支持分组管理，请在 MCP Hub 查看。"
               : undefined,
-          })),
+          },
+        ],
       },
       {
         label: "项目",
@@ -205,7 +179,7 @@ function AppContent() {
         ],
       },
     ],
-    [agents, activeResource, remoteMcp, isDetecting, detectionFailed],
+    [remoteMcp],
   );
 
   const refresh = () => {
@@ -213,14 +187,10 @@ function AppContent() {
   };
 
   const content = () => {
-    if (remoteMcp && (view === "projects" || view.startsWith(AGENT_PREFIX)))
+    if (remoteMcp && (view === "projects" || view === "groups"))
       return <McpPage />;
-    if (view.startsWith(AGENT_PREFIX)) {
-      return activeResource === "mcp" ? (
-        <AgentMcpGroups key={view} agentId={view.slice(AGENT_PREFIX.length)} />
-      ) : (
-        <AgentPage key={view} agentId={view.slice(AGENT_PREFIX.length)} />
-      );
+    if (view === "groups") {
+      return activeResource === "mcp" ? <McpGroupsPage /> : <GroupsPage />;
     }
     switch (view) {
       case "hub":
@@ -272,12 +242,9 @@ function AppContent() {
     if (next === activeResource || (next === "mcp" && !mcpEnabled)) return;
     requestNavigation(() => {
       const unavailable = (id: ViewId) =>
-        (id.startsWith(AGENT_PREFIX) &&
-          (settings?.disabledAgents?.includes(id.slice(AGENT_PREFIX.length)) ||
-            (next === "mcp" && !supportsMcp(id.slice(AGENT_PREFIX.length))))) ||
-        (next === "mcp" &&
-          target.id !== "local" &&
-          (id === "projects" || id.startsWith(AGENT_PREFIX)));
+        next === "mcp" &&
+        target.id !== "local" &&
+        (id === "projects" || id === "groups");
       if (unavailable(backTarget.current)) backTarget.current = "hub";
       if (view === "install" || !!mcpEditor || unavailable(view))
         setView("hub");

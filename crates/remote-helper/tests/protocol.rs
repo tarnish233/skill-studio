@@ -359,8 +359,8 @@ fn desktop_project_group_and_hub_workflow_uses_the_remote_home() {
     assert!(adopted.get("error").is_none(), "{adopted}");
     let id = &adopted["result"]["id"];
     let group = session.call(
-        "save_agent_group",
-        json!({"groupId":null,"agentId":"claude-code","name":"Remote group","skillIds":[id]}),
+        "save_group",
+        json!({"groupId":null,"name":"Remote group","skillIds":[id]}),
     );
     assert!(group.get("error").is_none(), "{group}");
     let activate = session.call(

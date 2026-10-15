@@ -96,16 +96,15 @@ pub async fn apply_group(
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub async fn save_agent_group(
+pub async fn save_group(
     state: State<'_, AppState>,
     group_id: Option<String>,
-    agent_id: String,
     name: String,
     skill_ids: Vec<String>,
 ) -> Result<Group, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        skill_studio_service::groups::save_agent_group(&state, group_id, agent_id, name, skill_ids)
+        skill_studio_service::groups::save_group(&state, group_id, name, skill_ids)
     })
     .await
     .map_err(|e| e.to_string())?

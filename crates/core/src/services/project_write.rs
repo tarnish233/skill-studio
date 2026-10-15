@@ -85,13 +85,7 @@ impl Studio {
                 let group = config
                     .group(gid)
                     .ok_or_else(|| Error::NotFound(format!("分组 {gid}")))?;
-                if group
-                    .agent_id
-                    .as_ref()
-                    .is_none_or(|owner| owner == agent_id)
-                {
-                    ids.extend(group.skill_ids.clone());
-                }
+                ids.extend(group.skill_ids.clone());
             }
             let mut seen = HashSet::new();
             for sid in ids.into_iter().filter(|sid| seen.insert(sid.clone())) {

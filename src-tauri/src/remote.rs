@@ -827,8 +827,8 @@ print(p, end='')
         );
         let skill = call("adopt_to_hub", json!({"skillId":skill_id}));
         let group = call(
-            "save_agent_group",
-            json!({"agentId":"claude-code","name":"Fixture group","skillIds":[skill["id"]]}),
+            "save_group",
+            json!({"name":"Fixture group","skillIds":[skill["id"]]}),
         );
         let project = call(
             "create_project",

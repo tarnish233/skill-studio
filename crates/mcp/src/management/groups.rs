@@ -1,11 +1,14 @@
 //! Agent-local combinations. Metadata and all native edits share the management journal.
 use super::*;
 
+/// A saved MCP combination, shared across agents. Each agent independently
+/// decides whether this group is its current active combination (see
+/// `Catalog::active_groups`), so the same group can be active for several
+/// agents at once without being duplicated per agent.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Group {
     pub id: String,
-    pub agent: String,
     pub name: String,
     pub entry_ids: Vec<String>,
     /// Non-owning references captured from scanned sources; saving never adopts them.
@@ -25,7 +28,6 @@ fn agent(agent: &str) -> Result<()> {
     crate::agents::validate(agent)
 }
 pub fn save_group(dir: &Path, mut group: Group, imports: Vec<Entry>) -> Result<()> {
-    agent(&group.agent)?;
     group.name = group.name.trim().into();
     if group.name.is_empty() || group.id.is_empty() {
         bail!("请填写分组名称");
@@ -36,16 +38,9 @@ pub fn save_group(dir: &Path, mut group: Group, imports: Vec<Entry>) -> Result<(
     if catalog
         .groups
         .iter()
-        .any(|g| g.id == group.id && g.agent != group.agent)
+        .any(|g| g.name == group.name && g.id != group.id)
     {
-        bail!("不能修改其他 Agent 的分组");
-    }
-    if catalog
-        .groups
-        .iter()
-        .any(|g| g.agent == group.agent && g.name == group.name && g.id != group.id)
-    {
-        bail!("此 Agent 已存在同名分组");
+        bail!("已存在同名分组");
     }
     // Ignore references submitted in the group payload; only server-rescanned imports
     // or previously saved references can supply filesystem locations.
@@ -85,48 +80,33 @@ pub fn save_group(dir: &Path, mut group: Group, imports: Vec<Entry>) -> Result<(
         group.sort_order = catalog.groups[i].sort_order;
         catalog.groups[i] = group;
     } else {
-        group.sort_order = catalog
-            .groups
-            .iter()
-            .filter(|g| g.agent == group.agent)
-            .count();
+        group.sort_order = catalog.groups.len();
         catalog.groups.push(group);
     }
     commit(dir, BTreeMap::new(), &catalog)
 }
-pub fn remove_group(dir: &Path, agent_id: &str, id: &str) -> Result<()> {
-    agent(agent_id)?;
+pub fn remove_group(dir: &Path, id: &str) -> Result<()> {
     let _lock = lock(dir)?;
     let mut catalog = read_unlocked(dir)?;
     ensure_active(&catalog)?;
     if catalog.active_groups.values().any(|g| g.group_id == id) {
         bail!("请先停用分组");
     }
-    if !catalog
-        .groups
-        .iter()
-        .any(|g| g.agent == agent_id && g.id == id)
-    {
-        bail!("分组不存在或不属于此 Agent");
+    if !catalog.groups.iter().any(|g| g.id == id) {
+        bail!("分组不存在");
     }
     catalog.groups.retain(|g| g.id != id);
     commit(dir, BTreeMap::new(), &catalog)
 }
-pub fn reorder(dir: &Path, agent_id: &str, ids: &[String]) -> Result<()> {
-    agent(agent_id)?;
+pub fn reorder(dir: &Path, ids: &[String]) -> Result<()> {
     let _lock = lock(dir)?;
     let mut catalog = read_unlocked(dir)?;
     ensure_active(&catalog)?;
-    let own: HashSet<_> = catalog
-        .groups
-        .iter()
-        .filter(|g| g.agent == agent_id)
-        .map(|g| &g.id)
-        .collect();
+    let own: HashSet<_> = catalog.groups.iter().map(|g| &g.id).collect();
     if ids.len() != own.len() || ids.iter().collect::<HashSet<_>>() != own {
         bail!("分组列表已变化，请刷新后重试");
     }
-    for group in catalog.groups.iter_mut().filter(|g| g.agent == agent_id) {
+    for group in catalog.groups.iter_mut() {
         group.sort_order = ids.iter().position(|id| id == &group.id).unwrap();
     }
     commit(dir, BTreeMap::new(), &catalog)
@@ -147,8 +127,8 @@ pub fn activate(
         let group = catalog
             .groups
             .iter()
-            .find(|g| g.id == id && g.agent == agent_id)
-            .context("分组不存在或不属于此 Agent")?;
+            .find(|g| g.id == id)
+            .context("分组不存在")?;
         if group.entry_ids.is_empty() {
             bail!("请先为分组选择 MCP");
         }

@@ -39,27 +39,21 @@ export function sumTokens(
 
 /**
  * 一个项目实际会写进去的 skill，口径必须与后端 `Studio::write_project` 一致：
- * 后端是"对 project.agentIds 里每个 agent，取直接绑定的 skillIds + 归属为空或
- * 归属于该 agent 的分组成员"，跨 agent 求并集。
- *
- * 分组选择器会列出别的 agent 的分组（只是标上归属），所以"绑了一个 codex 的组"
- * 是一次点击就能造出来的状态；无条件并集所有 groupIds 会让卡片报出一个后端
- * 一个文件都不会写的数字。agentIds 为空时后端同样什么都不写，这里也就是 0。
+ * 分组不归属任何单个 agent，后端对 project.agentIds 里每个 agent 都取同一份
+ * “直接绑定的 skillIds + 所有已选分组成员”并集，不按 agent 过滤。
+ * agentIds 为空时后端什么都不写，这里也就是 0。
  * 同一个 skill 既单独绑定又在组里，只占一份文件，也只该算一次 token。
  */
 export function projectSkillIds(
   project: ProjectBinding,
   groups: Group[],
 ): string[] {
-  const ids = new Set<string>();
-  for (const agentId of project.agentIds) {
-    for (const id of project.skillIds) ids.add(id);
-    for (const groupId of project.groupIds) {
-      const group = groups.find((g) => g.id === groupId);
-      // 归属为空的是旧共享分组，对每个 agent 都展开
-      if (!group || (group.agentId && group.agentId !== agentId)) continue;
-      for (const id of group.skillIds) ids.add(id);
-    }
+  if (project.agentIds.length === 0) return [];
+  const ids = new Set<string>(project.skillIds);
+  for (const groupId of project.groupIds) {
+    const group = groups.find((g) => g.id === groupId);
+    if (!group) continue;
+    for (const id of group.skillIds) ids.add(id);
   }
   return [...ids];
 }

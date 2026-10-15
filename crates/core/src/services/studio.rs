@@ -765,9 +765,6 @@ impl Studio {
         mode: GroupApplyMode,
         force: bool,
     ) -> Result<LinkReport> {
-        if config.group(group_id).is_some_and(|g| g.agent_id.is_some()) {
-            return Err(Error::invalid("Agent 分组请使用启用/切换操作"));
-        }
         let skill_ids = config
             .group(group_id)
             .ok_or_else(|| Error::NotFound(format!("分组 {group_id}")))?

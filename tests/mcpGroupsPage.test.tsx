@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it } from "vitest";
-import { AgentMcpGroups } from "@/pages/AgentMcpGroups";
+import { McpGroupsPage } from "@/pages/McpGroupsPage";
 import { renderWithProviders } from "./utils/render";
 import { handlers, calls, claudeAgent, codexAgent } from "./mocks/tauri";
 import { setTarget } from "@/lib/api/transport";
@@ -19,9 +19,10 @@ const entry = {
   scopes: [],
   bindings: [],
 };
+// 分组不归属某个 Agent：名称和成员只保存一次，是否对某个 Agent 生效由
+// activeGroups 里各自的记录独立决定（见下面 beforeEach 的 activateGroup mock）。
 const group = {
   id: "g1",
-  agent: "claude",
   name: "开发",
   entryIds: ["one"],
   sortOrder: 0,
@@ -30,6 +31,9 @@ const methods = () =>
   calls
     .filter((c) => c.command === "mcp_request")
     .map((c) => (c.args as { method: string }).method);
+function card(name: string) {
+  return screen.getByText(name).closest('[class*="rounded-xl"]') as HTMLElement;
+}
 beforeEach(() => {
   setTarget({ id: "local", name: "本机", connected: true });
   status = {
@@ -53,19 +57,23 @@ beforeEach(() => {
           params.group,
         ],
       };
-    if (method === "activateGroup")
-      status = {
-        ...status,
-        activeGroups: params.id
-          ? { claude: { groupId: params.id, entries: [entry], bindings: [] } }
-          : {},
-      };
+    if (method === "activateGroup") {
+      const next = { ...status.activeGroups };
+      if (params.id)
+        next[params.agent as string] = {
+          groupId: params.id,
+          entries: [entry],
+          bindings: [],
+        };
+      else delete next[params.agent as string];
+      status = { ...status, activeGroups: next };
+    }
     return null;
   });
 });
 async function open() {
   const user = userEvent.setup();
-  renderWithProviders(<AgentMcpGroups agentId="claude-code" />);
+  renderWithProviders(<McpGroupsPage />);
   expect(screen.getByRole("tab", { name: /^分组/ })).toHaveAttribute(
     "data-state",
     "active",
@@ -73,19 +81,19 @@ async function open() {
   await screen.findByRole("button", { name: "编辑 开发" });
   return user;
 }
-it("keeps MCP groups agent-local and switches them without changing Skill groups or starting the gateway", async () => {
-  status.groups!.push({
-    ...group,
-    id: "other",
-    agent: "codex",
-    name: "Codex only",
-  });
+it("shows a shared MCP group once, and each Agent's icon toggles only that Agent, without starting the gateway", async () => {
+  status.groups!.push({ ...group, id: "other", name: "Codex only" });
   const user = await open();
-  expect(screen.queryByText("Codex only")).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "启用" }));
+  // 分组不再按 Agent 过滤：两个组同时可见
+  expect(screen.getByText("Codex only")).toBeInTheDocument();
+  await user.click(
+    within(card("开发")).getByRole("button", { name: "为 Claude Code 启用" }),
+  );
   await screen.findByText("使用中");
   expect(screen.getByRole("button", { name: "删除 开发" })).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: "停用" }));
+  await user.click(
+    within(card("开发")).getByRole("button", { name: "为 Claude Code 停用" }),
+  );
   await waitFor(() =>
     expect(screen.queryByText("使用中")).not.toBeInTheDocument(),
   );
@@ -104,7 +112,38 @@ it("keeps MCP groups agent-local and switches them without changing Skill groups
     { agent: "claude", id: null },
   ]);
 });
-it("saves membership without applying it and exposes pending changes on the active group", async () => {
+it("lets two Agents activate the same shared group independently", async () => {
+  const user = await open();
+  await user.click(
+    within(card("开发")).getByRole("button", { name: "为 Claude Code 启用" }),
+  );
+  await screen.findByText("使用中");
+  await user.click(
+    within(card("开发")).getByRole("button", { name: "为 Codex 启用" }),
+  );
+  await waitFor(() =>
+    expect(
+      calls
+        .filter(
+          (c) =>
+            c.command === "mcp_request" &&
+            (c.args as any).method === "activateGroup",
+        )
+        .map((c) => (c.args as any).params),
+    ).toEqual([
+      { agent: "claude", id: "g1" },
+      { agent: "codex", id: "g1" },
+    ]),
+  );
+  // 两个 Agent 的图标都停在"已启用"，互不覆盖
+  expect(
+    within(card("开发")).getByRole("button", { name: "为 Claude Code 停用" }),
+  ).toBeInTheDocument();
+  expect(
+    within(card("开发")).getByRole("button", { name: "为 Codex 停用" }),
+  ).toBeInTheDocument();
+});
+it("saves membership without applying it, and re-clicking the Agent icon re-applies instead of toggling off", async () => {
   status.activeGroups = {
     claude: { groupId: "g1", entries: [entry], bindings: [] },
   };
@@ -115,8 +154,9 @@ it("saves membership without applying it and exposes pending changes on the acti
   await screen.findByText("有待应用修改");
   expect(methods()).toContain("saveGroup");
   expect(methods()).not.toContain("activateGroup");
-  expect(screen.getByRole("button", { name: "应用修改" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "停用" })).toBeEnabled();
+  expect(
+    screen.getByRole("button", { name: "为 Claude Code 重新应用" }),
+  ).toBeEnabled();
 });
 it("records discovered MCP references without adopting or activating on save", async () => {
   status.discovered = [
@@ -156,7 +196,6 @@ it("records discovered MCP references without adopting or activating on save", a
     )?.args,
   ).toMatchObject({
     params: {
-      agent: "claude",
       group: { name: "浏览器", entryIds: ["scanned"] },
       imports: [
         { id: "scanned", definition: { type: "stdio", command: "scan" } },

@@ -73,7 +73,10 @@ impl Store {
         }
     }
 
-    /// v2 adds optional Agent ownership and active combinations. Legacy groups stay shared.
+    /// v2 added optional Agent ownership and active combinations; v4 dropped that
+    /// ownership again so a group can be independently active per agent. Both are
+    /// plain field changes with sane defaults, so old JSON just loads with the new
+    /// shape and the version number is bumped for the record.
     fn migrate(&self, config: &mut AppConfig) -> Result<()> {
         if config.version > CONFIG_VERSION {
             return Err(Error::config(format!(

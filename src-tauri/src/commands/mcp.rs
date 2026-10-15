@@ -137,11 +137,9 @@ pub async fn mcp_request(
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             use anyhow::Context;
             use management::groups;
-            let agent = params["agent"].as_str().context("缺少 Agent")?;
             match method.as_str() {
                 "saveGroup" => {
                     let group: groups::Group = serde_json::from_value(params["group"].clone())?;
-                    anyhow::ensure!(group.agent == agent, "分组不属于此 Agent");
                     let mut imports = vec![];
                     if let Some(requested) = params["imports"].as_array().filter(|v| !v.is_empty())
                     {
@@ -208,15 +206,14 @@ pub async fn mcp_request(
                 }
                 "removeGroup" => groups::remove_group(
                     &task_dir,
-                    agent,
                     params["id"].as_str().context("缺少分组 ID")?,
                 ),
                 "reorderGroups" => groups::reorder(
                     &task_dir,
-                    agent,
                     &serde_json::from_value::<Vec<String>>(params["ids"].clone())?,
                 ),
                 _ => {
+                    let agent = params["agent"].as_str().context("缺少 Agent")?;
                     let id = params["id"].as_str();
                     if id.is_none() {
                         return groups::activate(

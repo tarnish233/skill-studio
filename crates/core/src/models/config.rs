@@ -8,7 +8,9 @@ use super::project::ProjectBinding;
 use super::skill::LinkMode;
 
 /// 当前配置结构版本。改结构时 +1 并在 store 里加迁移分支。
-pub const CONFIG_VERSION: u32 = 3;
+/// v4：分组不再归属单个 agent；是否对某 agent 生效完全由 active_groups 决定，
+/// 同一个分组可以同时是多个 agent 的当前组合。
+pub const CONFIG_VERSION: u32 = 4;
 
 /// 某个 skill 在某个 agent 上的注册记录。
 ///

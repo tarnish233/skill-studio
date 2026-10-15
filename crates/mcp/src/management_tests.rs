@@ -46,7 +46,6 @@ fn disabling_management_restores_both_agents_and_resumes_managed_group() {
         &dir,
         groups::Group {
             id: "group".into(),
-            agent: "codex".into(),
             name: "work".into(),
             entry_ids: vec!["sample".into()],
             references: vec![],
@@ -611,10 +610,9 @@ fn claude_local_scope_is_preserved_during_migration() {
     assert_eq!(doc["mcpServers"]["global"]["command"], "global");
 }
 
-fn group(id: &str, agent: &str, ids: &[&str]) -> groups::Group {
+fn group(id: &str, ids: &[&str]) -> groups::Group {
     groups::Group {
         id: id.into(),
-        agent: agent.into(),
         name: id.into(),
         entry_ids: ids.iter().map(|s| s.to_string()).collect(),
         references: vec![],
@@ -642,9 +640,9 @@ fn groups_switch_restore_and_isolate_agents_and_provider_settings() {
     b.name = "B".into();
     save(&dir, a, vec![], Path::new("/app"), None).unwrap();
     save(&dir, b, vec![], Path::new("/app"), None).unwrap();
-    groups::save_group(&dir, group("one", "claude", &["sample"]), vec![]).unwrap();
-    groups::save_group(&dir, group("two", "claude", &["b"]), vec![]).unwrap();
-    groups::save_group(&dir, group("code", "codex", &["sample"]), vec![]).unwrap();
+    groups::save_group(&dir, group("one", &["sample"]), vec![]).unwrap();
+    groups::save_group(&dir, group("two", &["b"]), vec![]).unwrap();
+    groups::save_group(&dir, group("code", &["sample"]), vec![]).unwrap();
     assert!(native::entry(
         &std::fs::read_to_string(&claude).unwrap(),
         "claude",
@@ -695,7 +693,7 @@ fn group_edits_are_pending_and_external_drift_prevents_partial_switch() {
     let path = root.path().join("config.toml");
     let a = entry(json!({"type":"stdio","command":"a"}), "direct");
     save(&dir, a, vec![], Path::new("/app"), None).unwrap();
-    groups::save_group(&dir, group("one", "codex", &["sample"]), vec![]).unwrap();
+    groups::save_group(&dir, group("one", &["sample"]), vec![]).unwrap();
     groups::activate(&dir, "codex", Some("one"), &path, Path::new("/app")).unwrap();
     let old = read(&dir).unwrap().entries[0].clone();
     let mut updated = old.clone();
@@ -703,7 +701,7 @@ fn group_edits_are_pending_and_external_drift_prevents_partial_switch() {
     let before = std::fs::read_to_string(&path).unwrap();
     save(&dir, updated, vec![], Path::new("/app"), Some(&old)).unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
-    assert!(groups::remove_group(&dir, "codex", "one").is_err());
+    assert!(groups::remove_group(&dir, "one").is_err());
     assert!(remove(&dir, "sample", true).is_err());
     groups::activate(&dir, "codex", Some("one"), &path, Path::new("/app")).unwrap();
     assert_eq!(
@@ -717,7 +715,7 @@ fn group_edits_are_pending_and_external_drift_prevents_partial_switch() {
         .unwrap()["command"],
         "new"
     );
-    groups::save_group(&dir, group("two", "codex", &["sample"]), vec![]).unwrap();
+    groups::save_group(&dir, group("two", &["sample"]), vec![]).unwrap();
     std::fs::write(
         &path,
         "model_provider='custom'\n[mcp_servers.Sample]\ncommand='externally-edited'\n",
@@ -752,7 +750,7 @@ fn group_references_do_not_adopt_or_overwrite_manual_entries() {
         original: Some(definition.clone()),
         installed: definition,
     });
-    groups::save_group(&dir, group("one", "codex", &["sample"]), vec![imported]).unwrap();
+    groups::save_group(&dir, group("one", &["sample"]), vec![imported]).unwrap();
     assert!(read(&dir).unwrap().entries.is_empty());
     assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
     groups::activate(&dir, "codex", Some("one"), &path, Path::new("/app")).unwrap();
@@ -767,22 +765,21 @@ fn group_references_do_not_adopt_or_overwrite_manual_entries() {
     assert!(read(&dir).unwrap().active_groups.is_empty());
 }
 #[test]
-fn groups_validate_ownership_missing_members_names_and_order_without_writing_targets() {
+fn groups_validate_missing_members_names_and_order_without_writing_targets() {
     let root = tempfile::tempdir().unwrap();
     let dir = root.path().join("studio");
     let path = root.path().join("claude.json");
-    groups::save_group(&dir, group("one", "claude", &["missing"]), vec![]).unwrap();
-    groups::save_group(&dir, group("two", "claude", &[]), vec![]).unwrap();
-    assert!(groups::save_group(&dir, group("one", "codex", &[]), vec![]).is_err());
-    let mut duplicate = group("three", "claude", &[]);
+    groups::save_group(&dir, group("one", &["missing"]), vec![]).unwrap();
+    groups::save_group(&dir, group("two", &[]), vec![]).unwrap();
+    let mut duplicate = group("three", &[]);
     duplicate.name = "one".into();
     assert!(groups::save_group(&dir, duplicate, vec![]).is_err());
     assert!(groups::activate(&dir, "codex", Some("one"), &path, Path::new("/app")).is_err());
     assert!(groups::activate(&dir, "claude", Some("one"), &path, Path::new("/app")).is_err());
     assert!(groups::activate(&dir, "claude", Some("two"), &path, Path::new("/app")).is_err());
     assert!(!path.exists());
-    groups::reorder(&dir, "claude", &["two".into(), "one".into()]).unwrap();
-    assert!(groups::reorder(&dir, "claude", &["two".into(), "two".into()]).is_err());
+    groups::reorder(&dir, &["two".into(), "one".into()]).unwrap();
+    assert!(groups::reorder(&dir, &["two".into(), "two".into()]).is_err());
     assert_eq!(
         read(&dir)
             .unwrap()
@@ -793,7 +790,43 @@ fn groups_validate_ownership_missing_members_names_and_order_without_writing_tar
             .sort_order,
         0
     );
-    groups::remove_group(&dir, "claude", "one").unwrap();
+    groups::remove_group(&dir, "one").unwrap();
+}
+
+/// A group is not scoped to one agent any more: it can be the active
+/// combination for several agents at the same time, each with its own
+/// native file and `active_groups` entry, and stopping one must not touch
+/// the other.
+#[test]
+fn group_can_be_active_for_two_agents_at_once() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("studio");
+    let claude = root.path().join("claude.json");
+    let codex = root.path().join("config.toml");
+    save(&dir, entry(json!({"type":"stdio","command":"a"}), "direct"), vec![], Path::new("/app"), None).unwrap();
+    groups::save_group(&dir, group("shared", &["sample"]), vec![]).unwrap();
+    groups::activate(&dir, "claude", Some("shared"), &claude, Path::new("/app")).unwrap();
+    groups::activate(&dir, "codex", Some("shared"), &codex, Path::new("/app")).unwrap();
+    let catalog = read(&dir).unwrap();
+    assert_eq!(catalog.active_groups["claude"].group_id, "shared");
+    assert_eq!(catalog.active_groups["codex"].group_id, "shared");
+    assert!(native::entry(&std::fs::read_to_string(&claude).unwrap(), "claude", None, "Sample")
+        .unwrap()
+        .is_some());
+    assert!(native::entry(&std::fs::read_to_string(&codex).unwrap(), "codex", None, "Sample")
+        .unwrap()
+        .is_some());
+    // Stopping claude's copy must not disturb codex's independent one.
+    groups::activate(&dir, "claude", None, &claude, Path::new("/app")).unwrap();
+    assert!(native::entry(&std::fs::read_to_string(&claude).unwrap(), "claude", None, "Sample")
+        .unwrap()
+        .is_none());
+    let catalog = read(&dir).unwrap();
+    assert!(!catalog.active_groups.contains_key("claude"));
+    assert_eq!(catalog.active_groups["codex"].group_id, "shared");
+    assert!(native::entry(&std::fs::read_to_string(&codex).unwrap(), "codex", None, "Sample")
+        .unwrap()
+        .is_some());
 }
 
 #[test]
@@ -887,7 +920,7 @@ fn deleting_scanned_sources_rejects_active_group_bindings() {
         None,
     )
     .unwrap();
-    groups::save_group(&dir, group("one", "codex", &["sample"]), vec![]).unwrap();
+    groups::save_group(&dir, group("one", &["sample"]), vec![]).unwrap();
     groups::activate(&dir, "codex", Some("one"), &path, Path::new("/app")).unwrap();
     let before = std::fs::read_to_string(&path).unwrap();
     let current = native::entry(&before, "codex", None, "Sample")
@@ -924,7 +957,7 @@ fn referenced_group_deploys_only_missing_target_and_removes_only_its_copy() {
         original: Some(definition.clone()),
         installed: definition,
     });
-    groups::save_group(&dir, group("one", "codex", &["sample"]), vec![reference]).unwrap();
+    groups::save_group(&dir, group("one", &["sample"]), vec![reference]).unwrap();
     assert!(read(&dir).unwrap().entries.is_empty());
     assert!(!target.exists());
     for _ in 0..2 {
@@ -940,7 +973,7 @@ fn referenced_group_deploys_only_missing_target_and_removes_only_its_copy() {
     )
     .unwrap()
     .is_none());
-    groups::remove_group(&dir, "codex", "one").unwrap();
+    groups::remove_group(&dir, "one").unwrap();
     assert_eq!(std::fs::read(&source).unwrap(), original);
     assert!(read(&dir).unwrap().entries.is_empty());
 }
@@ -967,7 +1000,7 @@ fn group_does_not_reenable_manually_disabled_mcp() {
         original: Some(definition.clone()),
         installed: definition,
     });
-    groups::save_group(&dir, group("one", "codex", &["sample"]), vec![reference]).unwrap();
+    groups::save_group(&dir, group("one", &["sample"]), vec![reference]).unwrap();
     assert!(
         groups::activate(&dir, "codex", Some("one"), &path, Path::new("/app"))
             .unwrap_err()

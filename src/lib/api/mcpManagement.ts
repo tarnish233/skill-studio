@@ -38,10 +38,10 @@ export interface ManagedMcp {
   scopes: string[];
   bindings: ManagedBinding[];
 }
+/** 分组不归属任何单个 agent：同一个分组可以被不同 agent 各自独立激活（见 `ManagementStatus.activeGroups`） */
 export interface McpGroup {
   references?: ManagedMcp[];
   id: string;
-  agent: string;
   name: string;
   entryIds: string[];
   sortOrder: number;

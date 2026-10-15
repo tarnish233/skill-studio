@@ -171,7 +171,7 @@ fn preview_damage_does_not_block_healthy_group_or_project_and_project_removal_ig
     )
     .unwrap();
     studio
-        .save_agent_group(&mut c, "g".into(), "codex", "Group", vec![skill.id.clone()])
+        .save_group(&mut c, "g".into(), "Group", vec![skill.id.clone()])
         .unwrap();
     studio
         .activate_agent_group(&mut c, "codex", Some("g"))
@@ -269,7 +269,7 @@ fn deployment_checks_reject_bad_actual_sources_for_bundles_and_single_skills() {
         };
         fs::write(source.join("SKILL.md"), "---\nname: [broken\n---").unwrap();
         studio
-            .save_agent_group(&mut c, "g".into(), "codex", "Group", vec![skill.id.clone()])
+            .save_group(&mut c, "g".into(), "Group", vec![skill.id.clone()])
             .unwrap();
         assert!(studio
             .activate_agent_group(&mut c, "codex", Some("g"))
@@ -394,7 +394,7 @@ fn groups_and_projects_record_resolved_paths_and_protect_bundle_deletion() {
         .install_catalog_skill(&mut c, &bundle(false))
         .unwrap();
     studio
-        .save_agent_group(&mut c, "g".into(), "codex", "Group", vec![skill.id.clone()])
+        .save_group(&mut c, "g".into(), "Group", vec![skill.id.clone()])
         .unwrap();
     studio
         .activate_agent_group(&mut c, "codex", Some("g"))

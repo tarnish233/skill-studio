@@ -13,15 +13,16 @@ use crate::{
 use std::collections::HashSet;
 
 impl Studio {
-    pub fn save_agent_group(
+    /// Create or edit a shared group's name and members. Groups are not owned by
+    /// any single agent: `activate_agent_group` lets each agent independently pick
+    /// whether this is its current combination.
+    pub fn save_group(
         &self,
         config: &mut AppConfig,
         id: String,
-        agent_id: &str,
         name: &str,
         skill_ids: Vec<String>,
     ) -> Result<Group> {
-        require_agent(agent_id)?;
         let name = name.trim();
         if name.is_empty() {
             return Err(Error::invalid("分组名不能为空"));
@@ -29,14 +30,9 @@ impl Studio {
         if config
             .groups
             .iter()
-            .any(|g| g.agent_id.as_deref() == Some(agent_id) && g.name == name && g.id != id)
+            .any(|g| g.name == name && g.id != id)
         {
-            return Err(Error::invalid("此 Agent 已存在同名分组"));
-        }
-        if let Some(group) = config.group(&id) {
-            if group.agent_id.as_deref() != Some(agent_id) {
-                return Err(Error::invalid("不能修改其他 Agent 或旧共享分组"));
-            }
+            return Err(Error::invalid("已存在同名分组"));
         }
         let mut seen = HashSet::new();
         let skill_ids: Vec<_> = skill_ids
@@ -48,7 +44,6 @@ impl Studio {
             .group(&id)
             .cloned()
             .unwrap_or_else(|| Group::new(id, name.into()));
-        group.agent_id = Some(agent_id.into());
         group.name = name.into();
         group.skill_ids = skill_ids;
         if let Some(index) = config.groups.iter().position(|g| g.id == group.id) {
@@ -106,9 +101,6 @@ impl Studio {
             })
             .transpose()?;
         if let Some(g) = &group {
-            if g.agent_id.as_deref() != Some(agent_id) {
-                return Err(Error::invalid("分组不属于此 Agent"));
-            }
             if g.skill_ids.is_empty() {
                 return Err(Error::invalid("请先为分组选择 skill"));
             }

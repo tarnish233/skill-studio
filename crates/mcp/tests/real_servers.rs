@@ -74,10 +74,9 @@ fn targets(claude: &Path, codex: &Path, name: &str) -> Vec<Target> {
         })
         .collect()
 }
-fn group(id: &str, agent: &str, ids: &[&str]) -> groups::Group {
+fn group(id: &str, ids: &[&str]) -> groups::Group {
     groups::Group {
         id: id.into(),
-        agent: agent.into(),
         name: id.into(),
         entry_ids: ids.iter().map(|s| s.to_string()).collect(),
         references: vec![],
@@ -196,9 +195,9 @@ async fn official_servers_full_lifecycle() -> Result<()> {
     management::save(&dir, memory.clone(), vec![], &executable, None)?;
     let filesystem = entry("real-filesystem", filesystem_definition);
     management::save(&dir, filesystem.clone(), vec![], &executable, None)?;
-    groups::save_group(&dir, group("memory", "claude", &["real-memory"]), vec![])?;
-    groups::save_group(&dir, group("files", "claude", &["real-filesystem"]), vec![])?;
-    groups::save_group(&dir, group("codex", "codex", &["real-memory"]), vec![])?;
+    groups::save_group(&dir, group("memory", &["real-memory"]), vec![])?;
+    groups::save_group(&dir, group("files", &["real-filesystem"]), vec![])?;
+    groups::save_group(&dir, group("codex", &["real-memory"]), vec![])?;
     groups::activate(&dir, "claude", Some("memory"), &claude, &executable)?;
     groups::activate(&dir, "codex", Some("codex"), &codex, &executable)?;
     let codex_before = std::fs::read(&codex)?;
@@ -231,14 +230,14 @@ async fn official_servers_full_lifecycle() -> Result<()> {
     let before_edit = std::fs::read(&claude)?;
     groups::save_group(
         &dir,
-        group("files", "claude", &["real-filesystem", "real-memory"]),
+        group("files", &["real-filesystem", "real-memory"]),
         vec![],
     )?;
     assert_eq!(std::fs::read(&claude)?, before_edit);
     groups::activate(&dir, "claude", Some("files"), &claude, &executable)?;
     assert!(read(&claude, "claude", &memory.name)?.is_some());
-    groups::reorder(&dir, "claude", &["files".into(), "memory".into()])?;
-    assert!(groups::remove_group(&dir, "claude", "files").is_err());
+    groups::reorder(&dir, &["files".into(), "memory".into(), "codex".into()])?;
+    assert!(groups::remove_group(&dir, "files").is_err());
     assert!(management::remove(&dir, &memory.id, true).is_err());
     println!("PASS groups: save without applying, exclusive switch, other-agent isolation, real Filesystem write/read, edit/apply, reorder, deletion guards");
     let old = management::read(&dir)?
@@ -301,12 +300,8 @@ async fn official_servers_full_lifecycle() -> Result<()> {
     std::fs::write(&codex, original)?;
     groups::activate(&dir, "claude", None, &claude, &executable)?;
     groups::activate(&dir, "codex", None, &codex, &executable)?;
-    for (id, agent) in [
-        ("files", "claude"),
-        ("memory", "claude"),
-        ("codex", "codex"),
-    ] {
-        groups::remove_group(&dir, agent, id)?;
+    for id in ["files", "memory", "codex"] {
+        groups::remove_group(&dir, id)?;
     }
     for id in [&memory.id, &filesystem.id] {
         management::remove(&dir, id, true)?;

@@ -123,7 +123,7 @@ fn changing_policy_immediately_respects_active_group_and_stop_does_not_restore_o
         .skill
         .id;
     studio
-        .save_agent_group(&mut c, "g".into(), "claude-code", "g", vec![member])
+        .save_group(&mut c, "g".into(), "g", vec![member])
         .unwrap();
     studio
         .activate_agent_group(&mut c, "claude-code", Some("g"))

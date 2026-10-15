@@ -41,10 +41,9 @@ pub fn dispatch(state: &AppState, method: &str, params: Value) -> Result<Value, 
         "reorder_groups" => {
             serde_json::to_value(groups::reorder_groups(state, arg(&params, "groupIds")?)?)
         }
-        "save_agent_group" => serde_json::to_value(groups::save_agent_group(
+        "save_group" => serde_json::to_value(groups::save_group(
             state,
             arg(&params, "groupId")?,
-            arg(&params, "agentId")?,
             arg(&params, "name")?,
             arg(&params, "skillIds")?,
         )?),

@@ -927,12 +927,7 @@ function ProjectDetail({
                     checked={draft.value.groupIds.includes(g.id)}
                     aria-label={g.name}
                   />
-                  <span className="flex-1 text-sm font-medium">
-                    {g.name}
-                    {g.agentId
-                      ? ` · ${agents.find((a) => a.id === g.agentId)?.displayName ?? g.agentId}`
-                      : ""}
-                  </span>
+                  <span className="flex-1 text-sm font-medium">{g.name}</span>
                   <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
                     {g.skillIds.length} 个
                   </Badge>

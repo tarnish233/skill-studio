@@ -48,17 +48,11 @@ it("项目卡片上的 token 体量按「直接绑定 + 绑定分组」去重后
   expect(screen.getAllByText(/tokens$/)).toHaveLength(1);
 });
 
-it("绑了别的 agent 的分组时不虚报 —— 后端不会为它写任何文件", async () => {
+it("绑定的所有分组都计入 —— 分组不区分当年用哪个 Agent 创建", async () => {
   setupSkills();
   handlers.set("list_groups", () => [
-    // 分组选择器会把别的 agent 的分组一并列出，一次点击就能绑上
-    makeGroup({
-      id: "g1",
-      name: "Codex 组",
-      agentId: "codex",
-      skillIds: ["b"],
-    }),
-    makeGroup({ id: "g2", name: "旧共享组", agentId: null, skillIds: ["c"] }),
+    makeGroup({ id: "g1", name: "Codex 组", skillIds: ["b"] }),
+    makeGroup({ id: "g2", name: "共享组", skillIds: ["c"] }),
   ]);
   handlers.set("list_projects", () => [
     makeProject({
@@ -70,8 +64,8 @@ it("绑了别的 agent 的分组时不虚报 —— 后端不会为它写任何�
     }),
   ]);
   renderWithProviders(<ProjectsPage />);
-  // a(500) + 归属为空的旧共享组带进来的 c(900)；归属 codex 的 b(1200) 不算
-  expect(await screen.findByText("≈ 1.4k tokens")).toBeInTheDocument();
+  // a(500) + b(1200) + c(900)，两个分组都计入
+  expect(await screen.findByText("≈ 2.6k tokens")).toBeInTheDocument();
 });
 
 it("还没勾 agent 的项目不显示 token 徽标 —— 此时后端一个文件都不写", async () => {

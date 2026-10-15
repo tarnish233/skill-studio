@@ -1,8 +1,7 @@
 import type { Settings } from "@/types";
-import { supportsMcp } from "@/lib/mcpAgents";
 
-export type StaticView = "hub" | "projects" | "settings" | "install";
-export type ViewId = StaticView | `agent:${string}`;
+export type StaticView = "hub" | "groups" | "projects" | "settings" | "install";
+export type ViewId = StaticView;
 export type Resource = "skills" | "mcp";
 export const VIEW_STORAGE_KEY = "skill-studio-view";
 export const RESOURCE_STORAGE_KEY = "skill-studio-resource";
@@ -13,25 +12,16 @@ export function readInitialView(
   targetId = "local",
 ): ViewId {
   const stored = localStorage.getItem(VIEW_STORAGE_KEY);
-  // The old two-Hub navigation persisted "library" or "mcp" as a view.
+  // The old per-Agent navigation persisted "agent:<id>"; Agent-specific controls
+  // now live inside the shared "groups" view, so any such value lands there.
   const view: ViewId =
-    stored === "projects" || stored?.startsWith("agent:")
-      ? (stored as ViewId)
-      : "hub";
+    stored === "projects"
+      ? "projects"
+      : stored === "groups" || stored?.startsWith("agent:")
+        ? "groups"
+        : "hub";
   const mcp = initialResource(view, settings) === "mcp";
-  if (view.startsWith("agent:")) {
-    const agent = view.slice("agent:".length);
-    if (
-      settings?.disabledAgents?.includes(agent) ||
-      (mcp && !supportsMcp(agent))
-    )
-      return "hub";
-  }
-  if (
-    targetId !== "local" &&
-    mcp &&
-    (view === "projects" || view.startsWith("agent:"))
-  )
+  if (targetId !== "local" && mcp && (view === "projects" || view === "groups"))
     return "hub";
   return view;
 }

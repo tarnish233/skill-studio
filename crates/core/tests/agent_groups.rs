@@ -10,7 +10,6 @@ fn make(
     studio: &Studio,
     config: &mut AppConfig,
     group: &str,
-    agent: &str,
     names: &[&str],
 ) -> String {
     for name in names {
@@ -30,9 +29,7 @@ fn make(
                 .clone()
         })
         .collect();
-    studio
-        .save_agent_group(config, group.into(), agent, group, ids)
-        .unwrap();
+    studio.save_group(config, group.into(), group, ids).unwrap();
     group.into()
 }
 
@@ -44,8 +41,8 @@ fn switching_preserves_manual_and_shared_members_and_survives_reload() {
     let mut c = studio.load_config().unwrap();
     let manual = env.write_simple_skill(&env.codex_skills(), "manual");
     let before = fs::read(manual.join("SKILL.md")).unwrap();
-    let a = make(&env, &studio, &mut c, "a", "codex", &["one", "shared"]);
-    let b = make(&env, &studio, &mut c, "b", "codex", &["two", "shared"]);
+    let a = make(&env, &studio, &mut c, "a", &["one", "shared"]);
+    let b = make(&env, &studio, &mut c, "b", &["two", "shared"]);
     studio
         .activate_agent_group(&mut c, "codex", Some(&a))
         .unwrap();
@@ -73,29 +70,38 @@ fn switching_preserves_manual_and_shared_members_and_survives_reload() {
 
 #[test]
 #[serial]
-fn manual_member_is_never_claimed_and_other_agent_is_independent() {
+fn manual_member_is_never_claimed_and_shared_group_is_independent_per_agent() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
     env.write_simple_skill(&env.codex_skills(), "manual");
     let manual_id = studio.scan_skills(&c).unwrap()[0].skill.id.clone();
     studio
-        .save_agent_group(&mut c, "a".into(), "codex", "a", vec![manual_id])
+        .save_group(&mut c, "a".into(), "a", vec![manual_id])
         .unwrap();
-    let b = make(&env, &studio, &mut c, "b", "claude-code", &["two"]);
+    let b = make(&env, &studio, &mut c, "b", &["two"]);
     studio
         .activate_agent_group(&mut c, "codex", Some("a"))
         .unwrap();
     assert!(c.active_groups["codex"].entries.is_empty());
-    assert!(studio
+    // "b" isn't scoped to one agent: codex can switch to it, and claude-code can
+    // run the very same group at the same time without either one disturbing it.
+    studio
         .activate_agent_group(&mut c, "codex", Some(&b))
-        .is_err());
+        .unwrap();
     studio
         .activate_agent_group(&mut c, "claude-code", Some(&b))
         .unwrap();
+    assert_eq!(c.active_groups["codex"].group_id, b);
+    assert_eq!(c.active_groups["claude-code"].group_id, b);
+    assert!(env.codex_skills().join("two/SKILL.md").is_file());
+    assert!(env.claude_skills().join("two/SKILL.md").is_file());
     studio.activate_agent_group(&mut c, "codex", None).unwrap();
     assert!(env.codex_skills().join("manual/SKILL.md").exists());
+    assert!(!env.codex_skills().join("two").exists());
+    // Stopping codex's copy must not touch claude-code's independent one.
     assert!(env.claude_skills().join("two/SKILL.md").exists());
+    assert_eq!(c.active_groups["claude-code"].group_id, b);
 }
 
 #[test]
@@ -104,8 +110,8 @@ fn local_edits_block_switch_without_changing_files_or_active_group() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
-    make(&env, &studio, &mut c, "a", "codex", &["one"]);
-    make(&env, &studio, &mut c, "b", "codex", &["two"]);
+    make(&env, &studio, &mut c, "a", &["one"]);
+    make(&env, &studio, &mut c, "b", &["two"]);
     studio
         .activate_agent_group(&mut c, "codex", Some("a"))
         .unwrap();
@@ -127,8 +133,8 @@ fn native_write_failure_rolls_back_removed_group_and_partial_new_copy() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
-    make(&env, &studio, &mut c, "a", "codex", &["one"]);
-    make(&env, &studio, &mut c, "b", "codex", &["two"]);
+    make(&env, &studio, &mut c, "a", &["one"]);
+    make(&env, &studio, &mut c, "b", &["two"]);
     studio
         .activate_agent_group(&mut c, "codex", Some("a"))
         .unwrap();
@@ -154,11 +160,11 @@ fn edit_is_draft_until_apply_and_repeated_activation_is_idempotent() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
-    make(&env, &studio, &mut c, "a", "codex", &["one"]);
+    make(&env, &studio, &mut c, "a", &["one"]);
     studio
         .activate_agent_group(&mut c, "codex", Some("a"))
         .unwrap();
-    make(&env, &studio, &mut c, "a", "codex", &["two"]);
+    make(&env, &studio, &mut c, "a", &["two"]);
     assert!(env.codex_skills().join("one").exists());
     assert!(!env.codex_skills().join("two").exists());
     studio
@@ -185,7 +191,7 @@ fn v1_shared_groups_and_project_references_survive_upgrade() {
     fs::write(&path,r#"{"version":1,"groups":[{"id":"old","name":"Old","skillIds":["s"]}],"projects":[{"id":"p","name":"P","root":"/tmp/project","groupIds":["old"]}]}"#).unwrap();
     let c = studio.load_config().unwrap();
     assert_eq!(c.version, skill_studio_core::models::config::CONFIG_VERSION);
-    assert_eq!(c.groups[0].agent_id, None);
+    assert_eq!(c.groups[0].name, "Old");
     assert_eq!(c.projects[0].group_ids, vec!["old"]);
     assert!(c.active_groups.is_empty());
 }
@@ -196,12 +202,12 @@ fn invalid_member_leaves_previous_combination_active() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
-    make(&env, &studio, &mut c, "a", "codex", &["one"]);
+    make(&env, &studio, &mut c, "a", &["one"]);
     studio
         .activate_agent_group(&mut c, "codex", Some("a"))
         .unwrap();
     studio
-        .save_agent_group(&mut c, "b".into(), "codex", "b", vec!["missing".into()])
+        .save_group(&mut c, "b".into(), "b", vec!["missing".into()])
         .unwrap();
     assert!(studio
         .activate_agent_group(&mut c, "codex", Some("b"))
@@ -221,7 +227,7 @@ fn claude_uses_directory_name_and_does_not_change_unrelated_native_rules() {
         "folder",
         "---\nname: declared\ndescription: test\n---\nbody",
     );
-    make(&env, &studio, &mut c, "a", "claude-code", &["folder"]);
+    make(&env, &studio, &mut c, "a", &["folder"]);
     fs::create_dir_all(env.path().join(".claude")).unwrap();
     fs::write(
         env.path().join(".claude/settings.json"),
@@ -242,11 +248,11 @@ fn claude_uses_directory_name_and_does_not_change_unrelated_native_rules() {
 
 #[test]
 #[serial]
-fn project_only_applies_scoped_group_to_its_owner() {
+fn project_applies_a_shared_group_to_every_selected_agent() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
-    make(&env, &studio, &mut c, "a", "codex", &["one"]);
+    make(&env, &studio, &mut c, "a", &["one"]);
     let mut p = skill_studio_core::models::project::ProjectBinding::new(
         "p".into(),
         "P".into(),
@@ -258,8 +264,9 @@ fn project_only_applies_scoped_group_to_its_owner() {
     c.projects.push(p);
     let r = studio.apply_project(&mut c, "p").unwrap();
     assert!(r.failed.is_empty());
-    assert_eq!(r.success.len(), 1);
-    assert_eq!(r.success[0].agent_id, "codex");
+    let mut agents: Vec<_> = r.success.iter().map(|x| x.agent_id.clone()).collect();
+    agents.sort();
+    assert_eq!(agents, vec!["claude-code".to_string(), "codex".to_string()]);
 }
 
 #[test]
@@ -271,7 +278,7 @@ fn active_skill_cannot_be_adopted_until_group_stops() {
     env.write_simple_skill(&env.claude_skills(), "manual");
     let id = studio.scan_skills(&c).unwrap()[0].skill.id.clone();
     studio
-        .save_agent_group(&mut c, "a".into(), "codex", "a", vec![id.clone()])
+        .save_group(&mut c, "a".into(), "a", vec![id.clone()])
         .unwrap();
     studio
         .activate_agent_group(&mut c, "codex", Some("a"))
@@ -287,7 +294,7 @@ fn startup_recovers_interrupted_group_switch_journal() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
-    make(&env, &studio, &mut c, "a", "codex", &["one"]);
+    make(&env, &studio, &mut c, "a", &["one"]);
     studio
         .activate_agent_group(&mut c, "codex", Some("a"))
         .unwrap();
@@ -312,7 +319,7 @@ fn disabled_manual_skill_is_not_enabled_or_claimed_silently() {
     studio.set_skill_enabled(&c, &id, "codex", false).unwrap();
     let before = fs::read(env.path().join(".codex/config.toml")).unwrap();
     studio
-        .save_agent_group(&mut c, "a".into(), "codex", "a", vec![id])
+        .save_group(&mut c, "a".into(), "a", vec![id])
         .unwrap();
     assert!(studio
         .activate_agent_group(&mut c, "codex", Some("a"))
@@ -359,9 +366,9 @@ fn exclusive_groups_suspend_manual_skills_and_restore_after_reload() {
             .set_skill_enabled(&c, &off_id, agent_id, false)
             .unwrap();
         let before = fs::read(manual.join("SKILL.md")).unwrap();
-        make(&env, &studio, &mut c, "a", agent_id, &["one"]);
+        make(&env, &studio, &mut c, "a", &["one"]);
         studio
-            .save_agent_group(&mut c, "b".into(), agent_id, "b", vec![manual_id.clone()])
+            .save_group(&mut c, "b".into(), "b", vec![manual_id.clone()])
             .unwrap();
         studio
             .activate_agent_group(&mut c, agent_id, Some("a"))
@@ -437,8 +444,8 @@ fn exclusive_switch_failure_keeps_manual_state_and_active_group() {
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
     let manual = env.write_simple_skill(&env.codex_skills(), "manual");
-    make(&env, &studio, &mut c, "a", "codex", &["one"]);
-    make(&env, &studio, &mut c, "b", "codex", &["two"]);
+    make(&env, &studio, &mut c, "a", &["one"]);
+    make(&env, &studio, &mut c, "b", &["two"]);
     studio
         .activate_agent_group(&mut c, "codex", Some("a"))
         .unwrap();
@@ -463,7 +470,7 @@ fn reapply_refreshes_stale_owned_copy_without_changing_manual_skills() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
-    let g = make(&env, &studio, &mut c, "dev", "codex", &["demo"]);
+    let g = make(&env, &studio, &mut c, "dev", &["demo"]);
     studio
         .activate_agent_group(&mut c, "codex", Some(&g))
         .unwrap();
@@ -496,7 +503,7 @@ fn leaving_management_restores_manual_and_adopted_content_and_keeps_hub() {
         .skill;
     let hub = studio.adopt_to_hub(&mut c, &source.id).unwrap();
     c.settings.preserve_manual_skills = false;
-    let group = make(&env, &studio, &mut c, "g", "codex", &["group-only"]);
+    let group = make(&env, &studio, &mut c, "g", &["group-only"]);
     studio
         .activate_agent_group(&mut c, "codex", Some(&group))
         .unwrap();
@@ -530,7 +537,7 @@ fn leaving_management_conflict_keeps_management_and_files_unchanged() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
-    let group = make(&env, &studio, &mut c, "g", "codex", &["modified"]);
+    let group = make(&env, &studio, &mut c, "g", &["modified"]);
     studio
         .activate_agent_group(&mut c, "codex", Some(&group))
         .unwrap();
@@ -559,14 +566,7 @@ fn leaving_management_keeps_other_agent_group_and_rejects_missing_backup() {
         .unwrap()
         .skill;
     let hub = studio.adopt_to_hub(&mut c, &original.id).unwrap();
-    let other = make(
-        &env,
-        &studio,
-        &mut c,
-        "other",
-        "claude-code",
-        &["other-only"],
-    );
+    let other = make(&env, &studio, &mut c, "other", &["other-only"]);
     studio
         .activate_agent_group(&mut c, "claude-code", Some(&other))
         .unwrap();
@@ -610,13 +610,7 @@ fn restored_shared_skill_keeps_one_identity_and_group_policy_after_reenable() {
     let source = studio.scan_skills(&c).unwrap().remove(0).skill;
     let hub = studio.adopt_to_hub(&mut c, &source.id).unwrap();
     let group = studio
-        .save_agent_group(
-            &mut c,
-            "restored".into(),
-            "codex",
-            "restored",
-            vec![hub.id.clone()],
-        )
+        .save_group(&mut c, "restored".into(), "restored", vec![hub.id.clone()])
         .unwrap();
     c.settings.preserve_manual_skills = false;
     studio.reconcile_manual_policy(&mut c, true).unwrap();
@@ -661,7 +655,7 @@ fn activating_a_group_leaves_a_restorable_config_backup() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
-    make(&env, &studio, &mut c, "a", "codex", &["one"]);
+    make(&env, &studio, &mut c, "a", &["one"]);
     studio.save_config(&c).unwrap();
     let before = studio.store().list_backups().len();
 
@@ -680,8 +674,5 @@ fn activating_a_group_leaves_a_restorable_config_backup() {
         .store()
         .restore_backup(backups.last().unwrap())
         .unwrap();
-    assert!(restored
-        .groups
-        .iter()
-        .any(|g| g.id == "a" && g.agent_id.as_deref() == Some("codex")));
+    assert!(restored.groups.iter().any(|g| g.id == "a"));
 }

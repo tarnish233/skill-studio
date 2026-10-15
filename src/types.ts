@@ -126,8 +126,8 @@ export interface AgentInfo {
   supportsNativeToggle: boolean;
 }
 
+/** 分组不归属任何单个 agent：同一个分组可以被不同 agent 各自独立激活（见 `AppConfig.activeGroups`） */
 export interface Group {
-  agentId?: string | null;
   id: string;
   name: string;
   description?: string | null;

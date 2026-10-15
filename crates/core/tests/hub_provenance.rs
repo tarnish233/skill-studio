@@ -269,10 +269,9 @@ fn active_group_blocks_release_until_stopped() {
     let original = studio.scan_skills(&c).unwrap().remove(0);
     let adopted = studio.adopt_to_hub(&mut c, &original.skill.id).unwrap();
     studio
-        .save_agent_group(
+        .save_group(
             &mut c,
             "g".into(),
-            "codex",
             "test",
             vec![adopted.id.clone()],
         )

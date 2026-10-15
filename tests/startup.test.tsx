@@ -1,10 +1,4 @@
-import {
-  act,
-  fireEvent,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import App from "@/App";
 import { StartupBoundary } from "@/components/common/StartupBoundary";
@@ -58,17 +52,15 @@ describe("startup readiness", () => {
     expect(screen.queryByRole("navigation")).toBeNull();
     await act(async () => skills.resolve([makeSkill({ name: "Ready skill" })]));
     expect(await screen.findByText("Ready skill")).toBeInTheDocument();
-    const nav = within(screen.getByRole("navigation", { name: "主导航" }));
-    const agent = nav.getByRole("button", { name: /Claude Code/ });
-    expect(agent).toHaveTextContent("检测中");
+    expect(
+      screen.getByRole("navigation", { name: "主导航" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("已安装 1 个")).toBeInTheDocument();
     expect(calls.filter((c) => c.command === "scan_skills")).toHaveLength(1);
     expect(
       calls.filter((c) => c.command === "list_agents").map((c) => c.args),
     ).toEqual([{ skipCliProbe: true }, { skipCliProbe: false }]);
     await act(async () => probe.resolve([claudeAgent]));
-    await waitFor(() => expect(agent).not.toHaveTextContent("检测中"));
-    expect(nav.getByRole("button", { name: /Claude Code/ })).toBe(agent);
   });
 
   it("does not briefly mount Skill Hub while restoring MCP with delayed settings", async () => {
@@ -146,10 +138,12 @@ describe("startup readiness", () => {
     expect(readInitialView({ ...defaultSettings(), manageMcp: false })).toBe(
       "hub",
     );
+    // 升级前的单 agent 视图现在统一落在共享的“分组”页：哪个 Agent 被关闭管理
+    // 由该页内部的 Agent 选择器过滤，不再需要这层路由做牙门校验。
     localStorage.setItem("skill-studio-view", "agent:codex");
     expect(
       readInitialView({ ...defaultSettings(), disabledAgents: ["codex"] }),
-    ).toBe("hub");
+    ).toBe("groups");
     localStorage.setItem("skill-studio-view", "settings");
     expect(readInitialView(defaultSettings())).toBe("hub");
   });

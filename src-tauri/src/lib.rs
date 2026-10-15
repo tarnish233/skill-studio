@@ -74,7 +74,7 @@ pub fn run() {
             commands::prune_missing,
             // 分组
             commands::list_groups,
-            commands::save_agent_group,
+            commands::save_group,
             commands::activate_agent_group,
             commands::create_group,
             commands::update_group,

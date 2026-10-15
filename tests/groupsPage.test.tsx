@@ -6,7 +6,7 @@ import {
   within,
 } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import { AgentPage } from "@/pages/AgentGroupsPage";
+import { GroupsPage } from "@/pages/GroupsPage";
 import {
   agentState,
   handlers,
@@ -26,31 +26,21 @@ function setup() {
   ]);
   handlers.set("get_config", () => ({ activeGroups: {} }));
 }
-it("explains and disables a Skill without a matching Agent variant", async () => {
-  setup();
-  handlers.set("scan_skills", () => [
-    makeSkill({
-      name: "Only Claude",
-      agents: {
-        codex: {
-          ...agentState("notLinked"),
-          unavailableReason: "没有 Codex 专用版或通用版",
-        },
-      },
-    }),
-  ]);
-  renderWithProviders(<AgentPage agentId="codex" />);
-  fireEvent.click(screen.getByRole("button", { name: "新建分组" }));
-  expect(
-    await screen.findByRole("checkbox", { name: "选择 Only Claude" }),
-  ).toBeDisabled();
-  expect(screen.getByText("没有 Codex 专用版或通用版")).toBeInTheDocument();
-});
+/** 切到「已安装 / 未托管」标签，再把 Agent 选择器指到 codex —— 两个标签都是单 Agent 视角。 */
+async function selectCodexInstalledTab(tabName: RegExp) {
+  fireEvent.mouseDown(await screen.findByRole("tab", { name: tabName }), {
+    button: 0,
+    ctrlKey: false,
+  });
+  fireEvent.change(screen.getByLabelText("选择 Agent"), {
+    target: { value: "codex" },
+  });
+}
 
-it("creates an agent-scoped draft and saves the full rapid selection without activating", async () => {
+it("creates a shared draft and saves the full rapid selection without activating", async () => {
   setup();
-  handlers.set("save_agent_group", (args) => makeGroup(args));
-  renderWithProviders(<AgentPage agentId="codex" />);
+  handlers.set("save_group", (args) => makeGroup(args));
+  renderWithProviders(<GroupsPage />);
   fireEvent.click(screen.getByRole("button", { name: "新建分组" }));
   fireEvent.change(screen.getByLabelText("分组名称"), {
     target: { value: "Dev" },
@@ -59,9 +49,8 @@ it("creates an agent-scoped draft and saves the full rapid selection without act
   fireEvent.click(screen.getByRole("checkbox", { name: "选择 Beta" }));
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await waitFor(() =>
-    expect(calls.find((c) => c.command === "save_agent_group")?.args).toEqual({
+    expect(calls.find((c) => c.command === "save_group")?.args).toEqual({
       groupId: null,
-      agentId: "codex",
       name: "Dev",
       skillIds: ["a", "b"],
     }),
@@ -76,16 +65,16 @@ it("分组卡片给出组内 token 体量，空组不显示这个徽标", async 
   ]);
   handlers.set("get_config", () => ({ activeGroups: {} }));
   handlers.set("list_groups", () => [
-    makeGroup({ id: "c", name: "Dev", agentId: "codex", skillIds: ["a", "b"] }),
-    makeGroup({ id: "e", name: "Empty", agentId: "codex", skillIds: [] }),
+    makeGroup({ id: "c", name: "Dev", skillIds: ["a", "b"] }),
+    makeGroup({ id: "e", name: "Empty", skillIds: [] }),
   ]);
-  renderWithProviders(<AgentPage agentId="codex" />);
+  renderWithProviders(<GroupsPage />);
   expect(await screen.findByText("≈ 1.6k tokens")).toBeInTheDocument();
-  // 两处：顶部统计卡片 + 文档组卡片。一个 skill 都没有的空组不该也顶一个
-  expect(screen.getAllByText(/tokens$/)).toHaveLength(2);
+  // 分组页顶部不再按单一 Agent 统计 token；一个 skill 都没有的空组也不该顶一个徽标
+  expect(screen.getAllByText(/tokens$/)).toHaveLength(1);
 });
 
-it("顶部统计卡片只数真正生效的东西", async () => {
+it("顶部统计卡片只数真正生效的东西，且不受分组卡片的组内合计影响", async () => {
   handlers.set("list_agents", () => [claudeAgent, codexAgent]);
   handlers.set("scan_skills", () => [
     // 真身就在 codex 目录里、没被停用 → 计入
@@ -111,30 +100,24 @@ it("顶部统计卡片只数真正生效的东西", async () => {
     }),
   ]);
   handlers.set("list_groups", () => [
-    makeGroup({ id: "g", name: "Dev", agentId: "codex", skillIds: ["a", "b"] }),
+    makeGroup({ id: "g", name: "Dev", skillIds: ["a", "b"] }),
   ]);
   handlers.set("get_config", () => ({
     activeGroups: {
       codex: { groupId: "g", skillIds: ["a", "b"], entries: [] },
     },
   }));
-  renderWithProviders(<AgentPage agentId="codex" />);
-  expect(await screen.findByText("已启用 1 个分组")).toBeInTheDocument();
-  expect(screen.getByText("已启用 1 个 skill")).toBeInTheDocument();
+  renderWithProviders(<GroupsPage />);
+  await selectCodexInstalledTab(/已安装 skill/);
+  expect(await screen.findByText("已启用 1 个 skill")).toBeInTheDocument();
   // 只有 Alpha 生效：400 + 100 附带文件
   expect(screen.getByText("≈ 500 tokens")).toBeInTheDocument();
   // 分组卡片仍然按组内全部成员算，两个数字不该互相污染
+  fireEvent.mouseDown(screen.getByRole("tab", { name: /^分组/ }), {
+    button: 0,
+    ctrlKey: false,
+  });
   expect(screen.getByText("≈ 1.7k tokens")).toBeInTheDocument();
-});
-
-it("启用记录指向已删除的分组时，统计卡片不虚报", async () => {
-  setup();
-  handlers.set("list_groups", () => []);
-  handlers.set("get_config", () => ({
-    activeGroups: { codex: { groupId: "没了", skillIds: [], entries: [] } },
-  }));
-  renderWithProviders(<AgentPage agentId="codex" />);
-  expect(await screen.findByText("已启用 0 个分组")).toBeInTheDocument();
 });
 
 /**
@@ -160,7 +143,8 @@ it("副本与源漂移时，token 胶囊在 tooltip 里交代这个数字可能�
   ]);
   handlers.set("list_groups", () => []);
   handlers.set("get_config", () => ({ activeGroups: {} }));
-  renderWithProviders(<AgentPage agentId="codex" />);
+  renderWithProviders(<GroupsPage />);
+  await selectCodexInstalledTab(/已安装 skill/);
   const pill = await screen.findByText("≈ 600 tokens");
   // 计数不变：两个 skill 都算进去了
   expect(screen.getByText("已启用 2 个 skill")).toBeInTheDocument();
@@ -186,7 +170,8 @@ it("没有漂移时 tooltip 不说这句话，免得每次都像在报警", asyn
   ]);
   handlers.set("list_groups", () => []);
   handlers.set("get_config", () => ({ activeGroups: {} }));
-  renderWithProviders(<AgentPage agentId="codex" />);
+  renderWithProviders(<GroupsPage />);
+  await selectCodexInstalledTab(/已安装 skill/);
   const pill = await screen.findByText("≈ 600 tokens");
   expect(pill.getAttribute("title")).not.toContain("副本与源已不一致");
 });
@@ -208,27 +193,25 @@ it("copyConflict 既计入已启用，又让分组卡片标出「需要检查」
     }),
   ]);
   handlers.set("list_groups", () => [
-    makeGroup({ id: "g", name: "Dev", agentId: "codex", skillIds: ["a", "b"] }),
+    makeGroup({ id: "g", name: "Dev", skillIds: ["a", "b"] }),
   ]);
   handlers.set("get_config", () => ({
     activeGroups: {
       codex: { groupId: "g", skillIds: ["a", "b"], entries: [] },
     },
   }));
-  renderWithProviders(<AgentPage agentId="codex" />);
+  renderWithProviders(<GroupsPage />);
   expect(await screen.findByText("需要检查")).toBeInTheDocument();
+  await selectCodexInstalledTab(/已安装 skill/);
   expect(screen.getByText("已启用 2 个 skill")).toBeInTheDocument();
 });
 
 it("统计胶囊用主题边框，深色模式下不是硬编码的近白色", async () => {
   setup();
   handlers.set("list_groups", () => []);
-  renderWithProviders(<AgentPage agentId="codex" />);
-  for (const label of [
-    "已启用 0 个分组",
-    "已启用 0 个 skill",
-    /^≈ .* tokens$/,
-  ]) {
+  renderWithProviders(<GroupsPage />);
+  await selectCodexInstalledTab(/已安装 skill/);
+  for (const label of ["已启用 0 个 skill", /^≈ .* tokens$/]) {
     const pill = await screen.findByText(label);
     expect(pill).toHaveClass("border-border-default");
     // 这一行没有筛选语义，胶囊不该变成可点的按钮
@@ -236,26 +219,23 @@ it("统计胶囊用主题边框，深色模式下不是硬编码的近白色", a
   }
 });
 
-it("filters groups by agent and activation sends exactly the selected group", async () => {
+it("shows every shared group at once, and each Agent's icon only activates that Agent", async () => {
   setup();
   handlers.set("list_groups", () => [
-    makeGroup({
-      id: "c",
-      name: "Codex group",
-      agentId: "codex",
-      skillIds: ["a"],
-    }),
-    makeGroup({
-      id: "x",
-      name: "Claude group",
-      agentId: "claude-code",
-      skillIds: ["b"],
-    }),
+    makeGroup({ id: "c", name: "Codex group", skillIds: ["a"] }),
+    makeGroup({ id: "x", name: "Claude group", skillIds: ["b"] }),
   ]);
-  renderWithProviders(<AgentPage agentId="codex" />);
+  renderWithProviders(<GroupsPage />);
   await screen.findByText("Codex group");
-  expect(screen.queryByText("Claude group")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "启用" }));
+  // 分组不再归属某个 Agent：两个组同时可见，不会互相遮挡
+  expect(screen.getByText("Claude group")).toBeInTheDocument();
+  // 两张卡片都有自己的“为 Codex 启用”图标，必须在对应卡片内找
+  const codexCard = screen
+    .getByText("Codex group")
+    .closest('[class*="rounded-xl"]') as HTMLElement;
+  fireEvent.click(
+    within(codexCard).getByRole("button", { name: "为 Codex 启用" }),
+  );
   await waitFor(() =>
     expect(
       calls.find((c) => c.command === "activate_agent_group")?.args,
@@ -264,10 +244,10 @@ it("filters groups by agent and activation sends exactly the selected group", as
 });
 it("cancel discards unsaved selection and failed saves preserve the editable draft", async () => {
   setup();
-  handlers.set("save_agent_group", () => {
+  handlers.set("save_group", () => {
     throw new Error("disk full");
   });
-  renderWithProviders(<AgentPage agentId="codex" />);
+  renderWithProviders(<GroupsPage />);
   fireEvent.click(screen.getByRole("button", { name: "新建分组" }));
   fireEvent.change(screen.getByLabelText("分组名称"), {
     target: { value: "Dev" },
@@ -284,18 +264,18 @@ it("cancel discards unsaved selection and failed saves preserve the editable dra
     screen.getByRole("checkbox", { name: "选择 Alpha" }),
   ).not.toBeChecked();
 });
-it("editing an active combination shows pending changes and deletion is disabled", async () => {
+it("editing an active combination shows pending changes, and re-clicking the Agent icon re-applies instead of toggling off", async () => {
   setup();
   handlers.set("list_groups", () => [
-    makeGroup({ id: "c", name: "Dev", agentId: "codex", skillIds: ["a", "b"] }),
+    makeGroup({ id: "c", name: "Dev", skillIds: ["a", "b"] }),
   ]);
   handlers.set("get_config", () => ({
     activeGroups: { codex: { groupId: "c", skillIds: ["a"], entries: [] } },
   }));
-  renderWithProviders(<AgentPage agentId="codex" />);
+  renderWithProviders(<GroupsPage />);
   expect(await screen.findByText("有待应用修改")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "删除 Dev" })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "应用修改" }));
+  fireEvent.click(screen.getByRole("button", { name: "为 Codex 重新应用" }));
   await waitFor(() =>
     expect(
       calls.find((c) => c.command === "activate_agent_group")?.args,
@@ -304,18 +284,13 @@ it("editing an active combination shows pending changes and deletion is disabled
 });
 
 it.each([false, true])(
-  "reorders via the drag handle, preserves other agents and rolls back on failure=%s",
+  "reorders the shared list via the drag handle and rolls back on failure=%s",
   async (fail) => {
     setup();
     let saved = [
-      makeGroup({ id: "a", name: "First", agentId: "codex", sortOrder: 0 }),
-      makeGroup({
-        id: "x",
-        name: "Other",
-        agentId: "claude-code",
-        sortOrder: 1,
-      }),
-      makeGroup({ id: "b", name: "Second", agentId: "codex", sortOrder: 2 }),
+      makeGroup({ id: "a", name: "First", sortOrder: 0 }),
+      makeGroup({ id: "x", name: "Other", sortOrder: 1 }),
+      makeGroup({ id: "b", name: "Second", sortOrder: 2 }),
     ];
     handlers.set("list_groups", () => saved);
     handlers.set("reorder_groups", (args) => {
@@ -326,7 +301,7 @@ it.each([false, true])(
       }));
       return saved;
     });
-    renderWithProviders(<AgentPage agentId="codex" />);
+    renderWithProviders(<GroupsPage />);
     const handle = await screen.findByRole("button", {
       name: "拖拽排序 First",
     });
@@ -361,13 +336,13 @@ it.each([false, true])(
       fireEvent.keyDown(document, { code: "Space" });
       await waitFor(() =>
         expect(calls.find((c) => c.command === "reorder_groups")?.args).toEqual(
-          { groupIds: ["b", "x", "a"] },
+          { groupIds: ["x", "a", "b"] },
         ),
       );
       await waitFor(() =>
         expect(
           screen.getAllByRole("button", { name: /拖拽排序/ })[0],
-        ).toHaveAccessibleName(fail ? "拖拽排序 First" : "拖拽排序 Second"),
+        ).toHaveAccessibleName(fail ? "拖拽排序 First" : "拖拽排序 Other"),
       );
       expect(calls.some((c) => c.command === "activate_agent_group")).toBe(
         false,
@@ -378,10 +353,10 @@ it.each([false, true])(
   },
 );
 
-it("uses the same button to activate and stop a group after status refresh", async () => {
+it("uses the same Agent icon to activate and stop a group after status refresh", async () => {
   setup();
   handlers.set("list_groups", () => [
-    makeGroup({ id: "c", name: "Dev", agentId: "codex", skillIds: ["a"] }),
+    makeGroup({ id: "c", name: "Dev", skillIds: ["a"] }),
   ]);
   let active = false;
   handlers.set("get_config", () => ({
@@ -392,13 +367,13 @@ it("uses the same button to activate and stop a group after status refresh", asy
   handlers.set("activate_agent_group", (args) => {
     active = args.groupId !== null;
   });
-  renderWithProviders(<AgentPage agentId="codex" />);
-  fireEvent.click(await screen.findByRole("button", { name: "启用" }));
-  const stop = await screen.findByRole("button", { name: "停用" });
+  renderWithProviders(<GroupsPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "为 Codex 启用" }));
+  const stop = await screen.findByRole("button", { name: "为 Codex 停用" });
   await waitFor(() => expect(stop).not.toBeDisabled());
-  expect(screen.queryByRole("button", { name: "启用" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "为 Codex 启用" })).toBeNull();
   fireEvent.click(stop);
-  await screen.findByRole("button", { name: "启用" });
+  await screen.findByRole("button", { name: "为 Codex 启用" });
   expect(
     calls
       .filter((c) => c.command === "activate_agent_group")
@@ -419,11 +394,8 @@ it("installed tab uses the top add action and omits redundant agent metadata", a
     }),
   ]);
   handlers.set("register_skills", () => ({ success: [], failed: [] }));
-  renderWithProviders(<AgentPage agentId="codex" />);
-  fireEvent.mouseDown(
-    await screen.findByRole("tab", { name: /已安装 skill/ }),
-    { button: 0, ctrlKey: false },
-  );
+  renderWithProviders(<GroupsPage />);
+  await selectCodexInstalledTab(/已安装 skill/);
   const add = await screen.findByRole("button", { name: "添加 skill" });
   expect(
     screen.queryByText(codexAgent.globalSkillDirs[0]),
@@ -468,12 +440,9 @@ it("manual installation tab counts and filters manual skills including policy-di
       agents: { codex: { ...agentState("copied"), manual: false } },
     }),
   ]);
-  renderWithProviders(<AgentPage agentId="codex" />);
+  renderWithProviders(<GroupsPage />);
+  await selectCodexInstalledTab(/已安装 skill/);
   const manualTab = await screen.findByRole("tab", { name: /未托管 skill.*1/ });
-  fireEvent.mouseDown(screen.getByRole("tab", { name: /已安装 skill/ }), {
-    button: 0,
-    ctrlKey: false,
-  });
   expect(await screen.findByText("Manual")).toBeInTheDocument();
   expect(
     within(screen.getByText("Manual").parentElement!).getByText("未托管"),
@@ -489,7 +458,7 @@ it("manual installation tab counts and filters manual skills including policy-di
 it("keeps a consistent card until both activation config and skill status finish refreshing", async () => {
   setup();
   handlers.set("list_groups", () => [
-    makeGroup({ id: "c", name: "Dev", agentId: "codex", skillIds: ["a"] }),
+    makeGroup({ id: "c", name: "Dev", skillIds: ["a"] }),
   ]);
   let active = false;
   let release!: (value: unknown) => void;
@@ -509,8 +478,8 @@ it("keeps a consistent card until both activation config and skill status finish
   handlers.set("activate_agent_group", () => {
     active = true;
   });
-  renderWithProviders(<AgentPage agentId="codex" />);
-  const enable = await screen.findByRole("button", { name: "启用" });
+  renderWithProviders(<GroupsPage />);
+  const enable = await screen.findByRole("button", { name: "为 Codex 启用" });
   fireEvent.click(enable);
   await waitFor(() =>
     expect(
@@ -520,15 +489,15 @@ it("keeps a consistent card until both activation config and skill status finish
   expect(enable).toBeDisabled();
   expect(screen.queryByText("需要检查")).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: "停用" }),
+    screen.queryByRole("button", { name: "为 Codex 停用" }),
   ).not.toBeInTheDocument();
   await act(async () =>
     release([makeSkill({ id: "a", agents: { codex: agentState("source") } })]),
   );
   expect(
-    await screen.findByRole("button", { name: "停用" }),
+    await screen.findByRole("button", { name: "为 Codex 停用" }),
   ).toBeInTheDocument();
   expect(screen.getByText("使用中")).toBeInTheDocument();
   expect(screen.queryByText("需要检查")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "停用" })).toBe(enable);
+  expect(screen.getByRole("button", { name: "为 Codex 停用" })).toBe(enable);
 });

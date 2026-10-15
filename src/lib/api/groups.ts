@@ -2,15 +2,14 @@ import { invoke } from "@/lib/api/transport";
 import type { Group, GroupApplyMode, LinkReport } from "@/types";
 
 export const groupsApi = {
-  async saveAgent(
+  /** 分组不属于某个 Agent：保存名称和成员，是否对某 Agent 生效由 activate 单独决定 */
+  async save(
     groupId: string | null,
-    agentId: string,
     name: string,
     skillIds: string[],
   ): Promise<Group> {
-    return await invoke("save_agent_group", {
+    return await invoke("save_group", {
       groupId,
-      agentId,
       name,
       skillIds,
     });

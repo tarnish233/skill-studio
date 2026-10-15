@@ -9,7 +9,7 @@ import { HelpPopover } from "@/components/common/HelpPopover";
 import { SkillBackups } from "@/components/common/SkillBackups";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PageTools } from "@/components/common/PageTools";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   DndContext,
   PointerSensor,
@@ -29,16 +29,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { queryKeys, NAVIGATION_STALE_TIME } from "@/lib/queryKeys";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  RefreshCw,
-  Play,
-  Square,
-  Pencil,
-  Trash2,
-  Layers,
-  Download,
-  GripVertical,
-} from "lucide-react";
+import { Pencil, Trash2, Layers, GripVertical } from "lucide-react";
 import { toast } from "sonner";
 import { groupsApi, settingsApi } from "@/lib/api";
 import { useAgents, useGroups, useSkills, useSettings } from "@/hooks/useData";
@@ -61,12 +52,19 @@ import {
   RowActions,
 } from "@/components/common/ListItemRow";
 import { AgentSkills } from "@/pages/AgentPage";
+import { AgentToggleIcon } from "@/components/common/AgentToggleIcon";
 import { formatTokens, sumTokens, tokenIndex, tokenTitle } from "@/lib/tokens";
 import { isCopyDrifted, isRegistered, needsManualFix } from "@/lib/linkStatus";
 import type { Group } from "@/types";
 
-export function AgentPage({ agentId }: { agentId: string }) {
-  const { data: agents = [] } = useAgents();
+/**
+ * 分组不再归属某个 Agent：名称和成员只保存一次，是否对某个 Agent 生效完全
+ * 由卡片上的 Agent 图标独立决定（见 `AgentGroupToggle`），同一分组可以同时
+ * 是多个 Agent 的当前组合。「已安装 / 未托管 skill」两个标签仍是单 Agent
+ * 视角，用顶部的 Agent 选择器切换查看对象。
+ */
+export function GroupsPage() {
+  const { data: allAgents = [] } = useAgents();
   const { data: liveSettings } = useSettings();
   const { data: liveGroups = [] } = useGroups();
   const { data: liveSkills = [] } = useSkills();
@@ -82,12 +80,25 @@ export function AgentPage({ agentId }: { agentId: string }) {
     skills: typeof liveSkills;
     config: typeof liveConfig;
   } | null>(null);
-  const { settings, groups, skills, config } = operationView ?? {
+  const {
+    settings,
+    groups: rawGroups,
+    skills,
+    config,
+  } = operationView ?? {
     settings: liveSettings,
     groups: liveGroups,
     skills: liveSkills,
     config: liveConfig,
   };
+  const agents = useMemo(
+    () => allAgents.filter((a) => !settings?.disabledAgents?.includes(a.id)),
+    [allAgents, settings?.disabledAgents],
+  );
+  const groups = useMemo(
+    () => [...rawGroups].sort((a, b) => a.sortOrder - b.sortOrder),
+    [rawGroups],
+  );
   const client = useQueryClient();
   const [editing, setEditing] = useState<{
     id: string | null;
@@ -101,9 +112,17 @@ export function AgentPage({ agentId }: { agentId: string }) {
   const [tab, setTab] = useState("groups");
   const showInstalled = tab !== "groups";
   const [addingSkill, setAddingSkill] = useState(false);
-  const current = config?.activeGroups?.[agentId];
-  const sortedGroups = [...groups].sort((a, b) => a.sortOrder - b.sortOrder);
-  const own = sortedGroups.filter((g) => g.agentId === agentId);
+  // 「已安装 / 未托管」是单 Agent 视角，默认选第一个未关闭管理的 Agent
+  const [installedAgentId, setInstalledAgentId] = useState<string | undefined>(
+    undefined,
+  );
+  useEffect(() => {
+    if (installedAgentId && agents.some((a) => a.id === installedAgentId))
+      return;
+    setInstalledAgentId(agents[0]?.id);
+  }, [agents, installedAgentId]);
+  const agent = agents.find((a) => a.id === installedAgentId);
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, {
@@ -128,64 +147,83 @@ export function AgentPage({ agentId }: { agentId: string }) {
   });
   const onDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id || reorder.isPending) return;
-    const from = own.findIndex((g) => g.id === active.id);
-    const to = own.findIndex((g) => g.id === over.id);
+    const from = groups.findIndex((g) => g.id === active.id);
+    const to = groups.findIndex((g) => g.id === over.id);
     if (from < 0 || to < 0) return;
-    const moved = arrayMove(own, from, to);
-    let index = 0;
-    // Only replace this Agent's slots; other Agents and legacy groups keep their order.
-    const next = sortedGroups.map((g, sortOrder) => ({
-      ...(g.agentId === agentId ? moved[index++] : g),
-      sortOrder,
-    }));
-    reorder.mutate(next);
+    reorder.mutate(
+      arrayMove(groups, from, to).map((g, sortOrder) => ({
+        ...g,
+        sortOrder,
+      })),
+    );
   };
-  const legacy = groups.filter((g) => !g.agentId);
   // 索引跟着 skills 走：与 ProjectsPage 同一口径，别在每次重渲染时重建一遍
   const tokens = useMemo(() => tokenIndex(skills), [skills]);
   const groupTokens = (g: Group) => sumTokens(tokens, g.skillIds);
-  // 顶部统计卡片的三个数字。
-  // 分组：每个 agent 同时只启用一个，且启用记录指向的组必须还在（删掉的组不算）。
-  // skill：文件在位、且没被 agent 的原生开关停用；"有痕迹但用不上"的
-  // （外来占位、悬空链接）不计，否则是虚报 —— 见 isRegistered。
-  const activeGroupCount = own.some((g) => g.id === current?.groupId) ? 1 : 0;
-  const enabledSkills = skills.filter((s) => {
-    const state = s.agents[agentId];
-    return !!state && !state.disabled && isRegistered(state.status);
-  });
+
+  /**
+   * 一个分组对某个 Agent 当前是什么状态：
+   * - active：该 Agent 的启用记录正指向这个分组
+   * - changed：分组定义已变化（成员、保留策略）或某个成员副本已过期，与「有待应用修改」同义
+   * - unavailable：启用记录里的某个成员在这个 Agent 上缺失/被停用/需要人工处理，与「需要检查」同义
+   */
+  function groupStatus(g: Group, agentId: string) {
+    const current = config?.activeGroups?.[agentId];
+    const active = current?.groupId === g.id;
+    if (!active || !current)
+      return { active, changed: false, unavailable: false };
+    const changed =
+      (current.entries?.some(
+        (entry) =>
+          skills.find((s) => s.id === entry.skillId)?.agents[agentId]
+            ?.status === "copyStale",
+      ) ??
+        false) ||
+      JSON.stringify(current.skillIds) !== JSON.stringify(g.skillIds) ||
+      (current.preserveManualSkills ?? true) !==
+        (settings?.preserveManualSkills ?? true);
+    const unavailable = current.skillIds.some((id) => {
+      const state = skills.find((s) => s.id === id)?.agents[agentId];
+      return !state || state.disabled || needsManualFix(state.status);
+    });
+    return { active, changed, unavailable };
+  }
+
+  // 「已安装 / 未托管」统计只看当前选中的 Agent；没有可用 Agent 时都是 0
+  const enabledSkills = agent
+    ? skills.filter((s) => {
+        const state = s.agents[agent.id];
+        return !!state && !state.disabled && isRegistered(state.status);
+      })
+    : [];
   const enabledTokens = sumTokens(
     tokens,
     enabledSkills.map((s) => s.id),
   );
-  // 这些 skill 的副本与源已经不一致，而合计恒定按源估算 ——
-  // 数字照给（agent 确实加载了它们），偏差在 tooltip 里交代
-  const driftedCount = enabledSkills.filter((s) =>
-    isCopyDrifted(s.agents[agentId].status),
-  ).length;
+  const driftedCount = agent
+    ? enabledSkills.filter((s) => isCopyDrifted(s.agents[agent.id].status))
+        .length
+    : 0;
 
-  const agent = agents.find((a) => a.id === agentId);
   const refresh = () => client.invalidateQueries();
   const save = useMutation({
     mutationFn: async () => {
       if (!editing) throw new Error("没有正在编辑的分组");
-      return groupsApi.saveAgent(
-        editing.id,
-        agentId,
-        editing.name,
-        editing.skillIds,
-      );
+      return groupsApi.save(editing.id, editing.name, editing.skillIds);
     },
     onSuccess: () => {
       setEditing(null);
-      toast.success("组合已保存，点击启用后生效");
+      toast.success("分组已保存，可在卡片上为需要的 Agent 启用");
     },
     onError: (e) => setError(String(e)),
     onSettled: refresh,
   });
   const activate = useMutation({
-    mutationFn: (id: string | null) => groupsApi.activate(agentId, id),
-    onMutate: () => setOperationView({ settings, groups, skills, config }),
-    onSuccess: (_, id) => toast.success(id ? "分组已启用" : "分组已停用"),
+    mutationFn: (v: { agentId: string; groupId: string | null }) =>
+      groupsApi.activate(v.agentId, v.groupId),
+    onMutate: () =>
+      setOperationView({ settings, groups: rawGroups, skills, config }),
+    onSuccess: (_, v) => toast.success(v.groupId ? "分组已启用" : "分组已停用"),
     onError: (e) => toast.error(String(e)),
     onSettled: async () => {
       try {
@@ -201,26 +239,24 @@ export function AgentPage({ agentId }: { agentId: string }) {
     onError: (e) => toast.error(String(e)),
     onSettled: refresh,
   });
-  const edit = (g?: Group, copy = false) => {
+  const edit = (g?: Group) => {
     setError(null);
     setSkillSearch("");
     setEditing({
-      id: copy ? null : (g?.id ?? null),
+      id: g?.id ?? null,
       name: g?.name ?? "",
       skillIds: [...(g?.skillIds ?? [])],
     });
   };
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {tab !== "mcp" && (
-        <PageTools
-          query={query}
-          onQueryChange={setQuery}
-          placeholder={showInstalled ? "搜索已安装 skill…" : "搜索分组…"}
-          createLabel={showInstalled ? "添加 skill" : "新建分组"}
-          onCreate={() => (showInstalled ? setAddingSkill(true) : edit())}
-        />
-      )}
+      <PageTools
+        query={query}
+        onQueryChange={setQuery}
+        placeholder={showInstalled ? "搜索已安装 skill…" : "搜索分组…"}
+        createLabel={showInstalled ? "添加 skill" : "新建分组"}
+        onCreate={() => (showInstalled ? setAddingSkill(true) : edit())}
+      />
       <Tabs
         value={tab}
         onValueChange={(value) => {
@@ -229,15 +265,15 @@ export function AgentPage({ agentId }: { agentId: string }) {
         }}
         className="flex min-h-0 flex-1 flex-col"
       >
-        {/* 分页与统计合成一行：左边切页、右边靠右对齐的三个数字 */}
+        {/* 分页与统计合成一行：左边切页（+ 单 Agent 标签的 Agent 选择器），右边统计 */}
         <SummaryBar>
           <SummaryStart>
-            <TabsList className="h-9 shrink-0" aria-label="Agent 内容">
+            <TabsList className="h-9 shrink-0" aria-label="分组内容">
               <TabsTrigger
                 value="groups"
                 className={`${summaryTabClass} gap-2 data-[state=active]:bg-background data-[state=active]:text-foreground dark:data-[state=active]:bg-background`}
               >
-                分组 <span className="text-xs opacity-60">{own.length}</span>
+                分组 <span className="text-xs opacity-60">{groups.length}</span>
               </TabsTrigger>
               <TabsTrigger
                 value="installed"
@@ -245,13 +281,13 @@ export function AgentPage({ agentId }: { agentId: string }) {
               >
                 已安装 skill
                 <span className="text-xs opacity-60">
-                  {
-                    skills.filter(
-                      (s) =>
-                        s.agents[agentId] &&
-                        s.agents[agentId].status !== "notLinked",
-                    ).length
-                  }
+                  {agent
+                    ? skills.filter(
+                        (s) =>
+                          s.agents[agent.id] &&
+                          s.agents[agent.id].status !== "notLinked",
+                      ).length
+                    : 0}
                 </span>
               </TabsTrigger>
               <TabsTrigger
@@ -260,129 +296,129 @@ export function AgentPage({ agentId }: { agentId: string }) {
               >
                 未托管 skill
                 <span className="text-xs opacity-60">
-                  {skills.filter((s) => s.agents[agentId]?.manual).length}
+                  {agent
+                    ? skills.filter((s) => s.agents[agent.id]?.manual).length
+                    : 0}
                 </span>
               </TabsTrigger>
             </TabsList>
+            {/*
+              原生 <select> 而不是 Radix —— 本项目的 jsdom 测试约定不测 Radix 浮层的
+              展开交互（floating-ui 在 jsdom 里单次展开要 3–50 秒，必然抖），
+              这里只是个单选切换，没必要把测试前景换到都市会抖的控件上。
+            */}
+            {showInstalled && agents.length > 0 && (
+              <select
+                aria-label="选择 Agent"
+                className="h-9 shrink-0 rounded-md border border-border-default bg-background px-2 text-sm"
+                value={installedAgentId ?? ""}
+                onChange={(e) => setInstalledAgentId(e.target.value)}
+              >
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.displayName}
+                  </option>
+                ))}
+              </select>
+            )}
           </SummaryStart>
           {/*
-            这三枚统计胶囊只报数、这一行没有筛选语义，所以是不可聚焦的 Badge
+            这些统计胶囊只报数、这一行没有筛选语义，所以是不可聚焦的 Badge
             而不是按钮。用 Badge 的 outline 变体而不是手抄它的类名 —— 裸 `border`
             会吃到 preflight 推出的 #e4e4e7，深色下就是近白边框套在已经变暗的卡片里。
           */}
-          {tab !== "mcp" && (
-            <SummaryEnd>
-              <SkillBackups
-                scope={`agent:${agentId}`}
-                className={summaryPillClass}
-              />
-              <Badge
-                variant="outline"
-                className={summaryPillClass}
-                title={`每个 agent 同一时间只能启用一个分组；本 agent 共 ${own.length} 个分组`}
-              >
-                已启用 {activeGroupCount} 个分组
-              </Badge>
-              <Badge
-                variant="outline"
-                className={summaryPillClass}
-                title={
-                  agent?.supportsNativeToggle
-                    ? "文件在位、且没被 agent 的原生开关停用的 skill。目录里有痕迹但用不上的（外来占位、悬空链接）不计。"
-                    : "按标准目录中的 Skill 文件统计；实际加载状态由 Agent 自身配置决定。"
-                }
-              >
-                {agent?.supportsNativeToggle ? "已启用" : "已安装"}{" "}
-                {enabledSkills.length} 个 skill
-              </Badge>
-              <Badge
-                variant="outline"
-                className={summaryPillClass}
-                title={tokenTitle(
-                  enabledTokens,
-                  agent?.supportsNativeToggle
-                    ? "当前已启用的 skill"
-                    : "当前已安装的 skill",
-                  driftedCount,
+          <SummaryEnd>
+            {showInstalled ? (
+              <>
+                <SkillBackups
+                  scope={`agent:${installedAgentId}`}
+                  className={summaryPillClass}
+                />
+                <Badge
+                  variant="outline"
+                  className={summaryPillClass}
+                  title={
+                    agent?.supportsNativeToggle
+                      ? "文件在位、且没被 agent 的原生开关停用的 skill。目录里有痕迹但用不上的（外来占位、悬空链接）不计。"
+                      : "按标准目录中的 Skill 文件统计；实际加载状态由 Agent 自身配置决定。"
+                  }
+                >
+                  {agent?.supportsNativeToggle ? "已启用" : "已安装"}{" "}
+                  {enabledSkills.length} 个 skill
+                </Badge>
+                <Badge
+                  variant="outline"
+                  className={summaryPillClass}
+                  title={tokenTitle(
+                    enabledTokens,
+                    agent?.supportsNativeToggle
+                      ? "当前已启用的 skill"
+                      : "当前已安装的 skill",
+                    driftedCount,
+                  )}
+                >
+                  ≈ {formatTokens(enabledTokens.total)} tokens
+                </Badge>
+                {agent && !agent.supportsNativeToggle && (
+                  <HelpPopover label={`${agent.displayName} Skill 使用说明`}>
+                    {agent.displayName} 本版支持 Skill
+                    安装、托管和分组部署，暂不读取或修改原生启停配置。
+                    分组停用只撤回 Studio 部署的副本，手动安装的 Skill
+                    始终保留。 修改后请在 Agent 中重新加载 Skill 或重启会话。
+                  </HelpPopover>
                 )}
-              >
-                ≈ {formatTokens(enabledTokens.total)} tokens
+              </>
+            ) : (
+              <Badge variant="outline" className={summaryPillClass}>
+                共 {groups.length} 个分组
               </Badge>
-              {agent && !agent.supportsNativeToggle && (
-                <HelpPopover label={`${agent.displayName} Skill 使用说明`}>
-                  {agent.displayName} 本版支持 Skill
-                  安装、托管和分组部署，暂不读取或修改原生启停配置。
-                  分组停用只撤回 Studio 部署的副本，手动安装的 Skill 始终保留。
-                  修改后请在 Agent 中重新加载 Skill 或重启会话。
-                </HelpPopover>
-              )}
-            </SummaryEnd>
-          )}
+            )}
+          </SummaryEnd>
         </SummaryBar>
         <TabsContent
           value="groups"
           className="min-h-0 flex-1 overflow-y-auto pb-6"
         >
-          {own.length === 0 && (
+          {groups.length === 0 && (
             <div className="p-8 text-center text-sm text-muted-foreground">
               还没有分组。新建一个组合，从 Skill Hub 选择需要的 skill。
             </div>
           )}
           <DndContext
-            key={agentId}
             sensors={sensors}
             collisionDetection={closestCenter}
             onDragEnd={onDragEnd}
           >
             <SortableContext
-              items={own.map((g) => g.id)}
+              items={groups.map((g) => g.id)}
               strategy={verticalListSortingStrategy}
             >
               <ListContainer cards>
-                {own
+                {groups
                   .filter((g) =>
                     `${g.name} ${g.skillIds.map((id) => skills.find((s) => s.id === id)?.name ?? "").join(" ")}`
                       .toLowerCase()
                       .includes(query.trim().toLowerCase()),
                   )
                   .map((g) => {
-                    const active = current?.groupId === g.id;
-                    // 一行只遍历一次 id 集合：下面的判断、数字、tooltip 共用
+                    // 一行只遍历一次 agents：下面的徽标、图标行、删除保护共用
                     const rowTokens = groupTokens(g);
-                    const changed =
-                      active &&
-                      (current.entries?.some(
-                        (entry) =>
-                          skills.find((s) => s.id === entry.skillId)?.agents[
-                            agentId
-                          ]?.status === "copyStale",
-                      ) ||
-                        JSON.stringify(current.skillIds) !==
-                          JSON.stringify(g.skillIds) ||
-                        (current.preserveManualSkills ?? true) !==
-                          (settings?.preserveManualSkills ?? true));
-                    // 「需要检查」问的是"必须由人动手吗"，和上面数"已启用"的
-                    // isRegistered 是两个谓词：copyConflict 两边都算，见 linkStatus.ts
-                    // （注意它与 Rust 的 needs_attention 也不是一回事）
-                    const unavailable =
-                      active &&
-                      current.skillIds.some((id) => {
-                        const state = skills.find((s) => s.id === id)?.agents[
-                          agentId
-                        ];
-                        return (
-                          !state ||
-                          state.disabled ||
-                          needsManualFix(state.status)
-                        );
-                      });
+                    const statuses = agents.map((a) => ({
+                      agent: a,
+                      ...groupStatus(g, a.id),
+                    }));
+                    const activeStatuses = statuses.filter((s) => s.active);
+                    const unavailable = activeStatuses.some(
+                      (s) => s.unavailable,
+                    );
+                    const changed = activeStatuses.some((s) => s.changed);
                     return (
                       <SortableGroupCard
                         key={g.id}
                         group={g}
                         disabled={reorder.isPending}
                         className={
-                          active
+                          activeStatuses.length > 0
                             ? "border-emerald-500/40 bg-card bg-gradient-to-r from-emerald-500/10 to-transparent shadow-sm shadow-emerald-500/5 hover:border-emerald-500/60 hover:bg-card dark:from-emerald-500/15"
                             : undefined
                         }
@@ -391,7 +427,7 @@ export function AgentPage({ agentId }: { agentId: string }) {
                           <Layers className="h-5 w-5" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className="font-medium">{g.name}</span>
                             <Badge variant="outline">
                               {g.skillIds.length} 个 skill
@@ -404,9 +440,12 @@ export function AgentPage({ agentId }: { agentId: string }) {
                                 ≈ {formatTokens(rowTokens.total)} tokens
                               </Badge>
                             )}
-                            {active && (
+                            {activeStatuses.length > 0 && (
                               <Badge
                                 variant={unavailable ? "warning" : "success"}
+                                title={activeStatuses
+                                  .map((s) => s.agent.displayName)
+                                  .join("、")}
                               >
                                 {unavailable ? "需要检查" : "使用中"}
                               </Badge>
@@ -425,46 +464,42 @@ export function AgentPage({ agentId }: { agentId: string }) {
                               .join(" · ") || "尚未选择 skill"}
                           </p>
                         </div>
-                        <RowActions
-                          busy={
-                            activate.isPending &&
-                            (activate.variables === g.id ||
-                              (activate.variables === null && active))
-                          }
-                        >
-                          <Button
-                            size="sm"
-                            aria-busy={activate.isPending}
-                            variant={active ? "outline" : "default"}
-                            disabled={
-                              activate.isPending ||
-                              (!active && !g.skillIds.length)
-                            }
-                            onClick={() =>
-                              activate.mutate(active ? null : g.id)
-                            }
-                          >
-                            {active ? (
-                              <Square className="h-4 w-4" />
-                            ) : (
-                              <Play className="h-4 w-4" />
-                            )}
-                            {active ? "停用" : "启用"}
-                          </Button>
-                          {active && (changed || unavailable) && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              title={changed ? "应用修改" : "重新应用"}
-                              aria-label={changed ? "应用修改" : "重新应用"}
-                              disabled={
-                                activate.isPending || !g.skillIds.length
-                              }
-                              onClick={() => activate.mutate(g.id)}
-                            >
-                              <RefreshCw className="h-4 w-4" />
-                            </Button>
+                        <div className="flex shrink-0 items-center gap-1">
+                          {statuses.map(
+                            ({ agent: a, active, changed, unavailable }) => {
+                              const busy =
+                                activate.isPending &&
+                                activate.variables?.agentId === a.id;
+                              // changed（成员/策略与已部署的不一致）点击可以安全重新同步；
+                              // unavailable（某个成员需要人工处理）只影响提醒点，点击仍是
+                              // 单纯的停用 —— 不能让一个有问题的分组连关都关不掉。
+                              const needsReapply = changed;
+                              return (
+                                <AgentToggleIcon
+                                  key={a.id}
+                                  agentId={a.id}
+                                  label={a.displayName}
+                                  active={active}
+                                  attention={changed || unavailable}
+                                  reapply={needsReapply}
+                                  disabled={
+                                    busy || (!active && !g.skillIds.length)
+                                  }
+                                  onClick={() =>
+                                    activate.mutate({
+                                      agentId: a.id,
+                                      groupId:
+                                        !active || needsReapply ? g.id : null,
+                                    })
+                                  }
+                                />
+                              );
+                            },
                           )}
+                        </div>
+                        <RowActions
+                          busy={remove.isPending && deleting?.id === g.id}
+                        >
                           <Button
                             variant="ghost"
                             size="icon"
@@ -477,9 +512,15 @@ export function AgentPage({ agentId }: { agentId: string }) {
                           <Button
                             variant="ghost"
                             size="icon"
-                            title={active ? "请先停用分组" : "删除分组"}
+                            title={
+                              activeStatuses.length > 0
+                                ? "请先停用分组"
+                                : "删除分组"
+                            }
                             aria-label={`删除 ${g.name}`}
-                            disabled={active || activate.isPending}
+                            disabled={
+                              activeStatuses.length > 0 || activate.isPending
+                            }
                             onClick={() => setDeleting(g)}
                           >
                             <Trash2 className="h-4 w-4" />
@@ -491,32 +532,6 @@ export function AgentPage({ agentId }: { agentId: string }) {
               </ListContainer>
             </SortableContext>
           </DndContext>
-          {legacy.length > 0 && (
-            <details className="mt-5 rounded-xl border p-4">
-              <summary className="cursor-pointer text-sm text-muted-foreground">
-                导入旧共享分组（{legacy.length}）
-              </summary>
-              <p className="my-2 text-xs text-muted-foreground">
-                导入为当前 Agent 的独立组合，原分组及项目引用保留。
-              </p>
-              {legacy.map((g) => (
-                <div
-                  key={g.id}
-                  className="flex items-center justify-between py-2 text-sm"
-                >
-                  <span>{g.name}</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => edit(g, true)}
-                  >
-                    <Download className="h-4 w-4" />
-                    导入
-                  </Button>
-                </div>
-              ))}
-            </details>
-          )}
         </TabsContent>
         {["installed", "manual"].map((value) => (
           <TabsContent
@@ -524,13 +539,19 @@ export function AgentPage({ agentId }: { agentId: string }) {
             value={value}
             className="min-h-0 flex-1 overflow-y-auto"
           >
-            <AgentSkills
-              agentId={agentId}
-              searchQuery={query}
-              manualOnly={value === "manual"}
-              addOpen={addingSkill}
-              onAddOpenChange={setAddingSkill}
-            />
+            {agent ? (
+              <AgentSkills
+                agentId={agent.id}
+                searchQuery={query}
+                manualOnly={value === "manual"}
+                addOpen={addingSkill}
+                onAddOpenChange={setAddingSkill}
+              />
+            ) : (
+              <p className="p-8 text-center text-sm text-muted-foreground">
+                暂无可用的 Agent
+              </p>
+            )}
           </TabsContent>
         ))}
       </Tabs>
@@ -544,8 +565,7 @@ export function AgentPage({ agentId }: { agentId: string }) {
           <DialogHeader>
             <DialogTitle>{editing?.id ? "编辑分组" : "新建分组"}</DialogTitle>
             <DialogDescription>
-              为 {agent?.displayName ?? agentId} 选择 skill
-              组合，保存后点击启用。
+              选择 skill 组合，保存后可在卡片上为需要的 Agent 启用。
             </DialogDescription>
           </DialogHeader>
           <div className="min-h-0 space-y-3 overflow-y-auto px-6 py-4">
@@ -586,11 +606,7 @@ export function AgentPage({ agentId }: { agentId: string }) {
                     <Checkbox
                       aria-label={`选择 ${s.name}`}
                       checked={editing?.skillIds.includes(s.id) ?? false}
-                      disabled={
-                        save.isPending ||
-                        (!!s.agents[agentId]?.unavailableReason &&
-                          !editing?.skillIds.includes(s.id))
-                      }
+                      disabled={save.isPending}
                       onCheckedChange={(on) =>
                         setEditing(
                           (prev) =>
@@ -605,11 +621,6 @@ export function AgentPage({ agentId }: { agentId: string }) {
                     />
                     <div className="min-w-0">
                       <p className="text-sm font-medium">{s.name}</p>
-                      {s.agents[agentId]?.unavailableReason && (
-                        <p className="text-xs text-amber-600">
-                          {s.agents[agentId].unavailableReason}
-                        </p>
-                      )}
                       <p className="truncate text-xs text-muted-foreground">
                         {s.description}
                       </p>
