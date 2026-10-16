@@ -11,6 +11,7 @@ import { ArrowLeft, FolderGit2, FolderOpen, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { McpAssignments } from "@/components/mcp/McpAssignments";
 import { PageTools } from "@/components/common/PageTools";
+import { NameAvatar } from "@/components/common/NameAvatar";
 import {
   ListContainer,
   ListItemRow,
@@ -228,9 +229,7 @@ function McpProjectsContent() {
                   onPreview={() => setDetail(project.id)}
                   previewLabel={`查看 ${project.name} 的 MCP`}
                 >
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted">
-                    <FolderGit2 className="h-5 w-5" />
-                  </div>
+                  <NameAvatar name={project.name} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="truncate text-sm font-medium">

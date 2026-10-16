@@ -1,6 +1,13 @@
+import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/** 所有管理列表的行骨架。分割线由行自己的 border-b 提供。 */
+/**
+ * 所有管理列表的行骨架。分割线由行自己的 border-b 提供。
+ *
+ * 交互统一为：能进详情的行整行可点（`onPreview`），行尾常驻一个淡淡的 › 作
+ * 为提示；行内的按钮只做就地动作，点它们不会触发整行。只做就地切换的行传
+ * `onClick`，此时不显示 ›。
+ */
 export function ListItemRow({
   children,
   isLast,
@@ -57,6 +64,12 @@ export function ListItemRow({
       )}
     >
       {children}
+      {onPreview && (
+        <ChevronRight
+          aria-hidden
+          className="h-4 w-4 shrink-0 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground"
+        />
+      )}
     </div>
   );
 }

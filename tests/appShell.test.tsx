@@ -306,7 +306,8 @@ it("uses the header resource toggle to scope the Groups and project pages", asyn
     screen.queryByRole("tab", { name: /^已配置 MCP/ }),
   ).not.toBeInTheDocument();
   await user.click(nav.getByRole("button", { name: "项目" }));
-  await user.click(await screen.findByRole("button", { name: "Demo" }));
+  // 整张项目卡片可点：点卡片进项目详情，不再需要铅笔按钮
+  await user.click(await screen.findByRole("button", { name: "编辑 Demo" }));
   expect(await screen.findByText("项目已有 skill")).toBeInTheDocument();
   expect(screen.queryByText("项目 MCP")).not.toBeInTheDocument();
 });

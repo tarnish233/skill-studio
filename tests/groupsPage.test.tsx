@@ -629,3 +629,40 @@ it("stacks two groups for one Agent from the 全部 view, and stopping one keeps
   ).toBeInTheDocument();
   await viewChip("Codex · 1 个分组");
 });
+it("分组卡片按名字生成图标：首字不同、同一个分组前后一致", async () => {
+  setup();
+  handlers.set("list_groups", () => [
+    makeGroup({ id: "c", name: "前端", skillIds: ["a"] }),
+    makeGroup({ id: "d", name: "LLM", skillIds: ["b"] }),
+  ]);
+  renderWithProviders(<GroupsPage />);
+  await screen.findByText("前端");
+  // 首字直接来自分组名，两张卡片因此不再是同一个图标
+  const first = screen.getByText("前");
+  const second = screen.getByText("L");
+  expect(first).toBeInTheDocument();
+  expect(second).toBeInTheDocument();
+  // 记号靠名字算出来，不依赖任何分组上的字段
+  expect(first.parentElement?.className).toMatch(/bg-\S+ text-/);
+});
+
+it("整张分组卡片可点：点卡片打开编辑分组，卡片上的图标与删除按钮不会误开", async () => {
+  setup();
+  handlers.set("list_groups", () => [
+    makeGroup({ id: "c", name: "Dev", skillIds: ["a"] }),
+  ]);
+  renderWithProviders(<GroupsPage />);
+  // 卡片本身就是进入编辑的入口，不再有单独的铅笔按钮
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 Dev" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByLabelText("分组名称")).toHaveValue("Dev");
+  fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+  // 行内的就地按钮（启用图标、删除）仍然只做自己的事
+  fireEvent.click(screen.getByRole("button", { name: "为 Codex 启用「Dev」" }));
+  await waitFor(() =>
+    expect(
+      calls.find((c) => c.command === "activate_agent_group")?.args,
+    ).toEqual({ agentId: "codex", groupIds: ["c"] }),
+  );
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});

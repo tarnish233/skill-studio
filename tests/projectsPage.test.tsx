@@ -134,3 +134,33 @@ it("counts deployed projects per agent once, filters cards, and toggles through 
   ).toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: "启用" })).toHaveLength(2);
 });
+it("整张项目卡片可点：点卡片进项目详情，原来的铅笔按钮已去掉", async () => {
+  setupSkills();
+  handlers.set("list_projects", () => [
+    makeProject({ id: "p1", name: "webapp", skillIds: [], groupIds: [] }),
+  ]);
+  renderWithProviders(<ProjectsPage />);
+  // 卡片本身就是入口（与 MCP 项目页、Hub 卡片一致）
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 webapp" }));
+  expect(await screen.findByText("项目已有 skill")).toBeInTheDocument();
+  // 行内的就地按钮不再触发整卡点击
+  fireEvent.click(screen.getByRole("button", { name: "返回" }));
+  expect(
+    await screen.findByRole("button", { name: "编辑 webapp" }),
+  ).toBeInTheDocument();
+});
+
+it("项目卡片按名字生成图标：不同项目首字不同，不再是统一的文件夹图标", async () => {
+  setupSkills();
+  handlers.set("list_projects", () => [
+    makeProject({ id: "p1", name: "webapp", skillIds: [], groupIds: [] }),
+    makeProject({ id: "p2", name: "open_mole", skillIds: [], groupIds: [] }),
+  ]);
+  renderWithProviders(<ProjectsPage />);
+  await screen.findByText("webapp");
+  expect(screen.getByText("W")).toBeInTheDocument();
+  expect(screen.getByText("O")).toBeInTheDocument();
+  expect(screen.getByText("W").parentElement?.className).toMatch(
+    /bg-\S+ text-/,
+  );
+});

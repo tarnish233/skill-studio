@@ -8,6 +8,7 @@ import { agentSourceColor, projectSkillDirectory } from "@/lib/agents";
 import { useSkillPreview } from "@/components/common/SkillPreview";
 import { SkillBackups } from "@/components/common/SkillBackups";
 import { PageTools } from "@/components/common/PageTools";
+import { NameAvatar } from "@/components/common/NameAvatar";
 import {
   NavigationGuard,
   useNavigationGuard,
@@ -22,7 +23,6 @@ import {
   Upload,
   Play,
   Square,
-  Pencil,
   GripVertical,
   PackagePlus,
 } from "lucide-react";
@@ -295,18 +295,14 @@ function ProjectsContent() {
                       key={p.id}
                       project={p}
                       disabled={reorder.isPending || toggleProject.isPending}
+                      onOpen={() => setDetail(p.id)}
                     >
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted">
-                        <FolderGit2 className="h-5 w-5" />
-                      </div>
+                      <NameAvatar name={p.name} />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <button
-                            className="truncate text-sm font-medium text-left"
-                            onClick={() => setDetail(p.id)}
-                          >
+                          <span className="truncate text-sm font-medium">
                             {p.name}
-                          </button>
+                          </span>
                           {projectAgentIds(p).length > 0 && (
                             <Badge variant="success">使用中</Badge>
                           )}
@@ -385,15 +381,6 @@ function ProjectsContent() {
                               <Play className="h-4 w-4" />
                             )}
                             {p.managedEntries?.length ? "停用" : "启用"}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="编辑项目"
-                            aria-label={`编辑 ${p.name}`}
-                            onClick={() => setDetail(p.id)}
-                          >
-                            <Pencil className="h-4 w-4" />
                           </Button>
                           <Button
                             variant="ghost"
@@ -1012,10 +999,13 @@ function ProjectDetail({
 function SortableProjectCard({
   project,
   disabled,
+  onOpen,
   children,
 }: {
   project: ProjectBinding;
   disabled: boolean;
+  /** 点整张卡片时打开的管理界面（项目详情） */
+  onOpen?: () => void;
   children: ReactNode;
 }) {
   const {
@@ -1044,6 +1034,8 @@ function SortableProjectCard({
             ? "border-emerald-500/40 bg-card bg-gradient-to-r from-emerald-500/10 to-transparent shadow-sm shadow-emerald-500/5 hover:border-emerald-500/60 hover:bg-card dark:from-emerald-500/15"
             : undefined
         }
+        onPreview={onOpen}
+        previewLabel={onOpen ? `编辑 ${project.name}` : undefined}
       >
         <button
           ref={setActivatorNodeRef}

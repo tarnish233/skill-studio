@@ -488,3 +488,12 @@ it("stacks two MCP groups for one Agent instead of replacing the first", async (
     }),
   ).toBeInTheDocument();
 });
+it("整张 MCP 分组卡片可点：点卡片打开编辑分组，不再有铅笔按钮", async () => {
+  status.groups = [{ ...group, id: "g1", name: "开发", entryIds: ["one"] }];
+  await open();
+  fireEvent.click(screen.getByRole("button", { name: "编辑 开发" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByLabelText("MCP 分组名称")).toHaveValue("开发");
+  fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});

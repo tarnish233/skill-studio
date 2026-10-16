@@ -1,4 +1,5 @@
 import { PageTools } from "@/components/common/PageTools";
+import { NameAvatar } from "@/components/common/NameAvatar";
 import { useMemo, useState, type ReactNode } from "react";
 import {
   DndContext,
@@ -19,7 +20,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { queryKeys, NAVIGATION_STALE_TIME } from "@/lib/queryKeys";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Trash2, Layers, GripVertical } from "lucide-react";
+import { Trash2, GripVertical } from "lucide-react";
 import { toast } from "sonner";
 import { groupsApi, settingsApi } from "@/lib/api";
 import { useAgents, useGroups, useSkills, useSettings } from "@/hooks/useData";
@@ -382,15 +383,14 @@ export function GroupsPage() {
                       dragHint={
                         viewAgent ? "在「全部」视角下拖动排序" : undefined
                       }
+                      onOpen={() => edit(g)}
                       className={
                         shown.active
                           ? "border-emerald-500/40 bg-card bg-gradient-to-r from-emerald-500/10 to-transparent shadow-sm shadow-emerald-500/5 hover:border-emerald-500/60 hover:bg-card dark:from-emerald-500/15"
                           : undefined
                       }
                     >
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted">
-                        <Layers className="h-5 w-5" />
-                      </div>
+                      <NameAvatar name={g.name} />
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-medium">{g.name}</span>
@@ -437,15 +437,6 @@ export function GroupsPage() {
                       <RowActions
                         busy={remove.isPending && deleting?.id === g.id}
                       >
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          title="编辑分组"
-                          aria-label={`编辑 ${g.name}`}
-                          onClick={() => edit(g)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
                         <Button
                           variant="ghost"
                           size="icon"
@@ -728,6 +719,7 @@ function SortableGroupCard({
   disabled,
   dragHint,
   className,
+  onOpen,
   children,
 }: {
   group: Group;
@@ -735,6 +727,8 @@ function SortableGroupCard({
   /** 拖动不可用的原因（比如在单个 Agent 视角下） */
   dragHint?: string;
   className?: string;
+  /** 点整张卡片时打开的管理界面（编辑分组） */
+  onOpen?: () => void;
   children: ReactNode;
 }) {
   const {
@@ -759,6 +753,8 @@ function SortableGroupCard({
       <ListItemRow
         card
         className={`${className ?? ""} ${isDragging ? "shadow-lg ring-1 ring-primary/30" : ""}`}
+        onPreview={onOpen}
+        previewLabel={onOpen ? `编辑 ${group.name}` : undefined}
       >
         <button
           ref={setActivatorNodeRef}

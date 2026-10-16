@@ -18,7 +18,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Layers, Pencil, Trash2, GripVertical } from "lucide-react";
+import { Trash2, GripVertical } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,6 +33,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { PageTools } from "@/components/common/PageTools";
+import { NameAvatar } from "@/components/common/NameAvatar";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import {
   ListContainer,
@@ -333,10 +334,9 @@ function LocalGroups() {
                           viewAgent ? "在「全部」视角下拖动排序" : undefined
                         }
                         active={shown.active}
+                        onOpen={() => edit(group)}
                       >
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted">
-                          <Layers className="h-5 w-5" />
-                        </div>
+                        <NameAvatar name={group.name} />
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-medium">{group.name}</span>
@@ -374,15 +374,6 @@ function LocalGroups() {
                           </p>
                         </div>
                         <RowActions busy={busy}>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label={`编辑 ${group.name}`}
-                            disabled={busy}
-                            onClick={() => edit(group)}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
                           <Button
                             variant="ghost"
                             size="icon"
@@ -724,6 +715,7 @@ function GroupCard({
   disabled,
   dragHint,
   active,
+  onOpen,
   children,
 }: {
   group: McpGroup;
@@ -731,6 +723,8 @@ function GroupCard({
   /** 拖动不可用的原因（比如在单个 Agent 视角下） */
   dragHint?: string;
   active: boolean;
+  /** 点整张卡片时打开的管理界面（编辑分组） */
+  onOpen?: () => void;
   children: React.ReactNode;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } =
@@ -747,6 +741,8 @@ function GroupCard({
             ? "border-emerald-500/40 bg-card bg-gradient-to-r from-emerald-500/10 to-transparent"
             : undefined
         }
+        onPreview={onOpen}
+        previewLabel={onOpen ? `编辑 ${group.name}` : undefined}
       >
         <button
           type="button"
