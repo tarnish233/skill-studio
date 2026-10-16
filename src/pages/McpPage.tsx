@@ -398,20 +398,25 @@ function LocalMcpPage({
             ...visibleMcpAgents.map((a) => [a.id, a.name]),
             ["managed", "已托管"],
             ["gateway", "网关连接"],
-          ].map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              aria-pressed={activeFilter === key}
-              onClick={() => setFilter(key)}
-              className={`${summaryPillClass} border-border-default transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${activeFilter === key ? "bg-muted ring-1 ring-current" : "text-muted-foreground"}`}
-            >
-              {MCP_AGENTS.some((a) => a.id === key) && (
-                <AgentIcon agentId={mcpAppId(key)} size="sm" />
-              )}
-              {label} {catalog.filter((r) => matches(r, key)).length}
-            </button>
-          ))}
+          ].map(([key, label]) => {
+            const isAgent = MCP_AGENTS.some((a) => a.id === key);
+            const count = catalog.filter((r) => matches(r, key)).length;
+            return (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={activeFilter === key}
+                aria-label={`${label} ${count}`}
+                onClick={() => setFilter(key)}
+                className={`${summaryPillClass} border-border-default transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${activeFilter === key ? "bg-muted ring-1 ring-current" : "text-muted-foreground"}`}
+              >
+                {isAgent && <AgentIcon agentId={mcpAppId(key)} size="sm" />}
+                {/* Agent 只留品牌图标，名字留给读屏和悬停提示 */}
+                {isAgent ? null : `${label} `}
+                {count}
+              </button>
+            );
+          })}
         </SummaryStart>
         <SummaryEnd>
           <Button

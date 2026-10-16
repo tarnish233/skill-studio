@@ -85,15 +85,17 @@ export function GroupAgentFilter({
                   ? `${agent.displayName} 正在使用 ${count} 个分组`
                   : `${agent.displayName} 没有启用分组`
               }
+              // Agent 只留品牌图标：数字是它启用的分组数，名字进读屏与悬停提示
+              aria-label={
+                count
+                  ? `${agent.displayName} · ${count} 个分组`
+                  : agent.displayName
+              }
               onClick={() => onSelect(agent.id)}
               className={pill(selected === agent.id)}
             >
               <AgentIcon agentId={agent.id} size="sm" />
-              {agent.displayName}
-              {/* 前导空格让读屏读作「Codex · 2 个分组」；视觉上行首空格会被折叠掉 */}
-              {count > 0 && (
-                <span className="opacity-70">{` · ${count} 个分组`}</span>
-              )}
+              {count}
             </button>
           );
         })}

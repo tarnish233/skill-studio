@@ -116,10 +116,11 @@ export function RemoteMcpPage() {
                   {server.agents.map((agent) => (
                     <span
                       key={agent.id}
+                      title={agent.name}
                       className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground"
                     >
                       <AgentIcon agentId={agent.appId} size="sm" />
-                      {agent.name}
+                      <span className="sr-only">{agent.name}</span>
                     </span>
                   ))}
                 </div>

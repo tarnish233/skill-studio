@@ -211,6 +211,9 @@ function ProjectsContent() {
     );
   }
 
+  /** 胶囊上的数字：该 Agent 已启用的项目数（同一项目只计一次） */
+  const countFor = (agentId: string) =>
+    projects.filter((p) => projectAgentIds(p).includes(agentId)).length;
   const pick = async () => {
     const picked = await projectsApi.pickDirectory();
     if (!picked) return;
@@ -232,16 +235,13 @@ function ProjectsContent() {
                 title={`筛选 ${a.displayName} 已启用的项目`}
                 className={`${summaryPillClass} border-transparent transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${agentSourceColor(a.id)} ${sourceFilter === a.id ? "ring-2 ring-current" : ""}`}
                 aria-pressed={sourceFilter === a.id}
+                aria-label={`${a.displayName}: ${countFor(a.id)}`}
                 onClick={() =>
                   setSourceFilter(sourceFilter === a.id ? null : a.id)
                 }
               >
                 <AgentIcon agentId={a.id} size="sm" />
-                {`${a.displayName}:`}{" "}
-                {
-                  projects.filter((p) => projectAgentIds(p).includes(a.id))
-                    .length
-                }
+                {countFor(a.id)}
               </button>
             ))}
         </SummaryStart>

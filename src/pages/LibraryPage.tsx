@@ -154,11 +154,18 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
     (c) => c.unavailable && matches(c) && (!hubOnly || isHubManaged(c)),
   );
 
-  const sourceOptions = [
+  const sourceOptions: {
+    id: string;
+    label: string;
+    color: string;
+    hideLabel?: boolean;
+  }[] = [
     ...visibleAgents.map((a) => ({
       id: a.id,
       label: a.displayName,
       color: agentSourceColor(a.id),
+      // Agent 在界面上统一用品牌图标表示，胶囊里不再重复名字
+      hideLabel: true,
     })),
     {
       id: "studio",
@@ -188,7 +195,7 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
   const summary = (
     <SummaryBar>
       <SummaryStart role="group" aria-label="按来源筛选">
-        {sourceOptions.map(({ id, label, color }) => {
+        {sourceOptions.map(({ id, label, color, hideLabel }) => {
           const count = counted.filter((c) =>
             hubSourceIds(c).includes(id),
           ).length;
@@ -197,6 +204,7 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
               key={id}
               type="button"
               aria-pressed={activeSourceFilter === id}
+              aria-label={`${label}: ${count}`}
               onClick={() => setSourceFilter(sourceFilter === id ? null : id)}
               title={
                 id === "agent"
@@ -214,7 +222,8 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
               ) : (
                 <AgentIcon agentId={id} size="sm" />
               )}
-              {`${label}:`} {count}
+              {hideLabel ? null : `${label}: `}
+              {count}
             </button>
           );
         })}

@@ -151,9 +151,10 @@ export function SettingsPage() {
                         });
                       }}
                       className="gap-2"
+                      aria-label={agent.displayName}
+                      title={`${agent.displayName}${enabled ? "：正在管理" : "：已关闭管理"}`}
                     >
                       <AgentIcon agentId={agent.id} />
-                      {agent.displayName}
                     </Button>
                   );
                 })}
