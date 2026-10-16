@@ -4,7 +4,6 @@ import {
   VIEW_STORAGE_KEY,
   RESOURCE_STORAGE_KEY,
   type Resource,
-  type StaticView,
   type ViewId,
 } from "@/lib/initialView";
 import { McpGroupsPage } from "@/pages/McpGroupsPage";
@@ -37,7 +36,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { NavSwitcher, type NavSection } from "@/components/common/NavSwitcher";
+import { NavSwitcher, type NavItem } from "@/components/common/NavSwitcher";
 import { useSettings, useSkillsAutoRefresh } from "@/hooks/useData";
 import { systemApi } from "@/lib/api";
 import { isLinux, isWindows } from "@/lib/platform";
@@ -51,7 +50,7 @@ import { SettingsPage } from "@/pages/SettingsPage";
 // Windows / Linux 自带或自绘标题栏，不留空。
 const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28;
 
-const STATIC_TITLES: Record<StaticView, string> = {
+const VIEW_TITLES: Record<ViewId, string> = {
   hub: "Hub",
   groups: "分组",
   projects: "项目",
@@ -81,7 +80,7 @@ function AppContent() {
     readInitialView(settings, target.id),
   );
   const [resource, setResource] = useState<Resource>(() =>
-    initialResource(view, settings),
+    initialResource(settings),
   );
   const activeResource = mcpEnabled ? resource : "skills";
   const remoteMcp = target.id !== "local" && activeResource === "mcp";
@@ -135,48 +134,34 @@ function AppContent() {
 
   const titles = useMemo<Record<string, string>>(
     () => ({
-      ...STATIC_TITLES,
+      ...VIEW_TITLES,
       hub: activeResource === "mcp" ? "MCP Hub" : "Skill Hub",
     }),
     [activeResource],
   );
 
-  const sections = useMemo<NavSection<ViewId>[]>(
+  const navItems = useMemo<NavItem<ViewId>[]>(
     () => [
       {
-        items: [
-          {
-            id: "hub",
-            label: "Hub",
-            icon: <Layers className="h-5 w-5" />,
-          },
-        ],
+        id: "hub",
+        label: VIEW_TITLES.hub,
+        icon: <Layers className="h-5 w-5" />,
       },
       {
-        label: "分组",
-        items: [
-          {
-            id: "groups",
-            label: STATIC_TITLES.groups,
-            icon: <GroupIcon className="h-5 w-5" />,
-            disabledReason: remoteMcp
-              ? "远程 MCP 暂不支持分组管理，请在 MCP Hub 查看。"
-              : undefined,
-          },
-        ],
+        id: "groups",
+        label: VIEW_TITLES.groups,
+        icon: <GroupIcon className="h-5 w-5" />,
+        disabledReason: remoteMcp
+          ? "远程 MCP 暂不支持分组管理，请在 MCP Hub 查看。"
+          : undefined,
       },
       {
-        label: "项目",
-        items: [
-          {
-            id: "projects",
-            label: STATIC_TITLES.projects,
-            icon: <FolderGit2 className="h-5 w-5" />,
-            disabledReason: remoteMcp
-              ? "远程 MCP 暂不支持项目管理，请在 MCP Hub 查看。"
-              : undefined,
-          },
-        ],
+        id: "projects",
+        label: VIEW_TITLES.projects,
+        icon: <FolderGit2 className="h-5 w-5" />,
+        disabledReason: remoteMcp
+          ? "远程 MCP 暂不支持项目管理，请在 MCP Hub 查看。"
+          : undefined,
       },
     ],
     [remoteMcp],
@@ -223,10 +208,7 @@ function AppContent() {
   const navigate = (next: ViewId) => {
     if (next === view && !activeMcpEditor) return;
     requestNavigation(() => {
-      const order: ViewId[] = [
-        ...sections.flatMap((section) => section.items.map((item) => item.id)),
-        "settings",
-      ];
+      const order: ViewId[] = [...navItems.map((item) => item.id), "settings"];
       const from = order.indexOf(view);
       const to = order.indexOf(next);
       setPageSlide({
@@ -294,7 +276,7 @@ function AppContent() {
                 className="min-h-0 w-full flex-1 overflow-y-auto px-2 pb-3"
               >
                 <NavSwitcher
-                  sections={sections}
+                  items={navItems}
                   active={view}
                   onSelect={navigate}
                 />

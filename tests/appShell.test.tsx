@@ -311,26 +311,22 @@ it("uses the header resource toggle to scope the Groups and project pages", asyn
   expect(screen.queryByText("项目 MCP")).not.toBeInTheDocument();
 });
 
-it("migrates a pre-upgrade per-Agent view into Groups and restores its MCP mode", async () => {
+it("restores the saved Groups page together with its MCP mode", async () => {
   withAgents();
-  // 升级前的导航把具体 agent 存成 "agent:<id>"；分组页不再按 agent 拆分路由，
-  // 这个旧值应该落地到共享的 "groups" 视图，而不是让用户卡在一个不存在的页面。
-  localStorage.setItem("skill-studio-view", "agent:codex");
+  localStorage.setItem("skill-studio-view", "groups");
   localStorage.setItem("skill-studio-resource", "mcp");
   renderWithProviders(<App />);
   expect(
     await screen.findByRole("button", { name: "新建 MCP 分组" }),
   ).toBeInTheDocument();
-  expect(screen.queryByRole("tab", { name: "Skill" })).not.toBeInTheDocument();
 });
 
-it("hides MCP navigation and returns a saved MCP view to Skill management when disabled", async () => {
+it("hides MCP navigation and returns a saved MCP mode to Skill management when disabled", async () => {
   withAgents();
   handlers.set("get_settings", () => ({
     ...defaultSettings(),
     manageMcp: false,
   }));
-  localStorage.setItem("skill-studio-view", "mcp");
   localStorage.setItem("skill-studio-resource", "mcp");
   renderWithProviders(<App />);
   const nav = within(await screen.findByRole("navigation", { name: "主导航" }));

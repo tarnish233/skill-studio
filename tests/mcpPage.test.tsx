@@ -330,7 +330,7 @@ it("explains that SSE must be tested in the Agent without marking it failed", as
 });
 
 it("uses the app subpage header and preserves Hub search when returning", async () => {
-  localStorage.setItem("skill-studio-view", "mcp");
+  localStorage.setItem("skill-studio-resource", "mcp");
   renderWithProviders(<App />);
   const search = await screen.findByRole("textbox", {
     name: "按名称或地址搜索 MCP…",

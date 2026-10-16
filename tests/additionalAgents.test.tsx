@@ -64,11 +64,9 @@ it("exposes all three additional Agents through the Agent selector in both Skill
   }
 });
 
-it("migrates a pre-upgrade per-Agent MCP view into Groups and still offers Pi's native MCP help", async () => {
+it("offers Pi's native MCP help from the MCP Groups page", async () => {
   setup();
-  // 升级前的导航把具体 agent 存成 "agent:<id>"；分组页不再按 agent 拆分路由，
-  // 这个旧值应该落地到共享的 "groups" 视图，而不是让用户卡在一个不存在的页面。
-  localStorage.setItem("skill-studio-view", "agent:pi");
+  localStorage.setItem("skill-studio-view", "groups");
   localStorage.setItem("skill-studio-resource", "mcp");
   renderWithProviders(<App />);
   expect(

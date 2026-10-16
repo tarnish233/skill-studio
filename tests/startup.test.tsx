@@ -2,13 +2,14 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import App from "@/App";
 import { StartupBoundary } from "@/components/common/StartupBoundary";
-import { readInitialView } from "@/lib/initialView";
+import { initialResource, readInitialView } from "@/lib/initialView";
 import { renderWithProviders } from "./utils/render";
 import {
   calls,
   handlers,
   claudeAgent,
   defaultSettings,
+  makeGroup,
   makeSkill,
   makeProject,
 } from "./mocks/tauri";
@@ -64,12 +65,12 @@ describe("startup readiness", () => {
   });
 
   it("does not briefly mount Skill Hub while restoring MCP with delayed settings", async () => {
-    localStorage.setItem("skill-studio-view", "mcp");
+    localStorage.setItem("skill-studio-resource", "mcp");
     const settings = deferred<ReturnType<typeof defaultSettings>>();
     handlers.set("get_settings", () => settings.promise);
     start();
     expect(screen.queryByRole("heading")).toBeNull();
-    expect(localStorage.getItem("skill-studio-view")).toBe("mcp");
+    expect(localStorage.getItem("skill-studio-resource")).toBe("mcp");
     await act(async () =>
       settings.resolve({ ...defaultSettings(), manageMcp: true }),
     );
@@ -98,6 +99,22 @@ describe("startup readiness", () => {
     await act(async () => projects.resolve([makeProject()]));
     expect(await screen.findByText("webapp")).toBeInTheDocument();
     expect(calls.filter((c) => c.command === "list_projects")).toHaveLength(1);
+  });
+
+  it("waits for the restored groups page's groups and activation state", async () => {
+    localStorage.setItem("skill-studio-view", "groups");
+    const groups = deferred<ReturnType<typeof makeGroup>[]>();
+    handlers.set("list_groups", () => groups.promise);
+    handlers.set("get_config", () => ({ activeGroups: {} }));
+    start();
+    await waitFor(() =>
+      expect(calls.some((c) => c.command === "list_groups")).toBe(true),
+    );
+    expect(calls.some((c) => c.command === "get_config")).toBe(true);
+    expect(screen.queryByRole("navigation")).toBeNull();
+    await act(async () => groups.resolve([makeGroup({ name: "Dev" })]));
+    expect(await screen.findByText("Dev")).toBeInTheDocument();
+    expect(screen.queryByText(/还没有分组/)).toBeNull();
   });
 
   it("offers retry on initial failure and never hides the app on background refresh", async () => {
@@ -133,18 +150,22 @@ describe("startup readiness", () => {
     expect(screen.getByRole("button", { name: "设置" })).toBeInTheDocument();
   });
 
-  it("resolves disabled MCP and hidden Agents before choosing startup queries", () => {
-    localStorage.setItem("skill-studio-view", "mcp");
-    expect(readInitialView({ ...defaultSettings(), manageMcp: false })).toBe(
-      "hub",
+  it("resolves the saved view and resource before choosing startup queries", () => {
+    localStorage.setItem("skill-studio-resource", "mcp");
+    expect(initialResource(defaultSettings())).toBe("mcp");
+    expect(initialResource({ ...defaultSettings(), manageMcp: false })).toBe(
+      "skills",
     );
-    // 升级前的单 agent 视图现在统一落在共享的“分组”页：哪个 Agent 被关闭管理
-    // 由该页内部的 Agent 选择器过滤，不再需要这层路由做牙门校验。
-    localStorage.setItem("skill-studio-view", "agent:codex");
+    // 远程 MCP 没有分组和项目管理，落到 Hub；关闭 MCP 管理后按 Skill 恢复分组页
+    localStorage.setItem("skill-studio-view", "groups");
+    expect(readInitialView(defaultSettings(), "remote")).toBe("hub");
     expect(
-      readInitialView({ ...defaultSettings(), disabledAgents: ["codex"] }),
+      readInitialView({ ...defaultSettings(), manageMcp: false }, "remote"),
     ).toBe("groups");
-    localStorage.setItem("skill-studio-view", "settings");
-    expect(readInitialView(defaultSettings())).toBe("hub");
+    // 不认识的值（包括旧版导航存下的）一律回到 Hub
+    for (const stale of ["settings", "agent:codex", "mcp", "library"]) {
+      localStorage.setItem("skill-studio-view", stale);
+      expect(readInitialView(defaultSettings())).toBe("hub");
+    }
   });
 });

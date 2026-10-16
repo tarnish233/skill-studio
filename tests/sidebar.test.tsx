@@ -34,7 +34,7 @@ it("keeps sidebar navigation mounted across Agent, settings and Hub pages", asyn
 });
 
 it("leaves the MCP editor when the currently selected Hub is clicked", async () => {
-  localStorage.setItem("skill-studio-view", "mcp");
+  localStorage.setItem("skill-studio-resource", "mcp");
   handlers.set("get_settings", () => ({
     ...defaultSettings(),
     manageMcp: true,
@@ -70,7 +70,7 @@ it("exposes transparency only after native material setup succeeds", async () =>
 });
 
 it("protects an MCP draft when navigating from the sidebar", async () => {
-  localStorage.setItem("skill-studio-view", "mcp");
+  localStorage.setItem("skill-studio-resource", "mcp");
   handlers.set("get_settings", () => ({
     ...defaultSettings(),
     manageMcp: true,

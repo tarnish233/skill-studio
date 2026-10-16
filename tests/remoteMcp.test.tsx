@@ -179,7 +179,7 @@ it("does not scan or fall back locally while disconnected", () => {
 });
 
 it("keeps remote MCP navigation in place without allowing unsupported actions", async () => {
-  localStorage.setItem("skill-studio-view", "agent:codex");
+  localStorage.setItem("skill-studio-view", "groups");
   localStorage.setItem("skill-studio-resource", "mcp");
   renderWithProviders(<App />);
   await waitFor(() => expect(screen.getByText("Shared MCP")).toBeVisible());

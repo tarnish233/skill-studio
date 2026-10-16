@@ -17,7 +17,7 @@ export function StartupBoundary({ children }: { children: ReactNode }) {
   const agents = useAgentInventory();
   const [opened, setOpened] = useState(false);
   const view = readInitialView(settings.data, target.id);
-  const mcp = initialResource(view, settings.data) === "mcp";
+  const mcp = initialResource(settings.data) === "mcp";
   const definitions: {
     queryKey: readonly string[];
     queryFn: () => Promise<unknown>;
@@ -43,13 +43,14 @@ export function StartupBoundary({ children }: { children: ReactNode }) {
         queryFn: skillsApi.scan,
         staleTime: 20_000,
       });
-      if (view === "projects" || view.startsWith("agent:")) {
+      if (view === "projects" || view === "groups") {
         definitions.push({
           queryKey: queryKeys.groups,
           queryFn: groupsApi.list,
         });
       }
-      if (view.startsWith("agent:")) {
+      // 分组卡片的启用状态来自配置里的 activeGroups
+      if (view === "groups") {
         definitions.push({
           queryKey: queryKeys.config,
           queryFn: settingsApi.getConfig,
