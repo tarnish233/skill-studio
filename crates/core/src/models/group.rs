@@ -98,9 +98,6 @@ pub struct ActiveGroup {
     pub group_id: String,
     pub skill_ids: Vec<String>,
     pub entries: Vec<GroupEntry>,
-    /// Manual entries temporarily disabled by this combination; restored on stop.
-    #[serde(default)]
-    pub suspended_manual: Vec<GroupEntry>,
     #[serde(default = "default_preserve_manual")]
     pub preserve_manual_skills: bool,
 }

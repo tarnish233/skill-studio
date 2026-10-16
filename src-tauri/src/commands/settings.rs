@@ -39,6 +39,7 @@ pub async fn update_settings(
             || catalog
                 .active_groups
                 .values()
+                .flatten()
                 .any(|group| group.entries.iter().any(|entry| entry.mode == "gateway"));
         if needs_gateway
             && skill_studio_mcp::gateway::request(&mcp_dir, "list", serde_json::Value::Null)

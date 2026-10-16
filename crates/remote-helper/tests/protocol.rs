@@ -365,12 +365,12 @@ fn desktop_project_group_and_hub_workflow_uses_the_remote_home() {
     assert!(group.get("error").is_none(), "{group}");
     let activate = session.call(
         "activate_agent_group",
-        json!({"agentId":"claude-code","groupId":group["result"]["id"]}),
+        json!({"agentId":"claude-code","groupIds":[group["result"]["id"]]}),
     );
     assert!(activate.get("error").is_none(), "{activate}");
     let deactivate = session.call(
         "activate_agent_group",
-        json!({"agentId":"claude-code","groupId":null}),
+        json!({"agentId":"claude-code","groupIds":[]}),
     );
     assert!(deactivate.get("error").is_none(), "{deactivate}");
     let project = session.call(

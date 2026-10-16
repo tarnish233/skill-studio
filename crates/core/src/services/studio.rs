@@ -499,15 +499,15 @@ impl Studio {
                             .iter()
                             .any(|id| id == agent.id)
                         && !config
-                            .active_groups
-                            .get(agent.id)
-                            .is_some_and(|g| g.skill_ids.contains(&skill.id)),
+                            .active_groups_of(agent.id)
+                            .iter()
+                            .any(|g| g.skill_ids.contains(&skill.id)),
                     manual: status.is_registered()
                         && entry_paths.iter().any(|target| {
                             if config
-                                .active_groups
-                                .get(agent.id)
-                                .is_some_and(|g| g.entries.iter().any(|e| e.target_path == *target))
+                                .active_groups_of(agent.id)
+                                .iter()
+                                .any(|g| g.entries.iter().any(|e| e.target_path == *target))
                             {
                                 return false;
                             }
@@ -666,6 +666,7 @@ impl Studio {
         }
         let skills = self.resolve_skills(config, skill_ids)?;
         let mut plan = Vec::new();
+        let mut group_owned = Vec::new();
 
         for agent_id in agent_ids {
             let agent = crate::models::agent::require_agent(agent_id)?;
@@ -681,11 +682,30 @@ impl Studio {
                         // 不能把真身当注册删掉
                         continue;
                     }
+                    // 分组部署的副本归分组管：在这里删掉会让启用记录指向一个不存在的目录。
+                    // force 也不放行 —— 停用分组才是撤回它的唯一入口。
+                    if config
+                        .active_entries(agent_id)
+                        .iter()
+                        .any(|e| crate::fs::paths::paths_alias(&e.target_path, &dest))
+                    {
+                        group_owned.push(result(
+                            skill,
+                            agent_id,
+                            linker::link_status(&skill.source_path, &dest),
+                            Some("由分组部署，请在分组页停用".into()),
+                        ));
+                        continue;
+                    }
                     plan.push((skill.clone(), agent_id.clone(), dest));
                 }
             }
         }
-        self.remove_deployments(config, plan, force, None)
+        let mut report = self.remove_deployments(config, plan, force, None)?;
+        for refused in group_owned {
+            report.push_err(refused);
+        }
+        Ok(report)
     }
 
     /// Remove files and their durable ownership records in one undo journal.
@@ -821,9 +841,9 @@ impl Studio {
         if enabled
             && !config.settings.preserve_manual_skills
             && !config
-                .active_groups
-                .get(agent_id)
-                .is_some_and(|g| g.skill_ids.iter().any(|id| id == skill_id))
+                .active_groups_of(agent_id)
+                .iter()
+                .any(|g| g.skill_ids.iter().any(|id| id == skill_id))
         {
             return Err(Error::invalid(
                 "当前不保留组外 skill，请先开启保留开关或启用包含此 skill 的分组",
@@ -891,10 +911,17 @@ impl Studio {
         skill_id: &str,
         restore: bool,
     ) -> Result<Skill> {
-        if config.active_groups.values().any(|g| {
-            g.skill_ids.iter().any(|id| id == skill_id)
-                || g.suspended_manual.iter().any(|e| e.skill_id == skill_id)
-        }) {
+        if config
+            .active_groups
+            .values()
+            .flatten()
+            .any(|g| g.skill_ids.iter().any(|id| id == skill_id))
+            || config
+                .policy_suspensions
+                .values()
+                .flatten()
+                .any(|e| e.skill_id == skill_id)
+        {
             return Err(Error::invalid(
                 "请先停用包含或暂时停用此 skill 的分组，再迁移",
             ));

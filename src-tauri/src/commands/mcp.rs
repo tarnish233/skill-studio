@@ -213,12 +213,15 @@ pub async fn mcp_request(
                 ),
                 _ => {
                     let agent = params["agent"].as_str().context("缺少 Agent")?;
-                    let id = params["id"].as_str();
-                    if id.is_none() {
+                    let ids: Vec<String> = match params.get("ids") {
+                        Some(value) => serde_json::from_value(value.clone())?,
+                        None => Vec::new(),
+                    };
+                    if ids.is_empty() {
                         return groups::activate(
                             &task_dir,
                             agent,
-                            None,
+                            &[],
                             &PathBuf::new(),
                             &std::env::current_exe()?,
                         );
@@ -229,13 +232,12 @@ pub async fn mcp_request(
                         agent
                     };
                     anyhow::ensure!(
-                        id.is_none()
-                            || !state
-                                .config()
-                                .settings
-                                .disabled_agents
-                                .iter()
-                                .any(|a| a == app_agent),
+                        !state
+                            .config()
+                            .settings
+                            .disabled_agents
+                            .iter()
+                            .any(|a| a == app_agent),
                         "请先开启此 Agent 的管理"
                     );
                     let placeholder = management::Entry {
@@ -256,7 +258,7 @@ pub async fn mcp_request(
                         &management::Catalog::default(),
                     )?;
                     let path = &targets.first().context("未找到 Agent 配置")?.path;
-                    groups::activate(&task_dir, agent, id, path, &std::env::current_exe()?)
+                    groups::activate(&task_dir, agent, &ids, path, &std::env::current_exe()?)
                 }
             }
         })

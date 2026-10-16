@@ -183,7 +183,14 @@ fn groups_and_project_removal_restore_each_agents_original_definition() {
             vec![],
         )
         .unwrap();
-        groups::activate(&dir, agent, Some("group"), &global, Path::new("/studio")).unwrap();
+        groups::activate(
+            &dir,
+            agent,
+            &["group".to_string()],
+            &global,
+            Path::new("/studio"),
+        )
+        .unwrap();
         assert_eq!(
             native::canonical(&read(&global, agent, "sample").unwrap(), agent)["command"],
             "managed"
@@ -192,7 +199,7 @@ fn groups_and_project_removal_restore_each_agents_original_definition() {
         assert_eq!(read(&path, agent, "sample"), before);
         assert!(read(&global, agent, "sample").is_none());
         management::set_enabled(&dir, true).unwrap();
-        groups::activate(&dir, agent, None, &global, Path::new("/studio")).unwrap();
+        groups::activate(&dir, agent, &[], &global, Path::new("/studio")).unwrap();
         assert!(read(&global, agent, "sample").is_none());
         assert_eq!(management::remove_project_bindings(&dir, &root).unwrap(), 1);
         assert_eq!(read(&path, agent, "sample"), before);
@@ -266,7 +273,14 @@ fn activating_groups_enables_new_direct_bindings_without_changing_hub_definition
             .unwrap();
             // Re-applying must retain enabled native state and the original rollback target.
             for _ in 0..2 {
-                groups::activate(&dir, agent, Some("group"), &path, Path::new("/studio")).unwrap();
+                groups::activate(
+                    &dir,
+                    agent,
+                    &["group".to_string()],
+                    &path,
+                    Path::new("/studio"),
+                )
+                .unwrap();
                 let installed = read(&path, agent, "sample").unwrap();
                 assert!(native::enabled(&installed, agent), "{agent}: {installed}");
                 if agent == "pi" {
@@ -279,7 +293,7 @@ fn activating_groups_enables_new_direct_bindings_without_changing_hub_definition
                 let catalog = management::read(&dir).unwrap();
                 assert_eq!(catalog.entries[0].definition, definition);
                 assert_eq!(
-                    catalog.active_groups[agent].entries[0].definition,
+                    catalog.active_groups[agent][0].entries[0].definition,
                     definition
                 );
                 assert!(groups::issues(&catalog).is_empty());
@@ -301,7 +315,7 @@ fn activating_groups_enables_new_direct_bindings_without_changing_hub_definition
                 &read(&path, agent, "sample").unwrap(),
                 agent
             ));
-            groups::activate(&dir, agent, None, &path, Path::new("/studio")).unwrap();
+            groups::activate(&dir, agent, &[], &path, Path::new("/studio")).unwrap();
             assert!(read(&path, agent, "sample").is_none());
             assert!(management::read(&dir).unwrap().active_groups.is_empty());
             assert_eq!(
@@ -352,12 +366,16 @@ fn disabled_entries_and_variable_references_remain_agent_owned() {
         )
         .unwrap();
         let before = fs::read(&path).unwrap();
-        assert!(
-            groups::activate(&dir, agent, Some("group"), &path, Path::new("/studio"))
-                .unwrap_err()
-                .to_string()
-                .contains("手动停用")
-        );
+        assert!(groups::activate(
+            &dir,
+            agent,
+            &["group".to_string()],
+            &path,
+            Path::new("/studio")
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("手动停用"));
         assert_eq!(fs::read(&path).unwrap(), before);
         assert!(management::read(&dir).unwrap().active_groups.is_empty());
     }

@@ -57,8 +57,13 @@ pub struct Catalog {
     pub suspended: bool,
     #[serde(default)]
     pub groups: Vec<groups::Group>,
-    #[serde(default, rename = "activeGroups")]
-    pub active_groups: BTreeMap<String, groups::ActiveGroup>,
+    /// agent → 当前叠加的分组记录。旧版是单个对象，见 [`de_active_groups`]。
+    #[serde(
+        default,
+        rename = "activeGroups",
+        deserialize_with = "de_active_groups"
+    )]
+    pub active_groups: BTreeMap<String, Vec<groups::ActiveGroup>>,
     #[serde(default)]
     pub backups: Vec<Backup>,
 }
@@ -248,26 +253,32 @@ pub fn set_enabled(dir: &Path, enabled: bool) -> Result<()> {
                 )?;
             }
         }
-        for group in catalog.active_groups.values() {
-            for binding in &group.bindings {
-                stage_binding(
-                    &mut files,
-                    binding,
-                    &binding.original,
-                    &Some(binding.installed.clone()),
-                )?;
-            }
+        for binding in catalog
+            .active_groups
+            .values()
+            .flatten()
+            .flat_map(|g| &g.bindings)
+        {
+            stage_binding(
+                &mut files,
+                binding,
+                &binding.original,
+                &Some(binding.installed.clone()),
+            )?;
         }
     } else {
-        for group in catalog.active_groups.values() {
-            for binding in &group.bindings {
-                stage_binding(
-                    &mut files,
-                    binding,
-                    &Some(binding.installed.clone()),
-                    &binding.original,
-                )?;
-            }
+        for binding in catalog
+            .active_groups
+            .values()
+            .flatten()
+            .flat_map(|g| &g.bindings)
+        {
+            stage_binding(
+                &mut files,
+                binding,
+                &Some(binding.installed.clone()),
+                &binding.original,
+            )?;
         }
         for entry in &catalog.entries {
             for binding in &entry.bindings {
@@ -454,6 +465,7 @@ pub fn save(
         if let Some(binding) = catalog
             .active_groups
             .values()
+            .flatten()
             .flat_map(|g| &g.bindings)
             .find(|b| b.path == target.path && b.project == target.project && b.key == target.key)
         {
@@ -507,6 +519,7 @@ pub fn save(
             if catalog
                 .active_groups
                 .values()
+                .flatten()
                 .flat_map(|g| &g.bindings)
                 .any(|b| {
                     b.path == binding.path && b.project == binding.project && b.key == binding.key
@@ -541,6 +554,7 @@ pub fn remove(dir: &Path, id: &str, restore: bool) -> Result<()> {
     if catalog
         .active_groups
         .values()
+        .flatten()
         .any(|g| g.entries.iter().any(|e| e.id == id))
     {
         bail!("请先停用引用此 MCP 的分组");
@@ -590,6 +604,7 @@ pub fn remove_project_bindings(dir: &Path, root: &Path) -> Result<usize> {
         catalog
             .active_groups
             .values()
+            .flatten()
             .flat_map(|g| &g.bindings)
             .any(|active| {
                 active.path == b.path && active.project == b.project && active.key == b.key
@@ -641,7 +656,13 @@ pub fn remove_sources(dir: &Path, targets: Vec<Target>) -> Result<()> {
             .entries
             .iter()
             .flat_map(|e| &e.bindings)
-            .chain(catalog.active_groups.values().flat_map(|g| &g.bindings))
+            .chain(
+                catalog
+                    .active_groups
+                    .values()
+                    .flatten()
+                    .flat_map(|g| &g.bindings),
+            )
             .any(|b| b.path == target.path && b.project == target.project && b.key == target.key)
         {
             bail!("此来源已被托管或由分组使用，请刷新后从对应入口管理");
@@ -668,6 +689,31 @@ fn read_text(path: &Path) -> Result<Option<String>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.into()),
     }
+}
+/// 旧版目录文件里每个 agent 只有一个分组对象；现在可以叠加多个，两种形状都读得进来。
+fn de_active_groups<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Vec<groups::ActiveGroup>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        Many(Vec<groups::ActiveGroup>),
+        One(groups::ActiveGroup),
+    }
+    BTreeMap::<String, OneOrMany>::deserialize(deserializer).map(|map| {
+        map.into_iter()
+            .map(|(agent, value)| {
+                let records = match value {
+                    OneOrMany::Many(v) => v,
+                    OneOrMany::One(v) => vec![v],
+                };
+                (agent, records)
+            })
+            .collect()
+    })
 }
 fn stage(
     files: &mut BTreeMap<PathBuf, Change>,

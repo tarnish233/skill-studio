@@ -198,10 +198,16 @@ async fn official_servers_full_lifecycle() -> Result<()> {
     groups::save_group(&dir, group("memory", &["real-memory"]), vec![])?;
     groups::save_group(&dir, group("files", &["real-filesystem"]), vec![])?;
     groups::save_group(&dir, group("codex", &["real-memory"]), vec![])?;
-    groups::activate(&dir, "claude", Some("memory"), &claude, &executable)?;
-    groups::activate(&dir, "codex", Some("codex"), &codex, &executable)?;
+    groups::activate(
+        &dir,
+        "claude",
+        &["memory".to_string()],
+        &claude,
+        &executable,
+    )?;
+    groups::activate(&dir, "codex", &["codex".to_string()], &codex, &executable)?;
     let codex_before = std::fs::read(&codex)?;
-    groups::activate(&dir, "claude", Some("files"), &claude, &executable)?;
+    groups::activate(&dir, "claude", &["files".to_string()], &claude, &executable)?;
     assert!(read(&claude, "claude", &memory.name)?.is_none());
     assert_eq!(std::fs::read(&codex)?, codex_before);
     let fs_client = connect(&read(&claude, "claude", &filesystem.name)?.unwrap()).await?;
@@ -234,7 +240,7 @@ async fn official_servers_full_lifecycle() -> Result<()> {
         vec![],
     )?;
     assert_eq!(std::fs::read(&claude)?, before_edit);
-    groups::activate(&dir, "claude", Some("files"), &claude, &executable)?;
+    groups::activate(&dir, "claude", &["files".to_string()], &claude, &executable)?;
     assert!(read(&claude, "claude", &memory.name)?.is_some());
     groups::reorder(&dir, &["files".into(), "memory".into(), "codex".into()])?;
     assert!(groups::remove_group(&dir, "files").is_err());
@@ -248,8 +254,8 @@ async fn official_servers_full_lifecycle() -> Result<()> {
     let mut proxied = old.clone();
     proxied.mode = "gateway".into();
     management::save(&dir, proxied, bindings(&old), &executable, Some(&old))?;
-    groups::activate(&dir, "claude", Some("files"), &claude, &executable)?;
-    groups::activate(&dir, "codex", Some("codex"), &codex, &executable)?;
+    groups::activate(&dir, "claude", &["files".to_string()], &claude, &executable)?;
+    groups::activate(&dir, "codex", &["codex".to_string()], &codex, &executable)?;
     let mut daemon = tokio::process::Command::new(&executable)
         .arg("--mcp-daemon")
         .arg(&dir)
@@ -294,12 +300,12 @@ async fn official_servers_full_lifecycle() -> Result<()> {
     )?;
     std::fs::write(&codex, &altered)?;
     let catalog_before = std::fs::read(dir.join("catalog.json"))?;
-    assert!(groups::activate(&dir, "codex", None, &codex, &executable).is_err());
+    assert!(groups::activate(&dir, "codex", &[], &codex, &executable).is_err());
     assert_eq!(std::fs::read_to_string(&codex)?, altered);
     assert_eq!(std::fs::read(dir.join("catalog.json"))?, catalog_before);
     std::fs::write(&codex, original)?;
-    groups::activate(&dir, "claude", None, &claude, &executable)?;
-    groups::activate(&dir, "codex", None, &codex, &executable)?;
+    groups::activate(&dir, "claude", &[], &claude, &executable)?;
+    groups::activate(&dir, "codex", &[], &codex, &executable)?;
     for id in ["files", "memory", "codex"] {
         groups::remove_group(&dir, id)?;
     }

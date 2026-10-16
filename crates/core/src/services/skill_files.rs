@@ -151,7 +151,7 @@ impl Studio {
             });
             paths::paths_alias(path, source) || paths::path_is_within(&base, &target)
         };
-        if config.active_groups.values().any(|g| {
+        if config.active_groups.values().flatten().any(|g| {
             g.entries
                 .iter()
                 .any(|e| e.target_path == path || uses_source(&e.source_path))

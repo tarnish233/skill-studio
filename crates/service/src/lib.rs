@@ -16,10 +16,10 @@ pub fn dispatch(state: &AppState, method: &str, params: Value) -> Result<Value, 
         "list_agents" => {
             serde_json::to_value(agents::list_agents(state, arg(&params, "skipCliProbe")?)?)
         }
-        "activate_agent_group" => serde_json::to_value(groups::activate_agent_group(
+        "activate_agent_group" => serde_json::to_value(groups::activate_agent_groups(
             state,
             arg(&params, "agentId")?,
-            arg(&params, "groupId")?,
+            arg(&params, "groupIds")?,
         )?),
         "delete_group" => {
             serde_json::to_value(groups::delete_group(state, arg(&params, "groupId")?)?)

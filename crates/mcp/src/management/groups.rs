@@ -56,7 +56,7 @@ pub fn save_group(dir: &Path, mut group: Group, imports: Vec<Entry>) -> Result<(
         }
         native::validate(&entry.definition)?;
         entry.bindings.retain(|b| {
-            !catalog.active_groups.values().any(|g| {
+            !catalog.active_groups.values().flatten().any(|g| {
                 g.bindings.iter().any(|owned| {
                     owned.agent == b.agent
                         && owned.path == b.path
@@ -92,7 +92,12 @@ pub fn remove_group(dir: &Path, id: &str) -> Result<()> {
     let _lock = lock(dir)?;
     let mut catalog = read_unlocked(dir)?;
     ensure_active(&catalog)?;
-    if catalog.active_groups.values().any(|g| g.group_id == id) {
+    if catalog
+        .active_groups
+        .values()
+        .flatten()
+        .any(|g| g.group_id == id)
+    {
         bail!("请先停用分组");
     }
     if !catalog.groups.iter().any(|g| g.id == id) {
@@ -114,10 +119,14 @@ pub fn reorder(dir: &Path, ids: &[String]) -> Result<()> {
     }
     commit(dir, BTreeMap::new(), &catalog)
 }
+/// 设置这个 agent 当前叠加的全部分组（空列表表示全部停用）。
+///
+/// 部署内容是这些分组成员的并集：多个分组共用的成员只写一份，只在所有用到它的分组
+/// 都停用后才撤回。
 pub fn activate(
     dir: &Path,
     agent_id: &str,
-    id: Option<&str>,
+    ids: &[String],
     path: &Path,
     executable: &Path,
 ) -> Result<()> {
@@ -125,18 +134,31 @@ pub fn activate(
     let _lock = lock(dir)?;
     let mut catalog = read_unlocked(dir)?;
     ensure_active(&catalog)?;
-    let mut entries = vec![];
-    if let Some(id) = id {
+    let mut groups = vec![];
+    let mut seen_groups = HashSet::new();
+    for id in ids {
+        if !seen_groups.insert(id.clone()) {
+            continue;
+        }
         let group = catalog
             .groups
             .iter()
-            .find(|g| g.id == id)
-            .context("分组不存在")?;
+            .find(|g| g.id == *id)
+            .context("分组不存在")?
+            .clone();
         if group.entry_ids.is_empty() {
-            bail!("请先为分组选择 MCP");
+            bail!("「{}」还没有成员", group.name);
         }
-        let mut names = HashSet::new();
+        groups.push(group);
+    }
+    let mut entries = vec![];
+    let mut names = HashSet::new();
+    let mut member_ids = HashSet::new();
+    for group in &groups {
         for entry_id in &group.entry_ids {
+            if !member_ids.insert(entry_id.clone()) {
+                continue;
+            }
             let entry = catalog
                 .entries
                 .iter()
@@ -165,29 +187,13 @@ pub fn activate(
                 }
             }
             if !names.insert(entry.name.trim().to_string()) {
-                bail!("组内 MCP 名称重复，请先在 Hub 修改名称");
+                bail!("启用的分组里 MCP 名称重复，请先在 Hub 修改名称");
             }
             entries.push(entry);
         }
     }
-    let mut files = BTreeMap::new();
-    if let Some(previous) = catalog.active_groups.remove(agent_id) {
-        for b in previous.bindings {
-            let target = Target {
-                agent: agent_id.into(),
-                path: b.path,
-                project: b.project,
-                key: b.key,
-                expected: None,
-            };
-            stage(&mut files, &target, &Some(b.installed), &b.original)?;
-        }
-    }
-    let mut bindings = vec![];
-    let mut keys = HashSet::new();
-    for entry in &entries {
-        // Reuse the managed native key even when the Hub display name was changed.
-        let key = catalog
+    let name_of = |entry: &Entry| {
+        catalog
             .entries
             .iter()
             .find(|e| e.id == entry.id)
@@ -198,7 +204,36 @@ pub fn activate(
                     .find(|b| b.agent == agent_id && b.path == path && b.project.is_none())
             })
             .map(|b| b.key.clone())
-            .unwrap_or_else(|| entry.name.trim().to_string());
+            .unwrap_or_else(|| entry.name.trim().to_string())
+    };
+    // 仍然要用的接入留着，其余还原成原始配置
+    let wanted: HashSet<String> = entries.iter().map(name_of).collect();
+    let mut files = BTreeMap::new();
+    let previous = catalog.active_groups.remove(agent_id).unwrap_or_default();
+    let owned_before: Vec<Binding> = previous.iter().flat_map(|g| g.bindings.clone()).collect();
+    for binding in &owned_before {
+        if binding.path == path && wanted.contains(&binding.key) {
+            continue;
+        }
+        let target = Target {
+            agent: agent_id.into(),
+            path: binding.path.clone(),
+            project: binding.project.clone(),
+            key: binding.key.clone(),
+            expected: None,
+        };
+        stage(
+            &mut files,
+            &target,
+            &Some(binding.installed.clone()),
+            &binding.original,
+        )?;
+    }
+    let mut bindings = vec![];
+    let mut keys = HashSet::new();
+    for entry in &entries {
+        // Reuse the managed native key even when the Hub display name was changed.
+        let key = name_of(entry);
         if !keys.insert(key.clone()) {
             bail!("组内 MCP 使用了相同的配置名称，请先在 Hub 核对");
         }
@@ -212,11 +247,9 @@ pub fn activate(
             if !native::enabled(value, agent_id) {
                 bail!("MCP「{key}」已被手动停用，请先恢复启用");
             }
-            // Match Skill groups: existing usable content remains externally owned.
-            if entry.mode == "direct" && native::canonical(value, agent_id) == entry.definition {
-                continue;
-            }
-            let owned = catalog
+            // Match Skill groups: content Studio已记录在案的接入继续归它管，
+            // 否则内容一致的视为用户自己的配置，保留原样。
+            let tracked = catalog
                 .entries
                 .iter()
                 .find(|e| e.id == entry.id)
@@ -227,8 +260,17 @@ pub fn activate(
                             && b.key == key
                             && b.installed == *value
                     })
+                })
+                || owned_before.iter().any(|b| {
+                    b.path == path && b.project.is_none() && b.key == key && b.installed == *value
                 });
-            if !owned && native::canonical(value, agent_id) != entry.definition {
+            if !tracked
+                && entry.mode == "direct"
+                && native::canonical(value, agent_id) == entry.definition
+            {
+                continue;
+            }
+            if !tracked && native::canonical(value, agent_id) != entry.definition {
                 bail!("MCP「{key}」存在不同的同名配置，请先在 Hub 核对");
             }
         }
@@ -255,6 +297,18 @@ pub fn activate(
             key: key.clone(),
             expected: original.clone(),
         };
+        // 重新启用同一个分组时，原生文件里已经是 Studio 自己写进去的值：
+        // 这时要沿用上一次记录里的 original，否则停用时就"还原"成自己的输出、撤不掉。
+        let record_original = owned_before
+            .iter()
+            .find(|b| {
+                b.path == path
+                    && b.project.is_none()
+                    && b.key == key
+                    && original.as_ref() == Some(&b.installed)
+            })
+            .map(|b| b.original.clone())
+            .unwrap_or_else(|| original.clone());
         stage(&mut files, &target, &original, &Some(installed.clone()))?;
         bindings.push(Binding {
             id: entry.id.clone(),
@@ -262,25 +316,42 @@ pub fn activate(
             path: path.into(),
             project: None,
             key,
-            original,
+            original: record_original,
             installed,
         });
     }
-    if let Some(id) = id {
-        catalog.active_groups.insert(
-            agent_id.into(),
-            ActiveGroup {
-                group_id: id.into(),
+    if groups.is_empty() {
+        catalog.active_groups.remove(agent_id);
+    } else {
+        // 每个分组记录自己引入的入口；共用的成员归前一个分组，
+        // 停用它时只要还有别的分组需要就会被保留（见上面的 wanted 判定）
+        let mut claimed_entries = HashSet::new();
+        let mut claimed_bindings = HashSet::new();
+        let records = groups
+            .iter()
+            .map(|group| ActiveGroup {
+                group_id: group.id.clone(),
                 entries: entries
-                    .into_iter()
-                    .map(|mut e| {
+                    .iter()
+                    .filter(|e| {
+                        group.entry_ids.contains(&e.id) && claimed_entries.insert(e.id.clone())
+                    })
+                    .map(|e| {
+                        let mut e = e.clone();
                         e.bindings.clear();
                         e
                     })
                     .collect(),
-                bindings,
-            },
-        );
+                bindings: bindings
+                    .iter()
+                    .filter(|b| {
+                        group.entry_ids.contains(&b.id) && claimed_bindings.insert(b.id.clone())
+                    })
+                    .cloned()
+                    .collect(),
+            })
+            .collect();
+        catalog.active_groups.insert(agent_id.into(), records);
     }
     commit(dir, files, &catalog)
 }
@@ -289,8 +360,8 @@ pub fn issues(catalog: &Catalog) -> BTreeMap<String, String> {
     catalog
         .active_groups
         .iter()
-        .filter_map(|(agent, group)| {
-            let issue = group.bindings.iter().find_map(|b| {
+        .filter_map(|(agent, groups)| {
+            let issue = groups.iter().flat_map(|g| &g.bindings).find_map(|b| {
                 let check = read_text(&b.path).and_then(|text| {
                     native::entry(
                         &text.unwrap_or_default(),

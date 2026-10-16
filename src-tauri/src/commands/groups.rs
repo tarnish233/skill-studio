@@ -52,11 +52,11 @@ pub async fn save_group(
 pub async fn activate_agent_group(
     state: State<'_, AppState>,
     agent_id: String,
-    group_id: Option<String>,
+    group_ids: Vec<String>,
 ) -> Result<(), String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        skill_studio_service::groups::activate_agent_group(&state, agent_id, group_id)
+        skill_studio_service::groups::activate_agent_groups(&state, agent_id, group_ids)
     })
     .await
     .map_err(|e| e.to_string())?

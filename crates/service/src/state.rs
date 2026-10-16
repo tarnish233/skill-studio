@@ -258,11 +258,12 @@ impl AppState {
         Ok(())
     }
 
-    pub fn activate_agent_group(&self, agent_id: &str, group_id: Option<&str>) -> Result<()> {
+    /// 设置这个 agent 当前叠加的全部分组；空列表表示全部停用
+    pub fn activate_agent_groups(&self, agent_id: &str, group_ids: &[String]) -> Result<()> {
         self.ensure_writable()?;
         let mut guard = self.config_mut();
         self.studio
-            .activate_agent_group(&mut guard, agent_id, group_id)
+            .activate_agent_groups(&mut guard, agent_id, group_ids)
     }
 
     /// Native settings writes share the configuration write lock to prevent two
@@ -467,13 +468,12 @@ mod tests {
         restored.version = state.config().version;
         restored.active_groups.insert(
             "codex".into(),
-            ActiveGroup {
+            vec![ActiveGroup {
                 group_id: "group".into(),
                 skill_ids: vec![],
                 entries: vec![],
-                suspended_manual: vec![],
                 preserve_manual_skills: true,
-            },
+            }],
         );
         std::fs::write(&backup, serde_json::to_vec(&restored).unwrap()).unwrap();
         assert!(state.restore_backup(&backup).is_err());

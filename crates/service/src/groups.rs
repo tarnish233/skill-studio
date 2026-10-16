@@ -14,11 +14,7 @@ pub fn list_groups(state: &AppState) -> Result<Vec<Group>, String> {
 pub fn delete_group(state: &AppState, group_id: String) -> Result<(), String> {
     state
         .mutate(|_, config| {
-            if config
-                .active_groups
-                .values()
-                .any(|g| g.group_id == group_id)
-            {
+            if !config.agents_using_group(&group_id).is_empty() {
                 return Err(Error::invalid("请先停用正在使用的分组，再删除"));
             }
             let before = config.groups.len();
@@ -66,12 +62,13 @@ pub fn save_group(
         .map_err(Into::into)
 }
 
-pub fn activate_agent_group(
+/// 设置这个 agent 当前叠加的全部分组；空列表表示全部停用
+pub fn activate_agent_groups(
     state: &AppState,
     agent_id: String,
-    group_id: Option<String>,
+    group_ids: Vec<String>,
 ) -> Result<(), String> {
     state
-        .activate_agent_group(&agent_id, group_id.as_deref())
+        .activate_agent_groups(&agent_id, &group_ids)
         .map_err(Into::into)
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -8,9 +8,10 @@ use super::project::ProjectBinding;
 use super::skill::LinkMode;
 
 /// 当前配置结构版本。改结构时 +1 并在 store 里加迁移分支。
-/// v4：分组不再归属单个 agent；是否对某 agent 生效完全由 active_groups 决定，
-/// 同一个分组可以同时是多个 agent 的当前组合。
-pub const CONFIG_VERSION: u32 = 4;
+/// v4：分组不再归属单个 agent；是否对某 agent 生效完全由 active_groups 决定。
+/// v5：一个 agent 可以同时叠加多个分组（active_groups 的值由单个记录变成列表），
+/// 部署内容是这些分组成员加手动 skill 的并集。
+pub const CONFIG_VERSION: u32 = 5;
 
 /// 某个 skill 在某个 agent 上的注册记录。
 ///
@@ -163,8 +164,10 @@ pub struct AppConfig {
     pub settings: Settings,
     #[serde(default)]
     pub groups: Vec<Group>,
-    #[serde(default)]
-    pub active_groups: HashMap<String, super::group::ActiveGroup>,
+    /// agent → 当前叠加的分组记录（按启用顺序）。改成列表时保留旧版单对象格式的读取，
+    /// 见 [`de_active_groups`]。
+    #[serde(default, deserialize_with = "de_active_groups")]
+    pub active_groups: HashMap<String, Vec<super::group::ActiveGroup>>,
     #[serde(default)]
     pub policy_suspensions: HashMap<String, Vec<super::group::GroupEntry>>,
     #[serde(default)]
@@ -181,6 +184,33 @@ pub struct AppConfig {
 
 fn default_version() -> u32 {
     CONFIG_VERSION
+}
+
+/// v4 及更早的配置里每个 agent 只有一个分组对象；v5 起是列表。
+/// 两种形状都读得进来，升级后按列表写回，不需要先在 JSON 上做手术。
+fn de_active_groups<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<String, Vec<super::group::ActiveGroup>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        Many(Vec<super::group::ActiveGroup>),
+        One(super::group::ActiveGroup),
+    }
+    HashMap::<String, OneOrMany>::deserialize(deserializer).map(|map| {
+        map.into_iter()
+            .map(|(agent, value)| {
+                let records = match value {
+                    OneOrMany::Many(v) => v,
+                    OneOrMany::One(v) => vec![v],
+                };
+                (agent, records)
+            })
+            .collect()
+    })
 }
 
 impl Default for AppConfig {
@@ -215,6 +245,48 @@ impl AppConfig {
 
     pub fn project_mut(&mut self, id: &str) -> Option<&mut ProjectBinding> {
         self.projects.iter_mut().find(|p| p.id == id)
+    }
+
+    /// 这个 agent 当前叠加的分组记录，按启用顺序
+    pub fn active_groups_of(&self, agent_id: &str) -> &[super::group::ActiveGroup] {
+        self.active_groups.get(agent_id).map_or(&[], Vec::as_slice)
+    }
+
+    /// 这个 agent 当前生效的全部分组成员（叠加后的并集，含顺序与去重）
+    pub fn active_skill_ids(&self, agent_id: &str) -> Vec<String> {
+        let mut seen = HashSet::new();
+        self.active_groups_of(agent_id)
+            .iter()
+            .flat_map(|g| g.skill_ids.iter())
+            .filter(|id| seen.insert((*id).clone()))
+            .cloned()
+            .collect()
+    }
+
+    /// 这个 agent 当前部署的全部入口（分组副本/链接），按分组顺序去重
+    pub fn active_entries(&self, agent_id: &str) -> Vec<&super::group::GroupEntry> {
+        let mut seen = HashSet::new();
+        self.active_groups_of(agent_id)
+            .iter()
+            .flat_map(|g| g.entries.iter())
+            .filter(|e| seen.insert(e.target_path.clone()))
+            .collect()
+    }
+
+    /// 某个 agent 是否正在叠加这个分组
+    pub fn group_is_active(&self, agent_id: &str, group_id: &str) -> bool {
+        self.active_groups_of(agent_id)
+            .iter()
+            .any(|g| g.group_id == group_id)
+    }
+
+    /// 正在叠加这个分组的所有 agent
+    pub fn agents_using_group(&self, group_id: &str) -> Vec<&str> {
+        self.active_groups
+            .iter()
+            .filter(|(_, records)| records.iter().any(|g| g.group_id == group_id))
+            .map(|(agent, _)| agent.as_str())
+            .collect()
     }
 
     pub fn registration(&self, skill_id: &str, agent_id: &str) -> Option<&Registration> {

@@ -71,20 +71,23 @@ impl Studio {
             self.reconcile_manual_policy(&mut next, true)?;
         } else {
             next.settings.disabled_agents.push(agent_id.into());
-            self.activate_agent_group(&mut next, agent_id, None)?;
+            self.activate_agent_groups(&mut next, agent_id, &[])?;
         }
         *config = next;
         Ok(())
     }
 
-    /// Persist files and active metadata in one undo journal. None stops the current combination.
-    pub fn activate_agent_group(
+    /// 设置这个 agent 当前叠加的全部分组（`&[]` 表示全部停用）。
+    ///
+    /// 文件操作与启用记录在同一个回滚日志里：部署内容是这些分组成员加手动安装 skill 的
+    /// 并集，多个分组共用的成员只部署一份，只在所有用到它的分组都停用后才撤下。
+    pub fn activate_agent_groups(
         &self,
         config: &mut AppConfig,
         agent_id: &str,
-        group_id: Option<&str>,
+        group_ids: &[String],
     ) -> Result<()> {
-        if group_id.is_some()
+        if !group_ids.is_empty()
             && config
                 .settings
                 .disabled_agents
@@ -94,29 +97,36 @@ impl Studio {
             return Err(Error::invalid("请先在设置中开启此 Agent 的管理"));
         }
         let agent = require_agent(agent_id)?;
-        let group = group_id
-            .map(|id| {
-                config
-                    .group(id)
-                    .cloned()
-                    .ok_or_else(|| Error::NotFound(format!("分组 {id}")))
-            })
-            .transpose()?;
-        if let Some(g) = &group {
-            if g.skill_ids.is_empty() {
-                return Err(Error::invalid("请先为分组选择 skill"));
+        let mut groups = Vec::new();
+        let mut seen_groups = HashSet::new();
+        for id in group_ids {
+            if !seen_groups.insert(id.clone()) {
+                continue;
             }
+            let group = config
+                .group(id)
+                .cloned()
+                .ok_or_else(|| Error::NotFound(format!("分组 {id}")))?;
+            if group.skill_ids.is_empty() {
+                return Err(Error::invalid(format!("「{}」还没有成员", group.name)));
+            }
+            groups.push(group);
         }
-        let ids = group
-            .as_ref()
-            .map(|g| g.skill_ids.clone())
-            .unwrap_or_default();
+        // 分组成员并集，保持分组的启用顺序
+        let mut seen_skills = HashSet::new();
+        let ids: Vec<String> = groups
+            .iter()
+            .flat_map(|g| g.skill_ids.iter())
+            .filter(|id| seen_skills.insert((*id).clone()))
+            .cloned()
+            .collect();
         let views = self.scan_skills(config)?;
-        let previous = config.active_groups.get(agent_id).cloned();
-        let owned = previous
-            .as_ref()
-            .map(|g| g.entries.clone())
-            .unwrap_or_default();
+        // 之前部署过的入口：叠加时来自多个分组，按目标路径去重
+        let owned: Vec<GroupEntry> = config
+            .active_entries(agent_id)
+            .into_iter()
+            .cloned()
+            .collect();
         let (suspended_manual, manual_toggles) =
             super::manual_policy::plan(config, agent_id, &ids, &views)?;
         // Validate ownership/content even for retained members. Never silently discard local edits.
@@ -201,7 +211,7 @@ impl Studio {
             }
             additions.push((view.skill.clone(), dest));
         }
-        let leaving = group.is_none()
+        let leaving = groups.is_empty()
             && config
                 .settings
                 .disabled_agents
@@ -405,19 +415,29 @@ impl Studio {
                     target_path: dest.clone(),
                 });
             }
-            if let Some(group) = &group {
-                next.active_groups.insert(
-                    agent_id.into(),
-                    ActiveGroup {
-                        group_id: group.id.clone(),
-                        skill_ids: ids.clone(),
-                        entries,
-                        suspended_manual: suspended_manual.clone(),
-                        preserve_manual_skills: config.settings.preserve_manual_skills,
-                    },
-                );
-            } else {
+            if groups.is_empty() {
                 next.active_groups.remove(agent_id);
+            } else {
+                // 每个分组记录自己引入的入口；两个分组共用的成员归前一个，
+                // 停用它时只要还有别的分组需要就会被保留（见上面的 retained 判定）
+                let mut claimed = HashSet::new();
+                let records = groups
+                    .iter()
+                    .map(|group| ActiveGroup {
+                        group_id: group.id.clone(),
+                        skill_ids: group.skill_ids.clone(),
+                        entries: entries
+                            .iter()
+                            .filter(|e| {
+                                group.skill_ids.contains(&e.skill_id)
+                                    && claimed.insert(e.target_path.clone())
+                            })
+                            .cloned()
+                            .collect(),
+                        preserve_manual_skills: config.settings.preserve_manual_skills,
+                    })
+                    .collect();
+                next.active_groups.insert(agent_id.into(), records);
             }
             if suspended_manual.is_empty() {
                 next.policy_suspensions.remove(agent_id);

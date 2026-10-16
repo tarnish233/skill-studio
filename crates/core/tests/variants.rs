@@ -174,9 +174,9 @@ fn preview_damage_does_not_block_healthy_group_or_project_and_project_removal_ig
         .save_group(&mut c, "g".into(), "Group", vec![skill.id.clone()])
         .unwrap();
     studio
-        .activate_agent_group(&mut c, "codex", Some("g"))
+        .activate_agent_groups(&mut c, "codex", &["g".to_string()])
         .unwrap();
-    studio.activate_agent_group(&mut c, "codex", None).unwrap();
+    studio.activate_agent_groups(&mut c, "codex", &[]).unwrap();
     fs::remove_file(skill.source_path.join("SKILL.md")).unwrap();
     let views = studio.scan_skills(&c).unwrap();
     assert_eq!(views.len(), 1);
@@ -272,7 +272,7 @@ fn deployment_checks_reject_bad_actual_sources_for_bundles_and_single_skills() {
             .save_group(&mut c, "g".into(), "Group", vec![skill.id.clone()])
             .unwrap();
         assert!(studio
-            .activate_agent_group(&mut c, "codex", Some("g"))
+            .activate_agent_groups(&mut c, "codex", &["g".to_string()])
             .is_err());
         assert!(!env.codex_skills().join("demo").exists());
         let root = env.path().join("project");
@@ -397,17 +397,17 @@ fn groups_and_projects_record_resolved_paths_and_protect_bundle_deletion() {
         .save_group(&mut c, "g".into(), "Group", vec![skill.id.clone()])
         .unwrap();
     studio
-        .activate_agent_group(&mut c, "codex", Some("g"))
+        .activate_agent_groups(&mut c, "codex", &["g".to_string()])
         .unwrap();
     assert_eq!(body(&env.codex_skills().join("demo")), "codex");
-    assert_eq!(c.active_groups["codex"].entries[0].skill_id, skill.id);
-    assert!(c.active_groups["codex"].entries[0]
+    assert_eq!(c.active_groups_of("codex")[0].entries[0].skill_id, skill.id);
+    assert!(c.active_groups_of("codex")[0].entries[0]
         .source_path
         .ends_with(".skill-studio-variants/codex"));
     assert!(studio
         .stash_skill(&c, "hub", &skill.source_path, false)
         .is_err());
-    studio.activate_agent_group(&mut c, "codex", None).unwrap();
+    studio.activate_agent_groups(&mut c, "codex", &[]).unwrap();
     let root = env.path().join("project");
     fs::create_dir_all(&root).unwrap();
     let mut project = ProjectBinding::new("p".into(), "Project".into(), root.clone());
@@ -444,7 +444,7 @@ fn groups_and_projects_record_resolved_paths_and_protect_bundle_deletion() {
         "codex"
     );
     studio
-        .activate_agent_group(&mut c, "codex", Some("g"))
+        .activate_agent_groups(&mut c, "codex", &["g".to_string()])
         .unwrap();
 }
 

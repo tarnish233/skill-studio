@@ -30,14 +30,13 @@ pub(crate) fn plan(
     {
         return Ok((Vec::new(), Vec::new()));
     }
-    let active = config.active_groups.get(agent_id);
-    let owned = active.map(|g| g.entries.as_slice()).unwrap_or_default();
+    // 叠加多个分组时，判定"这个入口归分组所有"要把所有分组记录的入口合起来看
+    let owned = config.active_entries(agent_id);
     let previously_suspended: Vec<_> = config
         .policy_suspensions
         .get(agent_id)
         .into_iter()
         .flatten()
-        .chain(active.into_iter().flat_map(|g| &g.suspended_manual))
         .collect();
     let mut suspended_manual = Vec::new();
     let mut manual_toggles = Vec::new();
@@ -117,20 +116,18 @@ impl Studio {
             {
                 continue;
             }
-            let ids = config
-                .active_groups
-                .get(agent.id)
-                .map(|g| g.skill_ids.as_slice())
-                .unwrap_or_default();
-            let (suspended, toggles) = plan(config, agent.id, ids, &views)?;
+            let ids = config.active_skill_ids(agent.id);
+            let (suspended, toggles) = plan(config, agent.id, &ids, &views)?;
             if suspended.is_empty() {
                 next.policy_suspensions.remove(agent.id);
             } else {
                 next.policy_suspensions.insert(agent.id.into(), suspended);
             }
-            if let Some(group) = next.active_groups.get_mut(agent.id) {
-                group.suspended_manual.clear();
-                group.preserve_manual_skills = config.settings.preserve_manual_skills;
+            // 只更新已有的启用记录：没有启用分组时不能凭空造出空记录
+            if let Some(records) = next.active_groups.get_mut(agent.id) {
+                for group in records {
+                    group.preserve_manual_skills = config.settings.preserve_manual_skills;
+                }
             }
             if !toggles.is_empty() {
                 updates.push((agent, toggles));

@@ -272,13 +272,13 @@ fn active_group_blocks_release_until_stopped() {
         .save_group(&mut c, "g".into(), "test", vec![adopted.id.clone()])
         .unwrap();
     studio
-        .activate_agent_group(&mut c, "codex", Some("g"))
+        .activate_agent_groups(&mut c, "codex", &["g".to_string()])
         .unwrap();
     let before = fs::read(studio.store().config_path()).unwrap();
     assert!(studio.release_from_hub(&mut c, &adopted.id).is_err());
     assert_eq!(before, fs::read(studio.store().config_path()).unwrap());
     assert!(adopted.source_path.join("SKILL.md").is_file());
-    studio.activate_agent_group(&mut c, "codex", None).unwrap();
+    studio.activate_agent_groups(&mut c, "codex", &[]).unwrap();
     let restored = studio.release_from_hub(&mut c, &adopted.id).unwrap();
     assert_eq!(c.groups[0].skill_ids, vec![restored.id]);
 }

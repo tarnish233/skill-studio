@@ -158,16 +158,16 @@ fn manual_policy_does_not_block_group_switches_or_rewrite_native_configuration()
                 .save_group(&mut c, group.into(), group, vec![id])
                 .unwrap();
             studio
-                .activate_agent_group(&mut c, agent, Some(group))
+                .activate_agent_groups(&mut c, agent, std::slice::from_ref(&group.to_string()))
                 .unwrap();
             assert!(root.join(name).join("SKILL.md").is_file());
             assert!(manual.join("SKILL.md").is_file());
         }
         assert!(!root.join("first").exists());
-        studio.activate_agent_group(&mut c, agent, None).unwrap();
+        studio.activate_agent_groups(&mut c, agent, &[]).unwrap();
         assert!(!root.join("second").exists());
         studio
-            .activate_agent_group(&mut c, agent, Some("a"))
+            .activate_agent_groups(&mut c, agent, &["a".to_string()])
             .unwrap();
         studio.set_agent_management(&mut c, agent, false).unwrap();
         assert!(!root.join("first").exists());

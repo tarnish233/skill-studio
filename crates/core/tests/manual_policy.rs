@@ -126,7 +126,7 @@ fn changing_policy_immediately_respects_active_group_and_stop_does_not_restore_o
         .save_group(&mut c, "g".into(), "g", vec![member])
         .unwrap();
     studio
-        .activate_agent_group(&mut c, "claude-code", Some("g"))
+        .activate_agent_groups(&mut c, "claude-code", &["g".to_string()])
         .unwrap();
     c.settings.preserve_manual_skills = false;
     studio.reconcile_manual_policy(&mut c, true).unwrap();
@@ -138,7 +138,7 @@ fn changing_policy_immediately_respects_active_group_and_stop_does_not_restore_o
         assert!(view.agents["claude-code"].manual);
     }
     studio
-        .activate_agent_group(&mut c, "claude-code", None)
+        .activate_agent_groups(&mut c, "claude-code", &[])
         .unwrap();
     assert!(studio
         .scan_skills(&c)
