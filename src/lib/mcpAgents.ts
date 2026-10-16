@@ -25,3 +25,14 @@ export const MCP_PROJECT_SUFFIXES = [
   "/.pi/mcp.json",
   "/.grok/config.toml",
 ];
+
+const normalize = (path: string) => path.replace(/\/+$/, "");
+/** 这条接入是否写在该项目里（项目本地或项目配置文件），而不是用户全局 */
+export const inProject = (
+  binding: { path: string; project: string | null },
+  project: { root: string },
+) =>
+  binding.project === project.root ||
+  MCP_PROJECT_SUFFIXES.some(
+    (suffix) => binding.path === normalize(project.root) + suffix,
+  );

@@ -1,13 +1,3 @@
-import {
-  SummaryBar,
-  SummaryStart,
-  SummaryEnd,
-  summaryPillClass,
-  summaryTabClass,
-} from "@/components/common/SummaryBar";
-import { HelpPopover } from "@/components/common/HelpPopover";
-import { SkillBackups } from "@/components/common/SkillBackups";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PageTools } from "@/components/common/PageTools";
 import { useMemo, useState, type ReactNode } from "react";
 import {
@@ -51,9 +41,14 @@ import {
   ListItemRow,
   RowActions,
 } from "@/components/common/ListItemRow";
-import { AgentSkills } from "@/pages/AgentPage";
 import { GroupAgentToggles } from "@/components/common/GroupAgentToggles";
-import { AgentSelect } from "@/components/common/AgentSelect";
+import {
+  AgentGroupAction,
+  GroupAgentFilter,
+  useGroupAgentView,
+} from "@/components/common/GroupAgentView";
+import { HelpPopover } from "@/components/common/HelpPopover";
+import { summaryPillClass } from "@/components/common/SummaryBar";
 import { agentDetection } from "@/lib/agents";
 import { sameMembers } from "@/lib/utils";
 import { formatTokens, sumTokens, tokenIndex, tokenTitle } from "@/lib/tokens";
@@ -63,8 +58,8 @@ import type { Group } from "@/types";
 /**
  * 分组不再归属某个 Agent：名称和成员只保存一次，是否对某个 Agent 生效完全
  * 由卡片上的 Agent 图标独立决定（见 `GroupAgentToggles`），同一分组可以同时
- * 是多个 Agent 的当前组合。「已安装 / 未托管 skill」两个标签仍是单 Agent
- * 视角，用顶部的 Agent 选择器切换查看对象。
+ * 是多个 Agent 的当前组合。部署到 Agent 只通过分组；顶部胶囊可切到单个
+ * Agent 的视角（见 `GroupAgentFilter`）。
  */
 export function GroupsPage() {
   const { data: allAgents = [], isDetecting, detectionFailed } = useAgents();
@@ -112,14 +107,16 @@ export function GroupsPage() {
   const [skillSearch, setSkillSearch] = useState("");
   const [deleting, setDeleting] = useState<Group | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState("groups");
-  const showInstalled = tab !== "groups";
-  const [addingSkill, setAddingSkill] = useState(false);
-  // 「已安装 / 未托管」是单 Agent 视角；选中的 Agent 被关闭管理后回到第一个
-  const [pickedAgentId, setPickedAgentId] = useState<string>();
-  const agent = agents.find((a) => a.id === pickedAgentId) ?? agents[0];
   const managedIds = new Set(agents.map((a) => a.id));
   const activeGroups = config?.activeGroups ?? {};
+  const [viewAgentId, setViewAgentId] = useGroupAgentView(
+    "skills",
+    agents.map((a) => a.id),
+  );
+  const viewAgent = agents.find((a) => a.id === viewAgentId);
+  const activeCount = (agentId: string) => (activeGroups[agentId] ?? []).length;
+  const activeIds = (agentId: string) =>
+    (activeGroups[agentId] ?? []).map((g) => g.groupId);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -166,8 +163,10 @@ export function GroupsPage() {
    * - unavailable：启用记录里的某个成员在这个 Agent 上缺失/被停用/需要人工处理，与「需要检查」同义
    */
   function groupStatus(g: Group, agentId: string) {
-    const current = config?.activeGroups?.[agentId];
-    const active = current?.groupId === g.id;
+    const current = (config?.activeGroups?.[agentId] ?? []).find(
+      (record) => record.groupId === g.id,
+    );
+    const active = !!current;
     if (!active || !current)
       return { active, changed: false, unavailable: false };
     const changed =
@@ -187,10 +186,11 @@ export function GroupsPage() {
     return { active, changed, unavailable };
   }
 
-  // 「已安装 / 未托管」统计只看当前选中的 Agent；没有可用 Agent 时都是 0
-  const enabledSkills = agent
+  // 单个 Agent 视角的统计：文件在位、且没被原生开关停用的 skill；
+  // 目录里有痕迹但用不上的（外来占位、悬空链接）不计，见 isRegistered
+  const enabledSkills = viewAgent
     ? skills.filter((s) => {
-        const state = s.agents[agent.id];
+        const state = s.agents[viewAgent.id];
         return !!state && !state.disabled && isRegistered(state.status);
       })
     : [];
@@ -198,8 +198,8 @@ export function GroupsPage() {
     tokens,
     enabledSkills.map((s) => s.id),
   );
-  const driftedCount = agent
-    ? enabledSkills.filter((s) => isCopyDrifted(s.agents[agent.id].status))
+  const driftedCount = viewAgent
+    ? enabledSkills.filter((s) => isCopyDrifted(s.agents[viewAgent.id].status))
         .length
     : 0;
 
@@ -219,12 +219,12 @@ export function GroupsPage() {
   const activate = useMutation({
     mutationFn: async (v: {
       kind: "enable" | "disable" | "reapply";
-      agentIds: string[];
-      groupId: string | null;
+      /** agent → 操作完成后它要叠加的分组列表 */
+      next: Record<string, string[]>;
     }) => {
-      // 依次切换：遇到第一个失败就停下报错，已经成功的保持生效
-      for (const agentId of v.agentIds)
-        await groupsApi.activate(agentId, v.groupId);
+      // 依次写：遇到第一个失败就停下报错，已经成功的保持生效
+      for (const [agentId, ids] of Object.entries(v.next))
+        await groupsApi.activate(agentId, ids);
     },
     onMutate: () =>
       setOperationView({ settings, groups: rawGroups, skills, config }),
@@ -265,222 +265,243 @@ export function GroupsPage() {
       <PageTools
         query={query}
         onQueryChange={setQuery}
-        placeholder={showInstalled ? "搜索已安装 skill…" : "搜索分组…"}
-        createLabel={showInstalled ? "添加 skill" : "新建分组"}
-        onCreate={() => (showInstalled ? setAddingSkill(true) : edit())}
+        placeholder="搜索分组…"
+        createLabel="新建分组"
+        onCreate={() => edit()}
       />
-      <Tabs
-        value={tab}
-        onValueChange={(value) => {
-          setTab(value);
-          setQuery("");
-        }}
-        className="flex min-h-0 flex-1 flex-col"
+      <GroupAgentFilter
+        total={groups.length}
+        agents={agents}
+        current={activeCount}
+        selected={viewAgent?.id ?? null}
+        onSelect={setViewAgentId}
       >
-        {/* 分页与统计合成一行：左边切页（+ 单 Agent 标签的 Agent 选择器），右边统计 */}
-        <SummaryBar>
-          <SummaryStart>
-            <TabsList className="h-9 shrink-0" aria-label="分组内容">
-              <TabsTrigger
-                value="groups"
-                className={`${summaryTabClass} gap-2 data-[state=active]:bg-background data-[state=active]:text-foreground dark:data-[state=active]:bg-background`}
-              >
-                分组 <span className="text-xs opacity-60">{groups.length}</span>
-              </TabsTrigger>
-              <TabsTrigger
-                value="installed"
-                className={`${summaryTabClass} gap-2 data-[state=active]:bg-background data-[state=active]:text-foreground dark:data-[state=active]:bg-background`}
-              >
-                已安装 skill
-                <span className="text-xs opacity-60">
-                  {agent
-                    ? skills.filter(
-                        (s) =>
-                          s.agents[agent.id] &&
-                          s.agents[agent.id].status !== "notLinked",
-                      ).length
-                    : 0}
-                </span>
-              </TabsTrigger>
-              <TabsTrigger
-                value="manual"
-                className={`${summaryTabClass} gap-2 data-[state=active]:bg-background data-[state=active]:text-foreground`}
-              >
-                未托管 skill
-                <span className="text-xs opacity-60">
-                  {agent
-                    ? skills.filter((s) => s.agents[agent.id]?.manual).length
-                    : 0}
-                </span>
-              </TabsTrigger>
-            </TabsList>
-            {showInstalled && agent && (
-              <AgentSelect
-                agents={agents}
-                value={agent.id}
-                onChange={setPickedAgentId}
-              />
-            )}
-          </SummaryStart>
-          {/*
-            这些统计胶囊只报数、这一行没有筛选语义，所以是不可聚焦的 Badge
-            而不是按钮。用 Badge 的 outline 变体而不是手抄它的类名 —— 裸 `border`
-            会吃到 preflight 推出的 #e4e4e7，深色下就是近白边框套在已经变暗的卡片里。
-          */}
-          <SummaryEnd>
-            {showInstalled ? (
-              <>
-                {agent && (
-                  <SkillBackups
-                    scope={`agent:${agent.id}`}
-                    className={summaryPillClass}
-                  />
-                )}
-                <Badge
-                  variant="outline"
-                  className={summaryPillClass}
-                  title={
-                    agent?.supportsNativeToggle
-                      ? "文件在位、且没被 agent 的原生开关停用的 skill。目录里有痕迹但用不上的（外来占位、悬空链接）不计。"
-                      : "按标准目录中的 Skill 文件统计；实际加载状态由 Agent 自身配置决定。"
-                  }
-                >
-                  {agent?.supportsNativeToggle ? "已启用" : "已安装"}{" "}
-                  {enabledSkills.length} 个 skill
-                </Badge>
-                <Badge
-                  variant="outline"
-                  className={summaryPillClass}
-                  title={tokenTitle(
-                    enabledTokens,
-                    agent?.supportsNativeToggle
-                      ? "当前已启用的 skill"
-                      : "当前已安装的 skill",
-                    driftedCount,
-                  )}
-                >
-                  ≈ {formatTokens(enabledTokens.total)} tokens
-                </Badge>
-                {agent && !agent.supportsNativeToggle && (
-                  <HelpPopover label={`${agent.displayName} Skill 使用说明`}>
-                    {agent.displayName} 本版支持 Skill
-                    安装、托管和分组部署，暂不读取或修改原生启停配置。
-                    分组停用只撤回 Studio 部署的副本，手动安装的 Skill
-                    始终保留。 修改后请在 Agent 中重新加载 Skill 或重启会话。
-                  </HelpPopover>
-                )}
-              </>
-            ) : (
-              <Badge variant="outline" className={summaryPillClass}>
-                共 {groups.length} 个分组
-              </Badge>
-            )}
-          </SummaryEnd>
-        </SummaryBar>
-        <TabsContent
-          value="groups"
-          className="min-h-0 flex-1 overflow-y-auto pb-6"
-        >
-          {groups.length === 0 && (
-            <div className="p-8 text-center text-sm text-muted-foreground">
-              还没有分组。新建一个组合，从 Skill Hub 选择需要的 skill。
-            </div>
-          )}
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={onDragEnd}
-          >
-            <SortableContext
-              items={groups.map((g) => g.id)}
-              strategy={verticalListSortingStrategy}
+        {viewAgent ? (
+          <>
+            <Badge
+              variant="outline"
+              className={summaryPillClass}
+              title={
+                viewAgent.supportsNativeToggle
+                  ? "文件在位、且没被 agent 的原生开关停用的 skill。目录里有痕迹但用不上的（外来占位、悬空链接）不计。"
+                  : "按标准目录中的 Skill 文件统计；实际加载状态由 Agent 自身配置决定。"
+              }
             >
-              <ListContainer cards>
-                {groups
-                  .filter((g) =>
-                    `${g.name} ${g.skillIds.map((id) => skills.find((s) => s.id === id)?.name ?? "").join(" ")}`
-                      .toLowerCase()
-                      .includes(query.trim().toLowerCase()),
-                  )
-                  .map((g) => {
-                    // 一行只遍历一次 agents：下面的徽标、图标行、删除保护共用。
-                    // 已关闭管理的 Agent 不显示图标，但若它仍在用这个分组，保留一个只能停用的图标。
-                    const rowTokens = groupTokens(g);
-                    const statuses = allAgents
-                      .filter(
-                        (a) =>
-                          managedIds.has(a.id) ||
-                          activeGroups[a.id]?.groupId === g.id,
-                      )
-                      .map((a) => ({
-                        agent: a,
-                        managed: managedIds.has(a.id),
-                        ...groupStatus(g, a.id),
-                      }));
-                    const activeStatuses = statuses.filter((s) => s.active);
-                    // 是否在用以配置里的全部启用记录为准，不只看显示出来的 Agent
-                    const inUse = Object.values(activeGroups).some(
-                      (v) => v.groupId === g.id,
-                    );
-                    const unavailable = activeStatuses.some(
-                      (s) => s.unavailable,
-                    );
-                    const changed = activeStatuses.some((s) => s.changed);
-                    const reapplyTargets = activeStatuses.filter(
-                      (s) => s.managed && (s.changed || s.unavailable),
-                    );
-                    return (
-                      <SortableGroupCard
-                        key={g.id}
-                        group={g}
-                        disabled={reorder.isPending}
-                        className={
-                          inUse
-                            ? "border-emerald-500/40 bg-card bg-gradient-to-r from-emerald-500/10 to-transparent shadow-sm shadow-emerald-500/5 hover:border-emerald-500/60 hover:bg-card dark:from-emerald-500/15"
-                            : undefined
-                        }
-                      >
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted">
-                          <Layers className="h-5 w-5" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-medium">{g.name}</span>
-                            <Badge variant="outline">
-                              {g.skillIds.length} 个 skill
+              {viewAgent.supportsNativeToggle ? "已启用" : "已安装"}{" "}
+              {enabledSkills.length} 个 skill
+            </Badge>
+            <Badge
+              variant="outline"
+              className={summaryPillClass}
+              title={tokenTitle(
+                enabledTokens,
+                viewAgent.supportsNativeToggle
+                  ? "当前已启用的 skill"
+                  : "当前已安装的 skill",
+                driftedCount,
+              )}
+            >
+              ≈ {formatTokens(enabledTokens.total)} tokens
+            </Badge>
+            {!viewAgent.supportsNativeToggle && (
+              <HelpPopover label={`${viewAgent.displayName} Skill 使用说明`}>
+                {viewAgent.displayName} 本版支持 Skill
+                安装、托管和分组部署，暂不读取或修改原生启停配置。
+                分组停用只撤回 Studio 部署的副本，手动安装的 Skill
+                始终保留。修改后请在 Agent 中重新加载 Skill 或重启会话。
+              </HelpPopover>
+            )}
+          </>
+        ) : (
+          <Badge variant="outline" className={summaryPillClass}>
+            共 {groups.length} 个分组
+          </Badge>
+        )}
+      </GroupAgentFilter>
+      <div className="min-h-0 flex-1 overflow-y-auto pb-6">
+        {groups.length === 0 && (
+          <div className="p-8 text-center text-sm text-muted-foreground">
+            还没有分组。新建一个组合，从 Skill Hub 选择需要的 skill。
+          </div>
+        )}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={onDragEnd}
+        >
+          <SortableContext
+            items={groups.map((g) => g.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <ListContainer cards>
+              {groups
+                .filter((g) =>
+                  `${g.name} ${g.skillIds.map((id) => skills.find((s) => s.id === id)?.name ?? "").join(" ")}`
+                    .toLowerCase()
+                    .includes(query.trim().toLowerCase()),
+                )
+                .map((g) => {
+                  // 一行只遍历一次 agents：下面的徽标、图标行、删除保护共用。
+                  // 已关闭管理的 Agent 不显示图标，但若它仍在用这个分组，保留一个只能停用的图标。
+                  const rowTokens = groupTokens(g);
+                  const statuses = allAgents
+                    .filter(
+                      (a) =>
+                        managedIds.has(a.id) ||
+                        (activeGroups[a.id] ?? []).some(
+                          (v) => v.groupId === g.id,
+                        ),
+                    )
+                    .map((a) => ({
+                      agent: a,
+                      managed: managedIds.has(a.id),
+                      ...groupStatus(g, a.id),
+                    }));
+                  const activeStatuses = statuses.filter((s) => s.active);
+                  // 是否在用以配置里的全部启用记录为准，不只看显示出来的 Agent
+                  const inUse = Object.values(activeGroups)
+                    .flat()
+                    .some((v) => v.groupId === g.id);
+                  const unavailable = activeStatuses.some((s) => s.unavailable);
+                  const changed = activeStatuses.some((s) => s.changed);
+                  const reapplyTargets = activeStatuses.filter(
+                    (s) => s.managed && (s.changed || s.unavailable),
+                  );
+                  // 单个 Agent 视角：徽标与高亮只说这个 Agent 的情况
+                  const view = viewAgent && groupStatus(g, viewAgent.id);
+                  const shown = view ?? {
+                    active: inUse,
+                    changed,
+                    unavailable,
+                  };
+                  return (
+                    <SortableGroupCard
+                      key={g.id}
+                      group={g}
+                      disabled={reorder.isPending || !!viewAgent}
+                      dragHint={
+                        viewAgent ? "在「全部」视角下拖动排序" : undefined
+                      }
+                      className={
+                        shown.active
+                          ? "border-emerald-500/40 bg-card bg-gradient-to-r from-emerald-500/10 to-transparent shadow-sm shadow-emerald-500/5 hover:border-emerald-500/60 hover:bg-card dark:from-emerald-500/15"
+                          : undefined
+                      }
+                    >
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted">
+                        <Layers className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium">{g.name}</span>
+                          <Badge variant="outline">
+                            {g.skillIds.length} 个 skill
+                          </Badge>
+                          {rowTokens.total > 0 && (
+                            <Badge
+                              variant="outline"
+                              title={tokenTitle(rowTokens, "组内 skill")}
+                            >
+                              ≈ {formatTokens(rowTokens.total)} tokens
                             </Badge>
-                            {rowTokens.total > 0 && (
-                              <Badge
-                                variant="outline"
-                                title={tokenTitle(rowTokens, "组内 skill")}
-                              >
-                                ≈ {formatTokens(rowTokens.total)} tokens
-                              </Badge>
-                            )}
-                            {inUse && (
-                              <Badge
-                                variant={unavailable ? "warning" : "success"}
-                                title={activeStatuses
+                          )}
+                          {shown.active && (
+                            <Badge
+                              variant={
+                                shown.unavailable ? "warning" : "success"
+                              }
+                              title={
+                                viewAgent?.displayName ??
+                                activeStatuses
                                   .map((s) => s.agent.displayName)
-                                  .join("、")}
-                              >
-                                {unavailable ? "需要检查" : "使用中"}
-                              </Badge>
-                            )}
-                            {changed && (
-                              <Badge variant="warning">有待应用修改</Badge>
-                            )}
-                          </div>
-                          <p className="mt-1 truncate text-xs text-muted-foreground">
-                            {g.skillIds
-                              .map(
-                                (id) =>
-                                  skills.find((s) => s.id === id)?.name ??
-                                  `已缺失：${id}`,
-                              )
-                              .join(" · ") || "尚未选择 skill"}
-                          </p>
+                                  .join("、")
+                              }
+                            >
+                              {shown.unavailable ? "需要检查" : "使用中"}
+                            </Badge>
+                          )}
+                          {shown.changed && (
+                            <Badge variant="warning">有待应用修改</Badge>
+                          )}
                         </div>
+                        <p className="mt-1 truncate text-xs text-muted-foreground">
+                          {g.skillIds
+                            .map(
+                              (id) =>
+                                skills.find((s) => s.id === id)?.name ??
+                                `已缺失：${id}`,
+                            )
+                            .join(" · ") || "尚未选择 skill"}
+                        </p>
+                      </div>
+                      <RowActions
+                        busy={remove.isPending && deleting?.id === g.id}
+                      >
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="编辑分组"
+                          aria-label={`编辑 ${g.name}`}
+                          onClick={() => edit(g)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title={inUse ? "请先停用分组" : "删除分组"}
+                          aria-label={`删除 ${g.name}`}
+                          disabled={inUse || activate.isPending}
+                          onClick={() => setDeleting(g)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </RowActions>
+                      {viewAgent && view ? (
+                        <AgentGroupAction
+                          agent={viewAgent.displayName}
+                          groupName={g.name}
+                          active={view.active}
+                          blocked={
+                            g.skillIds.length ? undefined : "分组还没有成员"
+                          }
+                          reapply={
+                            view.changed || view.unavailable
+                              ? {
+                                  label: view.changed ? "应用修改" : "重新应用",
+                                }
+                              : undefined
+                          }
+                          busy={activate.isPending}
+                          onActivate={() =>
+                            activate.mutate({
+                              kind: "enable",
+                              next: {
+                                [viewAgent.id]: [
+                                  ...activeIds(viewAgent.id),
+                                  g.id,
+                                ],
+                              },
+                            })
+                          }
+                          onStop={() =>
+                            activate.mutate({
+                              kind: "disable",
+                              next: {
+                                [viewAgent.id]: activeIds(viewAgent.id).filter(
+                                  (id) => id !== g.id,
+                                ),
+                              },
+                            })
+                          }
+                          onReapply={() =>
+                            activate.mutate({
+                              kind: "reapply",
+                              next: { [viewAgent.id]: activeIds(viewAgent.id) },
+                            })
+                          }
+                        />
+                      ) : (
                         <GroupAgentToggles
                           groupName={g.name}
                           busy={activate.isPending}
@@ -507,15 +528,24 @@ export function GroupsPage() {
                                     : undefined,
                                 note: managed ? detection.note : "已关闭管理",
                                 dimmed: managed && detection.notInstalled,
-                                canActivate: managed && g.skillIds.length > 0,
+                                blocked: !managed
+                                  ? "已关闭管理"
+                                  : g.skillIds.length
+                                    ? undefined
+                                    : "分组还没有成员",
                               };
                             },
                           )}
                           onToggle={(agentId, on) =>
                             activate.mutate({
                               kind: on ? "enable" : "disable",
-                              agentIds: [agentId],
-                              groupId: on ? g.id : null,
+                              next: {
+                                [agentId]: on
+                                  ? [...activeIds(agentId), g.id]
+                                  : activeIds(agentId).filter(
+                                      (id) => id !== g.id,
+                                    ),
+                              },
                             })
                           }
                           reapply={
@@ -531,67 +561,25 @@ export function GroupsPage() {
                                   onClick: () =>
                                     activate.mutate({
                                       kind: "reapply",
-                                      agentIds: reapplyTargets.map(
-                                        (t) => t.agent.id,
+                                      next: Object.fromEntries(
+                                        reapplyTargets.map((t) => [
+                                          t.agent.id,
+                                          activeIds(t.agent.id),
+                                        ]),
                                       ),
-                                      groupId: g.id,
                                     }),
                                 }
                               : undefined
                           }
                         />
-                        <RowActions
-                          busy={remove.isPending && deleting?.id === g.id}
-                        >
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="编辑分组"
-                            aria-label={`编辑 ${g.name}`}
-                            onClick={() => edit(g)}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title={inUse ? "请先停用分组" : "删除分组"}
-                            aria-label={`删除 ${g.name}`}
-                            disabled={inUse || activate.isPending}
-                            onClick={() => setDeleting(g)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </RowActions>
-                      </SortableGroupCard>
-                    );
-                  })}
-              </ListContainer>
-            </SortableContext>
-          </DndContext>
-        </TabsContent>
-        {["installed", "manual"].map((value) => (
-          <TabsContent
-            key={value}
-            value={value}
-            className="min-h-0 flex-1 overflow-y-auto"
-          >
-            {agent ? (
-              <AgentSkills
-                agentId={agent.id}
-                searchQuery={query}
-                manualOnly={value === "manual"}
-                addOpen={addingSkill}
-                onAddOpenChange={setAddingSkill}
-              />
-            ) : (
-              <p className="p-8 text-center text-sm text-muted-foreground">
-                暂无可用的 Agent
-              </p>
-            )}
-          </TabsContent>
-        ))}
-      </Tabs>
+                      )}
+                    </SortableGroupCard>
+                  );
+                })}
+            </ListContainer>
+          </SortableContext>
+        </DndContext>
+      </div>
       <Dialog
         open={editing !== null}
         onOpenChange={(open) => {
@@ -738,11 +726,14 @@ export function GroupsPage() {
 function SortableGroupCard({
   group,
   disabled,
+  dragHint,
   className,
   children,
 }: {
   group: Group;
   disabled: boolean;
+  /** 拖动不可用的原因（比如在单个 Agent 视角下） */
+  dragHint?: string;
   className?: string;
   children: ReactNode;
 }) {
@@ -775,7 +766,7 @@ function SortableGroupCard({
           {...attributes}
           {...listeners}
           aria-label={`拖拽排序 ${group.name}`}
-          title="拖拽排序（也可按空格后用方向键移动）"
+          title={dragHint ?? "拖拽排序（也可按空格后用方向键移动）"}
           disabled={disabled}
           className="touch-none shrink-0 cursor-grab rounded p-1 text-muted-foreground/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing disabled:cursor-wait"
         >

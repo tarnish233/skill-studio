@@ -68,12 +68,14 @@ describe("groupsApi", () => {
     });
   });
 
-  it("activate 传 null 表示为该 Agent 停用当前分组", async () => {
-    await groupsApi.activate("codex", null);
+  it("activate 传整个叠加列表；空数组表示全部停用", async () => {
+    await groupsApi.activate("codex", ["a", "b"]);
     expect(lastCall()).toEqual({
       command: "activate_agent_group",
-      args: { agentId: "codex", groupId: null },
+      args: { agentId: "codex", groupIds: ["a", "b"] },
     });
+    await groupsApi.activate("codex", []);
+    expect(lastCall().args).toEqual({ agentId: "codex", groupIds: [] });
   });
 });
 

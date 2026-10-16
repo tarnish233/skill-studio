@@ -1,17 +1,10 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import { LibraryPage } from "@/pages/LibraryPage";
-import { AgentSkills } from "@/pages/AgentPage";
 import { ProjectsPage } from "@/pages/ProjectsPage";
 import { setTarget } from "@/lib/api/transport";
 import { renderWithProviders } from "./utils/render";
-import {
-  handlers,
-  calls,
-  makeSkill,
-  makeProject,
-  claudeAgent,
-} from "./mocks/tauri";
+import { handlers, calls, makeSkill, makeProject } from "./mocks/tauri";
 
 afterEach(() => setTarget({ id: "local", name: "本机", connected: true }));
 
@@ -111,21 +104,6 @@ it("preview warns about malformed frontmatter and an empty body", async () => {
     "frontmatter 解析失败：did not find expected node content",
   );
   expect(screen.getByText("此文档只有 frontmatter，没有正文")).toBeVisible();
-});
-it("Agent preview reads installed path and displays missing-file errors", async () => {
-  handlers.set("list_agents", () => [claudeAgent]);
-  const skill = makeSkill();
-  skill.agents["claude-code"].targetPath = "/installed/pdf-tools";
-  handlers.set("scan_skills", () => [skill]);
-  handlers.set("read_skill_document", (args) => {
-    expect(args.path).toBe("/installed/pdf-tools");
-    throw Error("文件不存在");
-  });
-  renderWithProviders(<AgentSkills agentId="claude-code" />);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "预览 pdf-tools" }),
-  );
-  expect(await screen.findByRole("alert")).toHaveTextContent("文件不存在");
 });
 it("project preview uses suspended storage and delete remains last without triggering preview", async () => {
   handlers.set("list_projects", () => [makeProject()]);

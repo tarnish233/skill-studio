@@ -61,6 +61,9 @@ function defaultResult(command: string): unknown {
       return null;
     case "get_config_dir":
       return "/tmp/.skill-studio";
+    // 只给页面会读的部分；需要启用记录的用例自行覆盖
+    case "get_config":
+      return { activeGroups: {} };
     case "register_skills":
     case "unregister_skills":
     case "apply_project":

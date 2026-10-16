@@ -2,6 +2,8 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { expect, it } from "vitest";
 import App from "@/App";
 import { GroupsPage } from "@/pages/GroupsPage";
+import { McpGroupsPage } from "@/pages/McpGroupsPage";
+import { setTarget } from "@/lib/api/transport";
 import { ProjectsPage } from "@/pages/ProjectsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { renderWithProviders } from "./utils/render";
@@ -27,44 +29,65 @@ function setup() {
   handlers.set("get_config", () => ({ activeGroups: {} }));
 }
 
-it("exposes all three additional Agents through the Agent selector in both Skill and MCP groups", async () => {
-  setup();
-  renderWithProviders(<App />);
-  const nav = within(screen.getByRole("navigation", { name: "主导航" }));
-  fireEvent.click(await nav.findByRole("button", { name: "分组" }));
-  expect(await screen.findByRole("button", { name: "新建分组" })).toBeEnabled();
-  fireEvent.mouseDown(screen.getByRole("tab", { name: /已安装 skill/ }), {
-    button: 0,
-    ctrlKey: false,
-  });
-  const picker = screen.getByLabelText("选择 Agent");
-  for (const agent of skillOnlyAgents) {
-    fireEvent.change(picker, { target: { value: agent.id } });
-    expect(
-      screen.getByRole("button", {
-        name: `${agent.displayName} Skill 使用说明`,
-      }),
-    ).toBeEnabled();
-  }
+/** 分组页顶部的 Agent 视角胶囊 */
+const viewChip = (name: RegExp) =>
+  within(screen.getByRole("group", { name: "按 Agent 查看" })).getByRole(
+    "button",
+    { name },
+  );
 
-  fireEvent.click(
-    within(screen.getByRole("banner")).getByRole("button", { name: "MCP" }),
-  );
-  await waitFor(() =>
-    expect(screen.getByRole("tab", { name: /^分组/ })).toBeVisible(),
-  );
-  fireEvent.mouseDown(screen.getByRole("tab", { name: /已配置 MCP/ }), {
-    button: 0,
-    ctrlKey: false,
-  });
-  const mcpPicker = screen.getByLabelText("选择 Agent");
+it("offers every additional Agent on shared group cards and as an Agent view, for Skills and MCP", async () => {
+  setup();
+  setTarget({ id: "local", name: "本机", connected: true });
+  handlers.set("scan_skills", () => [makeSkill({ id: "demo", name: "Demo" })]);
+  handlers.set("list_groups", () => [
+    makeGroup({ id: "g", name: "Dev", skillIds: ["demo"] }),
+  ]);
+  const view = renderWithProviders(<GroupsPage />);
   for (const agent of skillOnlyAgents) {
-    fireEvent.change(mcpPicker, { target: { value: agent.id } });
-    expect(screen.getByLabelText("选择 Agent")).toHaveValue(agent.id);
+    expect(
+      await screen.findByRole("button", {
+        name: `为 ${agent.displayName} 启用「Dev」`,
+      }),
+    ).toBeInTheDocument();
+    expect(viewChip(new RegExp(`^${agent.displayName}`))).toBeInTheDocument();
   }
+  view.unmount();
+
+  handlers.set("mcp_request", ({ method }) =>
+    method === "list"
+      ? {
+          running: false,
+          entries: [
+            {
+              id: "one",
+              name: "Work",
+              mode: "direct",
+              definition: { type: "stdio", command: "work" },
+              oauth: false,
+              clientId: null,
+              scopes: [],
+              bindings: [],
+            },
+          ],
+          servers: [],
+          discovered: [],
+          scanWarnings: [],
+          groups: [{ id: "m", name: "开发", entryIds: ["one"], sortOrder: 0 }],
+          activeGroups: {},
+        }
+      : null,
+  );
+  renderWithProviders(<McpGroupsPage />);
+  for (const agent of skillOnlyAgents)
+    expect(
+      await screen.findByRole("button", {
+        name: `为 ${agent.displayName} 启用「开发」`,
+      }),
+    ).toBeInTheDocument();
 });
 
-it("offers Pi's native MCP help from the MCP Groups page", async () => {
+it("offers Pi's native MCP help in Pi's MCP group view", async () => {
   setup();
   localStorage.setItem("skill-studio-view", "groups");
   localStorage.setItem("skill-studio-resource", "mcp");
@@ -72,13 +95,7 @@ it("offers Pi's native MCP help from the MCP Groups page", async () => {
   expect(
     await screen.findByRole("button", { name: "新建 MCP 分组" }),
   ).toBeInTheDocument();
-  fireEvent.mouseDown(screen.getByRole("tab", { name: /已配置 MCP/ }), {
-    button: 0,
-    ctrlKey: false,
-  });
-  fireEvent.change(screen.getByLabelText("选择 Agent"), {
-    target: { value: "pi" },
-  });
+  fireEvent.click(viewChip(/^Pi/));
   expect(
     screen.queryByText("pi install npm:pi-mcp-adapter"),
   ).not.toBeInTheDocument();
@@ -114,7 +131,7 @@ it("writes all selected Skill Agents to a project using each backend-provided di
 });
 
 it.each(skillOnlyAgents)(
-  "lets a shared group apply to $displayName and hides its unsupported native skill toggle",
+  "lets a shared group include a skill that lives in $displayName",
   async (agent) => {
     setup();
     handlers.set("scan_skills", () => [
@@ -142,18 +159,30 @@ it.each(skillOnlyAgents)(
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
-    fireEvent.mouseDown(screen.getByRole("tab", { name: /已安装 skill/ }), {
-      button: 0,
-      ctrlKey: false,
-    });
-    // 分组不归属任何一个 Agent：切到这个 Agent 才能看到它上面的"已安装 skill"视图
-    fireEvent.change(screen.getByLabelText("选择 Agent"), {
-      target: { value: agent.id },
-    });
-    expect(await screen.findByText("Demo")).toBeVisible();
+  },
+);
+
+it.each(skillOnlyAgents)(
+  "explains how $displayName loads skills in its Agent view, since it has no native toggle",
+  async (agent) => {
+    setup();
+    handlers.set("scan_skills", () => [
+      makeSkill({
+        id: "demo",
+        name: "Demo",
+        agents: { [agent.id]: agentState("source") },
+      }),
+    ]);
+    renderWithProviders(<GroupsPage />);
+    fireEvent.click(
+      await waitFor(() => viewChip(new RegExp(`^${agent.displayName}`))),
+    );
+    expect(screen.getByText("已安装 1 个 skill")).toBeInTheDocument();
     expect(
-      screen.queryByRole("switch", { name: "启用 Demo" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", {
+        name: `${agent.displayName} Skill 使用说明`,
+      }),
+    ).toBeEnabled();
   },
 );
 

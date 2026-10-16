@@ -38,7 +38,7 @@ export interface ManagedMcp {
   scopes: string[];
   bindings: ManagedBinding[];
 }
-/** 分组不归属任何单个 agent：同一个分组可以被不同 agent 各自独立激活（见 `ManagementStatus.activeGroups`） */
+/** 分组不归属任何单个 agent：同一个分组可以被不同 agent 各自独立激活 */
 export interface McpGroup {
   references?: ManagedMcp[];
   id: string;
@@ -60,7 +60,8 @@ export interface ManagementStatus {
   builtins?: { name: string; agent: string; path: string; scope: string }[];
   groupIssues?: Record<string, string>;
   groups?: McpGroup[];
-  activeGroups?: Record<string, ActiveMcpGroup>;
+  /** agent → 当前叠加的分组记录；部署内容是这些分组成员的并集 */
+  activeGroups?: Record<string, ActiveMcpGroup[]>;
   gatewayOutdated?: boolean;
   running: boolean;
   entries: ManagedMcp[];
@@ -139,17 +140,19 @@ export function rows(status?: ManagementStatus): McpRow[] {
                 b.project === (source.project ?? null),
             ),
           ) ||
-          Object.values(status.activeGroups ?? {}).some((group) =>
-            group.bindings.some(
-              (b) =>
-                b.id === entry.id &&
-                discovered.sources.some(
-                  (source) =>
-                    b.agent === source.agent &&
-                    b.path === source.path &&
-                    b.key === source.key &&
-                    b.project === (source.project ?? null),
-                ),
+          Object.values(status.activeGroups ?? {}).some((groups) =>
+            groups.some((group) =>
+              group.bindings.some(
+                (b) =>
+                  b.id === entry.id &&
+                  discovered.sources.some(
+                    (source) =>
+                      b.agent === source.agent &&
+                      b.path === source.path &&
+                      b.key === source.key &&
+                      b.project === (source.project ?? null),
+                  ),
+              ),
             ),
           ),
       );
@@ -169,9 +172,9 @@ export function rows(status?: ManagementStatus): McpRow[] {
         row.entry.id === discovered.managedId ||
         [
           ...row.entry.bindings,
-          ...Object.values(status.activeGroups ?? {}).flatMap((g) =>
-            g.bindings.filter((b) => b.id === row.entry.id),
-          ),
+          ...Object.values(status.activeGroups ?? {})
+            .flat()
+            .flatMap((g) => g.bindings.filter((b) => b.id === row.entry.id)),
         ].some((b) =>
           discovered.sources.some(
             (s) =>

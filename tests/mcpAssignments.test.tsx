@@ -49,32 +49,6 @@ async function open() {
     target: { value: "one" },
   });
 }
-it("adds only the current agent globally and retains existing project bindings", async () => {
-  entry.bindings = [
-    {
-      id: "project",
-      agent: "codex",
-      path: "/work/.codex/config.toml",
-      project: null,
-      key: "Tools",
-      original: null,
-      installed: entry.definition,
-    },
-  ];
-  renderWithProviders(<McpAssignments agent="claude" />);
-  await open();
-  expect(screen.queryByLabelText("MCP Agent")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "添加并启用" }));
-  await waitFor(() =>
-    expect(saved()).toMatchObject({
-      agents: ["claude"],
-      projectId: "",
-      scope: "user",
-      bindingIds: ["project"],
-      expectedEntry: entry,
-    }),
-  );
-});
 it("adds a Claude local scope from the project and restricts Codex to project configuration", async () => {
   renderWithProviders(<McpAssignments project={project} />);
   await open();
@@ -156,7 +130,7 @@ it("keeps an installation error visible and allows retry", async () => {
     if (method === "list") return status;
     throw new Error("配置已被修改");
   });
-  renderWithProviders(<McpAssignments agent="codex" />);
+  renderWithProviders(<McpAssignments project={project} />);
   await open();
   fireEvent.click(screen.getByRole("button", { name: "添加并启用" }));
   await waitFor(() =>
@@ -207,25 +181,6 @@ it("adopts an existing source at its original location without creating another 
     }),
   );
 });
-it("does not list project bindings in an agent's global MCP list", async () => {
-  entry.bindings = [
-    {
-      id: "project",
-      agent: "codex",
-      path: "/work/.codex/config.toml",
-      project: null,
-      key: "Tools",
-      original: null,
-      installed: entry.definition,
-    },
-  ];
-  renderWithProviders(<McpAssignments agent="codex" />);
-  await screen.findByText(
-    "此 Agent 还没有全局 MCP。从 Hub 添加，或启用一个 MCP 分组。",
-  );
-  expect(screen.queryByText("Tools")).not.toBeInTheDocument();
-});
-
 it.each(["opencode", "pi", "grok"])(
   "adds %s project MCP and recognizes existing project bindings",
   async (agent) => {

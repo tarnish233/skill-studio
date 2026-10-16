@@ -14,9 +14,9 @@ export const groupsApi = {
       skillIds,
     });
   },
-  /** groupId 为 null 时停用该 Agent 当前的分组 */
-  async activate(agentId: string, groupId: string | null): Promise<void> {
-    return await invoke("activate_agent_group", { agentId, groupId });
+  /** 设置这个 Agent 当前叠加的全部分组；空数组表示全部停用 */
+  async activate(agentId: string, groupIds: string[]): Promise<void> {
+    return await invoke("activate_agent_group", { agentId, groupIds });
   },
   async list(): Promise<Group[]> {
     return await invoke("list_groups");

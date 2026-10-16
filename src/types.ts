@@ -187,6 +187,7 @@ export interface AppConfig {
   version: number;
   settings: Settings;
   groups: Group[];
+  /** agent → 当前叠加的分组记录（按启用顺序）；部署内容是这些分组成员的并集 */
   activeGroups?: Record<
     string,
     {
@@ -194,7 +195,7 @@ export interface AppConfig {
       preserveManualSkills?: boolean;
       skillIds: string[];
       entries: { skillId: string; sourcePath: string; targetPath: string }[];
-    }
+    }[]
   >;
   projects: ProjectBinding[];
   registrations: Record<string, Record<string, Registration>>;
