@@ -4,7 +4,7 @@
 mod support;
 
 use serial_test::serial;
-use skill_studio_core::models::group::{Group, GroupApplyMode};
+use skill_studio_core::models::group::Group;
 use skill_studio_core::models::project::ProjectBinding;
 use skill_studio_core::models::skill::{LinkMode, LinkStatus, SkillOrigin};
 use support::Env;
@@ -135,10 +135,10 @@ fn never_overwrites_a_skill_the_user_put_there() {
 
 #[test]
 #[serial]
-fn group_add_leaves_out_of_group_skills_untouched() {
+fn registering_a_batch_leaves_other_registrations_untouched() {
     let env = Env::new();
-    env.write_simple_skill(&env.claude_skills(), "in-group-a");
-    env.write_simple_skill(&env.claude_skills(), "in-group-b");
+    env.write_simple_skill(&env.claude_skills(), "batch-a");
+    env.write_simple_skill(&env.claude_skills(), "batch-b");
     env.write_simple_skill(&env.claude_skills(), "outsider");
 
     let studio = env.studio();
@@ -154,7 +154,7 @@ fn group_add_leaves_out_of_group_skills_untouched() {
             .clone()
     };
 
-    // 先把 outsider 单独注册到 codex —— 它不属于任何分组
+    // 先把 outsider 单独注册到 codex —— 它不在这次批量里
     studio
         .register(
             &mut config,
@@ -165,35 +165,30 @@ fn group_add_leaves_out_of_group_skills_untouched() {
         )
         .unwrap();
 
-    let mut group = Group::new("g1".into(), "前端".into());
-    group.add_skill(id_of("in-group-a"));
-    group.add_skill(id_of("in-group-b"));
-    config.groups.push(group);
-
     let report = studio
-        .apply_group(
+        .register(
             &mut config,
-            "g1",
+            &[id_of("batch-a"), id_of("batch-b")],
             &["codex".into()],
-            GroupApplyMode::Add,
+            None,
             false,
         )
         .unwrap();
     assert!(report.is_all_ok(), "{report:?}");
     assert_eq!(report.success.len(), 2);
 
-    // 组内两个都到位，组外那个没被动过
-    assert!(env.codex_skills().join("in-group-a").exists());
-    assert!(env.codex_skills().join("in-group-b").exists());
+    // 批量里的两个都到位，批量外那个没被动过
+    assert!(env.codex_skills().join("batch-a").exists());
+    assert!(env.codex_skills().join("batch-b").exists());
     assert!(
         env.codex_skills().join("outsider").exists(),
-        "组外 skill 必须保持原状"
+        "批量外的 skill 必须保持原状"
     );
 }
 
 #[test]
 #[serial]
-fn group_remove_only_removes_group_members_and_spares_foreign() {
+fn unregister_only_removes_requested_skills_and_spares_foreign() {
     let env = Env::new();
     env.write_simple_skill(&env.claude_skills(), "member");
     env.write_simple_skill(&env.claude_skills(), "kept");
@@ -217,9 +212,6 @@ fn group_remove_only_removes_group_members_and_spares_foreign() {
             .clone()
     };
 
-    let mut group = Group::new("g1".into(), "前端".into());
-    group.add_skill(id_of("member"));
-    config.groups.push(group);
     studio
         .register(
             &mut config,
@@ -232,18 +224,20 @@ fn group_remove_only_removes_group_members_and_spares_foreign() {
     assert!(env.codex_skills().join("member").exists());
 
     let report = studio
-        .apply_group(
+        .unregister(
             &mut config,
-            "g1",
+            &[id_of("member")],
             &[String::from("codex")],
-            GroupApplyMode::Remove,
             false,
         )
         .unwrap();
     assert!(report.is_all_ok(), "{report:?}");
 
-    assert!(!env.codex_skills().join("member").exists(), "组内应被移除");
-    assert!(env.codex_skills().join("kept").exists(), "组外不该被动");
+    assert!(
+        !env.codex_skills().join("member").exists(),
+        "请求的应被移除"
+    );
+    assert!(env.codex_skills().join("kept").exists(), "其他注册不该被动");
     assert!(
         env.codex_skills().join("handmade").exists(),
         "用户手工放的必须保留"

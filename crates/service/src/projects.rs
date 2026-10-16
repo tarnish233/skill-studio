@@ -90,9 +90,9 @@ pub fn list_projects(state: &AppState) -> Result<Vec<ProjectView>, String> {
                 .filter(|id| {
                     config.group(id).is_some_and(|group| {
                         !group.skill_ids.is_empty()
-                            && by_agent.iter().any(|(_, skills)| {
-                                group.skill_ids.iter().all(|id| skills.contains(id))
-                            })
+                            && by_agent
+                                .values()
+                                .any(|skills| group.skill_ids.iter().all(|id| skills.contains(id)))
                     })
                 })
                 .cloned()

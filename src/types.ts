@@ -136,9 +136,6 @@ export interface Group {
   skillIds: string[];
 }
 
-/** 分组是一次性应用语义，不做持续对账 */
-export type GroupApplyMode = "add" | "remove";
-
 export interface ProjectBinding {
   uncollectedSkillCount?: number;
   enabledAgentIds?: string[];

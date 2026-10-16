@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 use crate::models::agent::{AgentInfo, AGENTS};
 use crate::models::config::{AppConfig, Registration, SkillProvenance};
-use crate::models::group::GroupApplyMode;
 use crate::models::skill::{
     skill_id_for, LinkMode, LinkReport, LinkResult, LinkStatus, Skill, SkillOrigin,
 };
@@ -751,32 +750,6 @@ impl Studio {
         tx.commit()?;
         *config = next;
         Ok(report)
-    }
-
-    /// 分组应用：**一次性 Add / Remove**。
-    ///
-    /// Add 只加组内 skill，该 agent 上其他 skill 一律不动；
-    /// Remove 只移除组内 skill，且只移除本工具管理的。不做持续对账。
-    pub fn apply_group(
-        &self,
-        config: &mut AppConfig,
-        group_id: &str,
-        agent_ids: &[String],
-        mode: GroupApplyMode,
-        force: bool,
-    ) -> Result<LinkReport> {
-        let skill_ids = config
-            .group(group_id)
-            .ok_or_else(|| Error::NotFound(format!("分组 {group_id}")))?
-            .skill_ids
-            .clone();
-        if skill_ids.is_empty() {
-            return Ok(LinkReport::default());
-        }
-        match mode {
-            GroupApplyMode::Add => self.register(config, &skill_ids, agent_ids, None, force),
-            GroupApplyMode::Remove => self.unregister(config, &skill_ids, agent_ids, force),
-        }
     }
 
     /// 应用项目绑定：把项目里的 skill（含所绑分组）写进该项目各 agent 的目录。

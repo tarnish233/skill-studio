@@ -76,12 +76,8 @@ pub fn run() {
             commands::list_groups,
             commands::save_group,
             commands::activate_agent_group,
-            commands::create_group,
-            commands::update_group,
             commands::delete_group,
-            commands::set_group_skills,
             commands::reorder_groups,
-            commands::apply_group,
             // 项目
             commands::list_projects,
             commands::list_project_skills,

@@ -21,19 +21,6 @@ pub fn dispatch(state: &AppState, method: &str, params: Value) -> Result<Value, 
             arg(&params, "agentId")?,
             arg(&params, "groupId")?,
         )?),
-        "apply_group" => serde_json::to_value(groups::apply_group(
-            state,
-            arg(&params, "groupId")?,
-            arg(&params, "agentIds")?,
-            arg(&params, "mode")?,
-            arg(&params, "force")?,
-        )?),
-        "create_group" => serde_json::to_value(groups::create_group(
-            state,
-            arg(&params, "name")?,
-            arg(&params, "description")?,
-            arg(&params, "icon")?,
-        )?),
         "delete_group" => {
             serde_json::to_value(groups::delete_group(state, arg(&params, "groupId")?)?)
         }
@@ -46,18 +33,6 @@ pub fn dispatch(state: &AppState, method: &str, params: Value) -> Result<Value, 
             arg(&params, "groupId")?,
             arg(&params, "name")?,
             arg(&params, "skillIds")?,
-        )?),
-        "set_group_skills" => serde_json::to_value(groups::set_group_skills(
-            state,
-            arg(&params, "groupId")?,
-            arg(&params, "skillIds")?,
-        )?),
-        "update_group" => serde_json::to_value(groups::update_group(
-            state,
-            arg(&params, "groupId")?,
-            arg(&params, "name")?,
-            arg(&params, "description")?,
-            arg(&params, "icon")?,
         )?),
         "apply_project" => serde_json::to_value(projects::apply_project(
             state,

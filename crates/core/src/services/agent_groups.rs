@@ -45,7 +45,13 @@ impl Studio {
         if let Some(index) = config.groups.iter().position(|g| g.id == group.id) {
             config.groups[index] = group.clone();
         } else {
-            group.sort_order = config.groups.len() as i32;
+            // max + 1 rather than len(): after deletions len() can repeat an existing slot.
+            group.sort_order = config
+                .groups
+                .iter()
+                .map(|g| g.sort_order + 1)
+                .max()
+                .unwrap_or(0);
             config.groups.push(group.clone());
         }
         Ok(group)

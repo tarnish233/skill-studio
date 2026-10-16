@@ -670,3 +670,19 @@ fn activating_a_group_leaves_a_restorable_config_backup() {
         .unwrap();
     assert!(restored.groups.iter().any(|g| g.id == "a"));
 }
+
+/// 新分组排在当前最后一个之后：删掉前面的分组后 `len()` 会和已有的序号撞车。
+#[test]
+#[serial]
+fn new_group_is_appended_after_deletions() {
+    let env = Env::new();
+    let studio = env.studio();
+    let mut c = studio.load_config().unwrap();
+    for id in ["a", "b", "c"] {
+        studio.save_group(&mut c, id.into(), id, vec![]).unwrap();
+    }
+    c.groups.retain(|g| g.id == "c");
+    let d = studio.save_group(&mut c, "d".into(), "d", vec![]).unwrap();
+    let last = c.groups.iter().find(|g| g.id == "c").unwrap().sort_order;
+    assert!(d.sort_order > last, "c={last} d={}", d.sort_order);
+}

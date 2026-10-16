@@ -21,16 +21,6 @@ pub struct Group {
     pub skill_ids: Vec<String>,
 }
 
-/// 分组应用到某个 agent 的方式
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum GroupApplyMode {
-    /// 把组内 skill 注册到该 agent，组外的一律不动
-    Add,
-    /// 只移除组内 skill 的注册，且只移除本工具管理的
-    Remove,
-}
-
 impl Group {
     pub fn new(id: String, name: String) -> Self {
         Self {
@@ -82,14 +72,6 @@ mod tests {
         assert!(g.remove_skill("s1"));
         assert!(!g.remove_skill("s1"));
         assert!(g.skill_ids.is_empty());
-    }
-
-    #[test]
-    fn apply_mode_serializes_lowercase() {
-        assert_eq!(
-            serde_json::to_string(&GroupApplyMode::Add).unwrap(),
-            "\"add\""
-        );
     }
 
     #[test]

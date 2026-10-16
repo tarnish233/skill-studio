@@ -63,7 +63,6 @@ function defaultResult(command: string): unknown {
       return "/tmp/.skill-studio";
     case "register_skills":
     case "unregister_skills":
-    case "apply_group":
     case "apply_project":
       return emptyReport();
     default:

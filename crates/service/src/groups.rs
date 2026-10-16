@@ -1,5 +1,4 @@
-use skill_studio_core::models::group::{Group, GroupApplyMode};
-use skill_studio_core::models::skill::LinkReport;
+use skill_studio_core::models::group::Group;
 use skill_studio_core::Error;
 
 use crate::state::AppState;
@@ -10,72 +9,8 @@ pub fn list_groups(state: &AppState) -> Result<Vec<Group>, String> {
     Ok(groups)
 }
 
-pub fn create_group(
-    state: &AppState,
-    name: String,
-    description: Option<String>,
-    icon: Option<String>,
-) -> Result<Group, String> {
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Err("分组名不能为空".into());
-    }
-    state
-        .mutate(|_, config| {
-            if config.groups.iter().any(|g| g.name == name) {
-                return Err(Error::invalid(format!("已存在同名分组: {name}")));
-            }
-            let mut group = Group::new(uuid_v4(), name);
-            group.description = description;
-            group.icon = icon;
-            group.sort_order = config.groups.len() as i32;
-            config.groups.push(group.clone());
-            Ok(group)
-        })
-        .map_err(Into::into)
-}
-
-pub fn update_group(
-    state: &AppState,
-    group_id: String,
-    name: Option<String>,
-    description: Option<String>,
-    icon: Option<String>,
-) -> Result<Group, String> {
-    state
-        .mutate(|_, config| {
-            // 重名检查要排除自己
-            if let Some(new_name) = name.as_ref().map(|n| n.trim().to_string()) {
-                if new_name.is_empty() {
-                    return Err(Error::invalid("分组名不能为空"));
-                }
-                if config
-                    .groups
-                    .iter()
-                    .any(|g| g.name == new_name && g.id != group_id)
-                {
-                    return Err(Error::invalid(format!("已存在同名分组: {new_name}")));
-                }
-            }
-            let group = config
-                .group_mut(&group_id)
-                .ok_or_else(|| Error::NotFound(format!("分组 {group_id}")))?;
-            if let Some(n) = name {
-                group.name = n.trim().to_string();
-            }
-            if description.is_some() {
-                group.description = description;
-            }
-            if icon.is_some() {
-                group.icon = icon;
-            }
-            Ok(group.clone())
-        })
-        .map_err(Into::into)
-}
-
-/// 删除分组。**只删元数据，不动任何已注册的文件** —— 分组是一次性应用语义，
-/// 删组不等于撤销之前的注册。
+/// 删除分组。任一 Agent 正在使用的分组必须先停用；删除只清理分组记录和项目绑定，
+/// 不动任何文件。
 pub fn delete_group(state: &AppState, group_id: String) -> Result<(), String> {
     state
         .mutate(|_, config| {
@@ -99,28 +34,6 @@ pub fn delete_group(state: &AppState, group_id: String) -> Result<(), String> {
         .map_err(Into::into)
 }
 
-/// 整体替换分组成员（前端拖拽排序后直接提交顺序）
-pub fn set_group_skills(
-    state: &AppState,
-    group_id: String,
-    skill_ids: Vec<String>,
-) -> Result<Group, String> {
-    state
-        .mutate(|_, config| {
-            let group = config
-                .group_mut(&group_id)
-                .ok_or_else(|| Error::NotFound(format!("分组 {group_id}")))?;
-            // 去重但保留前端给的顺序
-            let mut seen = std::collections::HashSet::new();
-            group.skill_ids = skill_ids
-                .into_iter()
-                .filter(|id| seen.insert(id.clone()))
-                .collect();
-            Ok(group.clone())
-        })
-        .map_err(Into::into)
-}
-
 pub fn reorder_groups(state: &AppState, group_ids: Vec<String>) -> Result<Vec<Group>, String> {
     state
         .mutate(|_, config| {
@@ -132,21 +45,6 @@ pub fn reorder_groups(state: &AppState, group_ids: Vec<String>) -> Result<Vec<Gr
             let mut groups = config.groups.clone();
             groups.sort_by_key(|g| g.sort_order);
             Ok(groups)
-        })
-        .map_err(Into::into)
-}
-
-/// 把分组应用到若干 agent：一次性 Add / Remove
-pub fn apply_group(
-    state: &AppState,
-    group_id: String,
-    agent_ids: Vec<String>,
-    mode: GroupApplyMode,
-    force: Option<bool>,
-) -> Result<LinkReport, String> {
-    state
-        .transactional(|studio, config| {
-            studio.apply_group(config, &group_id, &agent_ids, mode, force.unwrap_or(false))
         })
         .map_err(Into::into)
 }

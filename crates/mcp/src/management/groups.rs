@@ -1,4 +1,5 @@
-//! Agent-local combinations. Metadata and all native edits share the management journal.
+//! Shared MCP combinations, activated independently per agent. Metadata and all
+//! native edits share the management journal.
 use super::*;
 
 /// A saved MCP combination, shared across agents. Each agent independently
@@ -23,9 +24,6 @@ pub struct ActiveGroup {
     pub group_id: String,
     pub entries: Vec<Entry>,
     pub bindings: Vec<Binding>,
-}
-fn agent(agent: &str) -> Result<()> {
-    crate::agents::validate(agent)
 }
 pub fn save_group(dir: &Path, mut group: Group, imports: Vec<Entry>) -> Result<()> {
     group.name = group.name.trim().into();
@@ -80,7 +78,12 @@ pub fn save_group(dir: &Path, mut group: Group, imports: Vec<Entry>) -> Result<(
         group.sort_order = catalog.groups[i].sort_order;
         catalog.groups[i] = group;
     } else {
-        group.sort_order = catalog.groups.len();
+        group.sort_order = catalog
+            .groups
+            .iter()
+            .map(|g| g.sort_order + 1)
+            .max()
+            .unwrap_or(0);
         catalog.groups.push(group);
     }
     commit(dir, BTreeMap::new(), &catalog)
@@ -118,7 +121,7 @@ pub fn activate(
     path: &Path,
     executable: &Path,
 ) -> Result<()> {
-    agent(agent_id)?;
+    crate::agents::validate(agent_id)?;
     let _lock = lock(dir)?;
     let mut catalog = read_unlocked(dir)?;
     ensure_active(&catalog)?;

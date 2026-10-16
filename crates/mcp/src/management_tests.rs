@@ -793,6 +793,30 @@ fn groups_validate_missing_members_names_and_order_without_writing_targets() {
     groups::remove_group(&dir, "one").unwrap();
 }
 
+/// A new group lands after the current last one, even when earlier groups were
+/// deleted and `len()` would repeat an existing slot.
+#[test]
+fn new_group_is_appended_after_deletions() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("studio");
+    for id in ["a", "b", "c"] {
+        groups::save_group(&dir, group(id, &[]), vec![]).unwrap();
+    }
+    groups::remove_group(&dir, "a").unwrap();
+    groups::remove_group(&dir, "b").unwrap();
+    groups::save_group(&dir, group("d", &[]), vec![]).unwrap();
+    let catalog = read(&dir).unwrap();
+    let order = |id: &str| {
+        catalog
+            .groups
+            .iter()
+            .find(|g| g.id == id)
+            .unwrap()
+            .sort_order
+    };
+    assert!(order("d") > order("c"), "c={} d={}", order("c"), order("d"));
+}
+
 /// A group is not scoped to one agent any more: it can be the active
 /// combination for several agents at the same time, each with its own
 /// native file and `active_groups` entry, and stopping one must not touch

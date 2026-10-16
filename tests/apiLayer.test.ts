@@ -60,26 +60,19 @@ describe("skillsApi", () => {
 });
 
 describe("groupsApi", () => {
-  it("create 把未填的可选字段显式传 null", async () => {
-    await groupsApi.create("前端");
+  it("save 新建时 groupId 传 null，成员按给定顺序提交", async () => {
+    await groupsApi.save(null, "前端", ["b", "a"]);
     expect(lastCall()).toEqual({
-      command: "create_group",
-      args: { name: "前端", description: null, icon: null },
+      command: "save_group",
+      args: { groupId: null, name: "前端", skillIds: ["b", "a"] },
     });
   });
 
-  it("apply 带上 mode，Add 与 Remove 是两种语义", async () => {
-    await groupsApi.apply("g1", ["codex"], "add");
-    expect(lastCall().args).toMatchObject({ mode: "add", force: false });
-    await groupsApi.apply("g1", ["codex"], "remove");
-    expect(lastCall().args).toMatchObject({ mode: "remove" });
-  });
-
-  it("setSkills 整体替换成员列表（前端拖拽后直接提交顺序）", async () => {
-    await groupsApi.setSkills("g1", ["b", "a"]);
+  it("activate 传 null 表示为该 Agent 停用当前分组", async () => {
+    await groupsApi.activate("codex", null);
     expect(lastCall()).toEqual({
-      command: "set_group_skills",
-      args: { groupId: "g1", skillIds: ["b", "a"] },
+      command: "activate_agent_group",
+      args: { agentId: "codex", groupId: null },
     });
   });
 });
