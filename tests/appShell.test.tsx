@@ -296,7 +296,11 @@ it("uses the header resource toggle to scope the Groups and project pages", asyn
   expect(screen.queryByText("项目已有 skill")).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "设置" }));
   await user.click(screen.getByRole("button", { name: "返回" }));
-  expect(screen.getByText("管理各项目的 MCP 接入")).toBeInTheDocument();
+  // MCP 项目页与 Skill 侧一致：左侧是 Agent 筛选胶囊，右侧是接入统计
+  expect(
+    await screen.findByRole("group", { name: "按项目 Agent 筛选" }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("托管接入 0 处")).toBeInTheDocument();
   await user.click(header.getByRole("button", { name: "Skill" }));
   await user.click(nav.getByRole("button", { name: "分组" }));
   expect(

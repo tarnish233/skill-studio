@@ -4,8 +4,13 @@ import {
   SummaryEnd,
   summaryPillClass,
 } from "@/components/common/SummaryBar";
-import { MCP_PROJECT_SUFFIXES } from "@/lib/mcpAgents";
-import { useState } from "react";
+import {
+  MCP_PROJECT_SUFFIXES,
+  inProject,
+  mcpAgentId,
+  supportsMcp,
+} from "@/lib/mcpAgents";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, FolderGit2, FolderOpen, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -24,6 +29,9 @@ import {
   useNavigationGuard,
 } from "@/components/common/NavigationGuard";
 import { useTarget } from "@/components/targets/TargetProvider";
+import { AgentIcon } from "@/components/common/AgentIcon";
+import { agentSourceColor } from "@/lib/agents";
+import { useAgents } from "@/hooks/useData";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -70,6 +78,13 @@ function McpProjectsContent() {
     refetchInterval: MCP_STATUS_POLL_INTERVAL,
   });
   const create = useCreateProject();
+  const { data: allAgents = [] } = useAgents();
+  // Skill 侧的 Agent 列表（含品牌图标），过滤到真正支持 MCP 的
+  const mcpAgents = useMemo(
+    () => allAgents.filter((a) => supportsMcp(a.id)),
+    [allAgents],
+  );
+  const [agentFilter, setAgentFilter] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [detail, setDetail] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -122,11 +137,50 @@ function McpProjectsContent() {
           ),
       ),
     ).length;
-  const filtered = (projects.data ?? []).filter((project) =>
-    `${project.name} ${project.root}`
-      .toLowerCase()
-      .includes(query.trim().toLowerCase()),
+  /** 这个项目里有没有该 MCP Agent 的接入（托管的或原有配置都算） */
+  const agentInProject = (mcpId: string, project: { root: string }) =>
+    catalog.some((row) =>
+      [...row.entry.bindings, ...row.sources].some(
+        (source) => source.agent === mcpId && inProject(source, project),
+      ),
+    );
+  const list = projects.data ?? [];
+  const agentCount = (appId: string) =>
+    list.filter((project) => agentInProject(mcpAgentId(appId), project)).length;
+  const selectedMcpId = agentFilter ? mcpAgentId(agentFilter) : null;
+  // Studio 写进项目的托管接入，和项目里已有但没纳入管理的配置
+  const projectBindings = catalog.flatMap((row) =>
+    row.entry.bindings.filter((binding) =>
+      list.some((project) => inProject(binding, project)),
+    ),
   );
+  const unmanagedSources = catalog.flatMap((row) =>
+    row.sources.filter(
+      (source) =>
+        list.some((project) => inProject(source, project)) &&
+        !row.entry.bindings.some(
+          (binding) =>
+            binding.agent === source.agent &&
+            binding.path === source.path &&
+            binding.key === source.key &&
+            (binding.project ?? null) === (source.project ?? null),
+        ),
+    ),
+  );
+  const enabledProjects = list.filter((project) =>
+    catalog.some((row) =>
+      row.entry.bindings.some((binding) => inProject(binding, project)),
+    ),
+  ).length;
+  const filtered = list
+    .filter((project) =>
+      `${project.name} ${project.root}`
+        .toLowerCase()
+        .includes(query.trim().toLowerCase()),
+    )
+    .filter(
+      (project) => !selectedMcpId || agentInProject(selectedMcpId, project),
+    );
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <PageTools
@@ -190,14 +244,56 @@ function McpProjectsContent() {
       ) : (
         <>
           <SummaryBar>
-            <SummaryStart>
-              <p className="truncate text-xs text-muted-foreground">
-                管理各项目的 MCP 接入
-              </p>
+            <SummaryStart
+              role="group"
+              aria-label="按项目 Agent 筛选"
+              title="点击 Agent 筛选：这些项目里配了该 Agent 的 MCP（含未托管的原有配置）"
+            >
+              {mcpAgents.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  title={`筛选：${a.displayName} 配了 MCP 的项目（含未托管的原有配置）`}
+                  className={`${summaryPillClass} border-transparent transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${agentSourceColor(a.id)} ${agentFilter === a.id ? "ring-2 ring-current" : ""}`}
+                  aria-pressed={agentFilter === a.id}
+                  aria-label={`${a.displayName}: ${agentCount(a.id)}`}
+                  onClick={() =>
+                    setAgentFilter(agentFilter === a.id ? null : a.id)
+                  }
+                >
+                  <AgentIcon agentId={a.id} size="sm" />
+                  {agentCount(a.id)}
+                </button>
+              ))}
             </SummaryStart>
-            <SummaryEnd>
-              <Badge variant="outline" className={summaryPillClass}>
-                项目 {projects.data?.length ?? 0} 个
+            <SummaryEnd title="按 Studio 已写入的项目接入统计，同一项目只计一次">
+              <Badge
+                variant="outline"
+                className={summaryPillClass}
+                title="已登记的项目目录数量"
+              >
+                项目 {list.length} 个
+              </Badge>
+              <Badge
+                variant="outline"
+                className={summaryPillClass}
+                title="Studio 写进这些项目的接入条数，同一项目可以有多条"
+              >
+                托管接入 {projectBindings.length} 处
+              </Badge>
+              <Badge
+                variant="outline"
+                className={summaryPillClass}
+                title="项目里已有、但没纳入 Studio 管理的 MCP 配置，可在项目详情里「纳入管理」"
+              >
+                未托管 {unmanagedSources.length} 处
+              </Badge>
+              <Badge
+                variant="outline"
+                className={summaryPillClass}
+                title="至少有一条托管接入的项目数量"
+              >
+                已启用 {enabledProjects} 个
               </Badge>
             </SummaryEnd>
           </SummaryBar>
