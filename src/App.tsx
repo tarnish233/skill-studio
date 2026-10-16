@@ -13,7 +13,6 @@ import {
   useTarget,
   useTargetConnecting,
 } from "@/components/targets/TargetProvider";
-import { SkillStudioIcon } from "@/components/common/SkillStudioIcon";
 import { SidebarAction } from "@/components/common/SidebarAction";
 import {
   NavigationGuard,
@@ -256,21 +255,10 @@ function AppContent() {
             <aside
               data-tauri-drag-region="deep"
               aria-label="侧边栏"
+              // 顶部不放 logo：导航从拖拽区下方再让出 12px 开始
               className="app-sidebar flex w-[var(--app-chrome-size)] shrink-0 flex-col items-center pb-3"
-              style={{ paddingTop: DRAG_BAR_HEIGHT + 8 }}
+              style={{ paddingTop: DRAG_BAR_HEIGHT + 12 }}
             >
-              <div className="mb-2 flex h-11 w-full shrink-0 items-center justify-center">
-                <SidebarAction
-                  label="Skill Studio · 返回 Hub"
-                  onClick={() => navigate("hub")}
-                >
-                  <SkillStudioIcon className="h-7 w-7" />
-                </SidebarAction>
-              </div>
-              <div
-                aria-hidden="true"
-                className="mb-2 w-10 shrink-0 border-t border-border/70"
-              />
               <nav
                 aria-label="主导航"
                 className="min-h-0 w-full flex-1 overflow-y-auto px-2 pb-3"
