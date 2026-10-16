@@ -9,7 +9,7 @@ import { HelpPopover } from "@/components/common/HelpPopover";
 import { SkillBackups } from "@/components/common/SkillBackups";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PageTools } from "@/components/common/PageTools";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   DndContext,
   PointerSensor,
@@ -52,19 +52,22 @@ import {
   RowActions,
 } from "@/components/common/ListItemRow";
 import { AgentSkills } from "@/pages/AgentPage";
-import { AgentToggleIcon } from "@/components/common/AgentToggleIcon";
+import { GroupAgentToggles } from "@/components/common/GroupAgentToggles";
+import { AgentSelect } from "@/components/common/AgentSelect";
+import { agentDetection } from "@/lib/agents";
+import { sameMembers } from "@/lib/utils";
 import { formatTokens, sumTokens, tokenIndex, tokenTitle } from "@/lib/tokens";
 import { isCopyDrifted, isRegistered, needsManualFix } from "@/lib/linkStatus";
 import type { Group } from "@/types";
 
 /**
  * 分组不再归属某个 Agent：名称和成员只保存一次，是否对某个 Agent 生效完全
- * 由卡片上的 Agent 图标独立决定（见 `AgentGroupToggle`），同一分组可以同时
+ * 由卡片上的 Agent 图标独立决定（见 `GroupAgentToggles`），同一分组可以同时
  * 是多个 Agent 的当前组合。「已安装 / 未托管 skill」两个标签仍是单 Agent
  * 视角，用顶部的 Agent 选择器切换查看对象。
  */
 export function GroupsPage() {
-  const { data: allAgents = [] } = useAgents();
+  const { data: allAgents = [], isDetecting, detectionFailed } = useAgents();
   const { data: liveSettings } = useSettings();
   const { data: liveGroups = [] } = useGroups();
   const { data: liveSkills = [] } = useSkills();
@@ -112,16 +115,11 @@ export function GroupsPage() {
   const [tab, setTab] = useState("groups");
   const showInstalled = tab !== "groups";
   const [addingSkill, setAddingSkill] = useState(false);
-  // 「已安装 / 未托管」是单 Agent 视角，默认选第一个未关闭管理的 Agent
-  const [installedAgentId, setInstalledAgentId] = useState<string | undefined>(
-    undefined,
-  );
-  useEffect(() => {
-    if (installedAgentId && agents.some((a) => a.id === installedAgentId))
-      return;
-    setInstalledAgentId(agents[0]?.id);
-  }, [agents, installedAgentId]);
-  const agent = agents.find((a) => a.id === installedAgentId);
+  // 「已安装 / 未托管」是单 Agent 视角；选中的 Agent 被关闭管理后回到第一个
+  const [pickedAgentId, setPickedAgentId] = useState<string>();
+  const agent = agents.find((a) => a.id === pickedAgentId) ?? agents[0];
+  const managedIds = new Set(agents.map((a) => a.id));
+  const activeGroups = config?.activeGroups ?? {};
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -179,7 +177,7 @@ export function GroupsPage() {
             ?.status === "copyStale",
       ) ??
         false) ||
-      JSON.stringify(current.skillIds) !== JSON.stringify(g.skillIds) ||
+      !sameMembers(current.skillIds, g.skillIds) ||
       (current.preserveManualSkills ?? true) !==
         (settings?.preserveManualSkills ?? true);
     const unavailable = current.skillIds.some((id) => {
@@ -219,11 +217,25 @@ export function GroupsPage() {
     onSettled: refresh,
   });
   const activate = useMutation({
-    mutationFn: (v: { agentId: string; groupId: string | null }) =>
-      groupsApi.activate(v.agentId, v.groupId),
+    mutationFn: async (v: {
+      kind: "enable" | "disable" | "reapply";
+      agentIds: string[];
+      groupId: string | null;
+    }) => {
+      // 依次切换：遇到第一个失败就停下报错，已经成功的保持生效
+      for (const agentId of v.agentIds)
+        await groupsApi.activate(agentId, v.groupId);
+    },
     onMutate: () =>
       setOperationView({ settings, groups: rawGroups, skills, config }),
-    onSuccess: (_, v) => toast.success(v.groupId ? "分组已启用" : "分组已停用"),
+    onSuccess: (_, v) =>
+      toast.success(
+        v.kind === "enable"
+          ? "分组已启用"
+          : v.kind === "disable"
+            ? "分组已停用"
+            : "修改已应用",
+      ),
     onError: (e) => toast.error(String(e)),
     onSettled: async () => {
       try {
@@ -302,24 +314,12 @@ export function GroupsPage() {
                 </span>
               </TabsTrigger>
             </TabsList>
-            {/*
-              原生 <select> 而不是 Radix —— 本项目的 jsdom 测试约定不测 Radix 浮层的
-              展开交互（floating-ui 在 jsdom 里单次展开要 3–50 秒，必然抖），
-              这里只是个单选切换，没必要把测试前景换到都市会抖的控件上。
-            */}
-            {showInstalled && agents.length > 0 && (
-              <select
-                aria-label="选择 Agent"
-                className="h-9 shrink-0 rounded-md border border-border-default bg-background px-2 text-sm"
-                value={installedAgentId ?? ""}
-                onChange={(e) => setInstalledAgentId(e.target.value)}
-              >
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.displayName}
-                  </option>
-                ))}
-              </select>
+            {showInstalled && agent && (
+              <AgentSelect
+                agents={agents}
+                value={agent.id}
+                onChange={setPickedAgentId}
+              />
             )}
           </SummaryStart>
           {/*
@@ -330,10 +330,12 @@ export function GroupsPage() {
           <SummaryEnd>
             {showInstalled ? (
               <>
-                <SkillBackups
-                  scope={`agent:${installedAgentId}`}
-                  className={summaryPillClass}
-                />
+                {agent && (
+                  <SkillBackups
+                    scope={`agent:${agent.id}`}
+                    className={summaryPillClass}
+                  />
+                )}
                 <Badge
                   variant="outline"
                   className={summaryPillClass}
@@ -401,24 +403,39 @@ export function GroupsPage() {
                       .includes(query.trim().toLowerCase()),
                   )
                   .map((g) => {
-                    // 一行只遍历一次 agents：下面的徽标、图标行、删除保护共用
+                    // 一行只遍历一次 agents：下面的徽标、图标行、删除保护共用。
+                    // 已关闭管理的 Agent 不显示图标，但若它仍在用这个分组，保留一个只能停用的图标。
                     const rowTokens = groupTokens(g);
-                    const statuses = agents.map((a) => ({
-                      agent: a,
-                      ...groupStatus(g, a.id),
-                    }));
+                    const statuses = allAgents
+                      .filter(
+                        (a) =>
+                          managedIds.has(a.id) ||
+                          activeGroups[a.id]?.groupId === g.id,
+                      )
+                      .map((a) => ({
+                        agent: a,
+                        managed: managedIds.has(a.id),
+                        ...groupStatus(g, a.id),
+                      }));
                     const activeStatuses = statuses.filter((s) => s.active);
+                    // 是否在用以配置里的全部启用记录为准，不只看显示出来的 Agent
+                    const inUse = Object.values(activeGroups).some(
+                      (v) => v.groupId === g.id,
+                    );
                     const unavailable = activeStatuses.some(
                       (s) => s.unavailable,
                     );
                     const changed = activeStatuses.some((s) => s.changed);
+                    const reapplyTargets = activeStatuses.filter(
+                      (s) => s.managed && (s.changed || s.unavailable),
+                    );
                     return (
                       <SortableGroupCard
                         key={g.id}
                         group={g}
                         disabled={reorder.isPending}
                         className={
-                          activeStatuses.length > 0
+                          inUse
                             ? "border-emerald-500/40 bg-card bg-gradient-to-r from-emerald-500/10 to-transparent shadow-sm shadow-emerald-500/5 hover:border-emerald-500/60 hover:bg-card dark:from-emerald-500/15"
                             : undefined
                         }
@@ -440,7 +457,7 @@ export function GroupsPage() {
                                 ≈ {formatTokens(rowTokens.total)} tokens
                               </Badge>
                             )}
-                            {activeStatuses.length > 0 && (
+                            {inUse && (
                               <Badge
                                 variant={unavailable ? "warning" : "success"}
                                 title={activeStatuses
@@ -464,39 +481,65 @@ export function GroupsPage() {
                               .join(" · ") || "尚未选择 skill"}
                           </p>
                         </div>
-                        <div className="flex shrink-0 items-center gap-1">
-                          {statuses.map(
-                            ({ agent: a, active, changed, unavailable }) => {
-                              const busy =
-                                activate.isPending &&
-                                activate.variables?.agentId === a.id;
-                              // changed（成员/策略与已部署的不一致）点击可以安全重新同步；
-                              // unavailable（某个成员需要人工处理）只影响提醒点，点击仍是
-                              // 单纯的停用 —— 不能让一个有问题的分组连关都关不掉。
-                              const needsReapply = changed;
-                              return (
-                                <AgentToggleIcon
-                                  key={a.id}
-                                  agentId={a.id}
-                                  label={a.displayName}
-                                  active={active}
-                                  attention={changed || unavailable}
-                                  reapply={needsReapply}
-                                  disabled={
-                                    busy || (!active && !g.skillIds.length)
-                                  }
-                                  onClick={() =>
-                                    activate.mutate({
-                                      agentId: a.id,
-                                      groupId:
-                                        !active || needsReapply ? g.id : null,
-                                    })
-                                  }
-                                />
-                              );
+                        <GroupAgentToggles
+                          groupName={g.name}
+                          busy={activate.isPending}
+                          agents={statuses.map(
+                            ({
+                              agent: a,
+                              managed,
+                              active,
+                              changed,
+                              unavailable,
+                            }) => {
+                              const detection = agentDetection(a, {
+                                isDetecting,
+                                detectionFailed,
+                              });
+                              return {
+                                agentId: a.id,
+                                label: a.displayName,
+                                active,
+                                attention: changed
+                                  ? "有待应用修改"
+                                  : unavailable
+                                    ? "需要检查"
+                                    : undefined,
+                                note: managed ? detection.note : "已关闭管理",
+                                dimmed: managed && detection.notInstalled,
+                                canActivate: managed && g.skillIds.length > 0,
+                              };
                             },
                           )}
-                        </div>
+                          onToggle={(agentId, on) =>
+                            activate.mutate({
+                              kind: on ? "enable" : "disable",
+                              agentIds: [agentId],
+                              groupId: on ? g.id : null,
+                            })
+                          }
+                          reapply={
+                            reapplyTargets.length > 0
+                              ? {
+                                  label: reapplyTargets.some((t) => t.changed)
+                                    ? "应用修改"
+                                    : "重新应用",
+                                  targets: reapplyTargets.map(
+                                    (t) => t.agent.displayName,
+                                  ),
+                                  disabled: !g.skillIds.length,
+                                  onClick: () =>
+                                    activate.mutate({
+                                      kind: "reapply",
+                                      agentIds: reapplyTargets.map(
+                                        (t) => t.agent.id,
+                                      ),
+                                      groupId: g.id,
+                                    }),
+                                }
+                              : undefined
+                          }
+                        />
                         <RowActions
                           busy={remove.isPending && deleting?.id === g.id}
                         >
@@ -512,15 +555,9 @@ export function GroupsPage() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            title={
-                              activeStatuses.length > 0
-                                ? "请先停用分组"
-                                : "删除分组"
-                            }
+                            title={inUse ? "请先停用分组" : "删除分组"}
                             aria-label={`删除 ${g.name}`}
-                            disabled={
-                              activeStatuses.length > 0 || activate.isPending
-                            }
+                            disabled={inUse || activate.isPending}
                             onClick={() => setDeleting(g)}
                           >
                             <Trash2 className="h-4 w-4" />

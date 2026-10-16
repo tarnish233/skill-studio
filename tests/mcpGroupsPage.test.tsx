@@ -2,7 +2,13 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, it } from "vitest";
 import { McpGroupsPage } from "@/pages/McpGroupsPage";
 import { renderWithProviders } from "./utils/render";
-import { handlers, calls, claudeAgent, codexAgent } from "./mocks/tauri";
+import {
+  handlers,
+  calls,
+  claudeAgent,
+  codexAgent,
+  defaultSettings,
+} from "./mocks/tauri";
 import { setTarget } from "@/lib/api/transport";
 import type { ManagementStatus } from "@/lib/api/mcpManagement";
 import { rows } from "@/lib/api/mcpManagement";
@@ -30,6 +36,14 @@ const methods = () =>
   calls
     .filter((c) => c.command === "mcp_request")
     .map((c) => (c.args as { method: string }).method);
+const activations = () =>
+  calls
+    .filter(
+      (c) =>
+        c.command === "mcp_request" &&
+        (c.args as { method: string }).method === "activateGroup",
+    )
+    .map((c) => (c.args as { params: unknown }).params);
 function card(name: string) {
   return screen.getByText(name).closest('[class*="rounded-xl"]') as HTMLElement;
 }
@@ -84,12 +98,16 @@ it("shows a shared MCP group once, and each Agent's icon toggles only that Agent
   // 分组不再按 Agent 过滤：两个组同时可见
   expect(screen.getByText("Codex only")).toBeInTheDocument();
   fireEvent.click(
-    within(card("开发")).getByRole("button", { name: "为 Claude Code 启用" }),
+    within(card("开发")).getByRole("button", {
+      name: "为 Claude Code 启用「开发」",
+    }),
   );
   await screen.findByText("使用中");
   expect(screen.getByRole("button", { name: "删除 开发" })).toBeDisabled();
   fireEvent.click(
-    within(card("开发")).getByRole("button", { name: "为 Claude Code 停用" }),
+    within(card("开发")).getByRole("button", {
+      name: "为 Claude Code 停用「开发」",
+    }),
   );
   await waitFor(() =>
     expect(screen.queryByText("使用中")).not.toBeInTheDocument(),
@@ -112,11 +130,13 @@ it("shows a shared MCP group once, and each Agent's icon toggles only that Agent
 it("lets two Agents activate the same shared group independently", async () => {
   await open();
   fireEvent.click(
-    within(card("开发")).getByRole("button", { name: "为 Claude Code 启用" }),
+    within(card("开发")).getByRole("button", {
+      name: "为 Claude Code 启用「开发」",
+    }),
   );
   await screen.findByText("使用中");
   fireEvent.click(
-    within(card("开发")).getByRole("button", { name: "为 Codex 启用" }),
+    within(card("开发")).getByRole("button", { name: "为 Codex 启用「开发」" }),
   );
   await waitFor(() =>
     expect(
@@ -134,26 +154,95 @@ it("lets two Agents activate the same shared group independently", async () => {
   );
   // 两个 Agent 的图标都停在"已启用"，互不覆盖
   expect(
-    within(card("开发")).getByRole("button", { name: "为 Claude Code 停用" }),
+    within(card("开发")).getByRole("button", {
+      name: "为 Claude Code 停用「开发」",
+    }),
   ).toBeInTheDocument();
   expect(
-    within(card("开发")).getByRole("button", { name: "为 Codex 停用" }),
+    within(card("开发")).getByRole("button", { name: "为 Codex 停用「开发」" }),
   ).toBeInTheDocument();
 });
-it("saves membership without applying it, and re-clicking the Agent icon re-applies instead of toggling off", async () => {
+it("saves membership without applying it; the apply button re-applies while the Agent icon still stops", async () => {
+  const second = {
+    ...entry,
+    id: "two",
+    name: "Two",
+    definition: { type: "stdio", command: "two" },
+  };
+  status.entries = [entry, second];
   status.activeGroups = {
     claude: { groupId: "g1", entries: [entry], bindings: [] },
   };
   await open();
   fireEvent.click(screen.getByRole("button", { name: "编辑 开发" }));
-  fireEvent.click(screen.getByRole("checkbox", { name: "选择 Work" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "选择 Two" }));
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await screen.findByText("有待应用修改");
   expect(methods()).toContain("saveGroup");
   expect(methods()).not.toContain("activateGroup");
   expect(
-    screen.getByRole("button", { name: "为 Claude Code 重新应用" }),
+    screen.getByRole("button", { name: "为 Claude Code 停用「开发」" }),
   ).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "应用修改「开发」" }));
+  await waitFor(() =>
+    expect(activations()).toEqual([{ agent: "claude", id: "g1" }]),
+  );
+});
+it("keeps the stop action when an active member is gone and re-applying cannot succeed", async () => {
+  // "one" 已不在目录里：后端会以「分组包含已缺失的 MCP」拒绝重新应用
+  status.entries = [];
+  status.activeGroups = {
+    claude: { groupId: "g1", entries: [entry], bindings: [] },
+  };
+  await open();
+  expect(screen.getByText("成员已缺失")).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "应用修改「开发」" }),
+  ).toBeDisabled();
+  fireEvent.click(
+    screen.getByRole("button", { name: "为 Claude Code 停用「开发」" }),
+  );
+  await waitFor(() =>
+    expect(activations()).toEqual([{ agent: "claude", id: null }]),
+  );
+});
+it("hides Agents whose management is off, but keeps a stop-only icon while one still uses the group", async () => {
+  handlers.set("get_settings", () => ({
+    ...defaultSettings(),
+    disabledAgents: ["claude-code"],
+  }));
+  status.groups!.push({ ...group, id: "other", name: "其他" });
+  status.activeGroups = {
+    claude: { groupId: "g1", entries: [entry], bindings: [] },
+  };
+  await open();
+  // 没在用的卡片上不显示已关闭管理的 Agent
+  expect(
+    screen.getByRole("button", { name: "为 Codex 启用「其他」" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /为 Claude Code .*「其他」/ }),
+  ).toBeNull();
+  // 它仍在用「开发」：保留一个只能停用的图标，分组按在用处理，不能删
+  const stop = screen.getByRole("button", {
+    name: "为 Claude Code 停用「开发」（已关闭管理）",
+  });
+  expect(screen.getByText("使用中")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "删除 开发" })).toBeDisabled();
+  fireEvent.click(stop);
+  await waitFor(() =>
+    expect(activations()).toEqual([{ agent: "claude", id: null }]),
+  );
+  // 单 Agent 标签的选择器里也没有它
+  fireEvent.mouseDown(screen.getByRole("tab", { name: /^已配置 MCP/ }), {
+    button: 0,
+    ctrlKey: false,
+  });
+  const picker = screen.getByLabelText("选择 Agent");
+  expect(
+    within(picker).queryByRole("option", { name: "Claude Code" }),
+  ).toBeNull();
+  expect(picker).toHaveValue("codex");
 });
 it("records discovered MCP references without adopting or activating on save", async () => {
   status.discovered = [

@@ -14,3 +14,10 @@ const twMerge = extendTailwindMerge({
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+/** 两组 id 是否为同一组成员：与顺序、重复无关（分组部署结果只取决于成员集合） */
+export function sameMembers(a: readonly string[], b: readonly string[]) {
+  const left = new Set(a);
+  const right = new Set(b);
+  return left.size === right.size && [...right].every((id) => left.has(id));
+}

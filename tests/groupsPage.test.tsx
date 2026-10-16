@@ -15,6 +15,7 @@ import {
   makeSkill,
   claudeAgent,
   codexAgent,
+  defaultSettings,
 } from "./mocks/tauri";
 import { renderWithProviders } from "./utils/render";
 
@@ -229,12 +230,12 @@ it("shows every shared group at once, and each Agent's icon only activates that 
   await screen.findByText("Codex group");
   // 分组不再归属某个 Agent：两个组同时可见，不会互相遮挡
   expect(screen.getByText("Claude group")).toBeInTheDocument();
-  // 两张卡片都有自己的“为 Codex 启用”图标，必须在对应卡片内找
-  const codexCard = screen
-    .getByText("Codex group")
-    .closest('[class*="rounded-xl"]') as HTMLElement;
+  // 每张卡片都有自己的 Codex 图标，名称里带上分组名，读屏也分得清
+  expect(
+    screen.getByRole("button", { name: "为 Codex 启用「Claude group」" }),
+  ).toBeInTheDocument();
   fireEvent.click(
-    within(codexCard).getByRole("button", { name: "为 Codex 启用" }),
+    screen.getByRole("button", { name: "为 Codex 启用「Codex group」" }),
   );
   await waitFor(() =>
     expect(
@@ -264,7 +265,7 @@ it("cancel discards unsaved selection and failed saves preserve the editable dra
     screen.getByRole("checkbox", { name: "选择 Alpha" }),
   ).not.toBeChecked();
 });
-it("editing an active combination shows pending changes, and re-clicking the Agent icon re-applies instead of toggling off", async () => {
+it("pending changes get their own apply button, and the Agent icon still stops the group when re-applying is rejected", async () => {
   setup();
   handlers.set("list_groups", () => [
     makeGroup({ id: "c", name: "Dev", skillIds: ["a", "b"] }),
@@ -272,14 +273,29 @@ it("editing an active combination shows pending changes, and re-clicking the Age
   handlers.set("get_config", () => ({
     activeGroups: { codex: { groupId: "c", skillIds: ["a"], entries: [] } },
   }));
+  // 新成员在 Codex 上不可用：后端拒绝重新应用，但停用照常成功
+  handlers.set("activate_agent_group", (args) => {
+    if (args.groupId) throw new Error("Beta 在此 Agent 中不可用或被手动停用");
+  });
+  const activations = () =>
+    calls
+      .filter((c) => c.command === "activate_agent_group")
+      .map((c) => c.args);
   renderWithProviders(<GroupsPage />);
   expect(await screen.findByText("有待应用修改")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "删除 Dev" })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "为 Codex 重新应用" }));
+  fireEvent.click(screen.getByRole("button", { name: "应用修改「Dev」" }));
   await waitFor(() =>
-    expect(
-      calls.find((c) => c.command === "activate_agent_group")?.args,
-    ).toEqual({ agentId: "codex", groupId: "c" }),
+    expect(activations()).toEqual([{ agentId: "codex", groupId: "c" }]),
+  );
+  const stop = screen.getByRole("button", { name: "为 Codex 停用「Dev」" });
+  await waitFor(() => expect(stop).not.toBeDisabled());
+  fireEvent.click(stop);
+  await waitFor(() =>
+    expect(activations()).toEqual([
+      { agentId: "codex", groupId: "c" },
+      { agentId: "codex", groupId: null },
+    ]),
   );
 });
 
@@ -368,12 +384,18 @@ it("uses the same Agent icon to activate and stop a group after status refresh",
     active = args.groupId !== null;
   });
   renderWithProviders(<GroupsPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "为 Codex 启用" }));
-  const stop = await screen.findByRole("button", { name: "为 Codex 停用" });
+  fireEvent.click(
+    await screen.findByRole("button", { name: "为 Codex 启用「Dev」" }),
+  );
+  const stop = await screen.findByRole("button", {
+    name: "为 Codex 停用「Dev」",
+  });
   await waitFor(() => expect(stop).not.toBeDisabled());
-  expect(screen.queryByRole("button", { name: "为 Codex 启用" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "为 Codex 启用「Dev」" }),
+  ).toBeNull();
   fireEvent.click(stop);
-  await screen.findByRole("button", { name: "为 Codex 启用" });
+  await screen.findByRole("button", { name: "为 Codex 启用「Dev」" });
   expect(
     calls
       .filter((c) => c.command === "activate_agent_group")
@@ -479,7 +501,9 @@ it("keeps a consistent card until both activation config and skill status finish
     active = true;
   });
   renderWithProviders(<GroupsPage />);
-  const enable = await screen.findByRole("button", { name: "为 Codex 启用" });
+  const enable = await screen.findByRole("button", {
+    name: "为 Codex 启用「Dev」",
+  });
   fireEvent.click(enable);
   await waitFor(() =>
     expect(
@@ -489,15 +513,136 @@ it("keeps a consistent card until both activation config and skill status finish
   expect(enable).toBeDisabled();
   expect(screen.queryByText("需要检查")).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: "为 Codex 停用" }),
+    screen.queryByRole("button", { name: "为 Codex 停用「Dev」" }),
   ).not.toBeInTheDocument();
   await act(async () =>
     release([makeSkill({ id: "a", agents: { codex: agentState("source") } })]),
   );
   expect(
-    await screen.findByRole("button", { name: "为 Codex 停用" }),
+    await screen.findByRole("button", { name: "为 Codex 停用「Dev」" }),
   ).toBeInTheDocument();
   expect(screen.getByText("使用中")).toBeInTheDocument();
   expect(screen.queryByText("需要检查")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "为 Codex 停用" })).toBe(enable);
+  expect(screen.getByRole("button", { name: "为 Codex 停用「Dev」" })).toBe(
+    enable,
+  );
+});
+
+it("hides Agents whose management is off, but keeps a stop-only icon while one still uses the group", async () => {
+  setup();
+  handlers.set("get_settings", () => ({
+    ...defaultSettings(),
+    disabledAgents: ["codex"],
+  }));
+  handlers.set("scan_skills", () => [
+    makeSkill({
+      id: "a",
+      name: "Alpha",
+      agents: { codex: agentState("source") },
+    }),
+    makeSkill({ id: "b", name: "Beta" }),
+  ]);
+  handlers.set("list_groups", () => [
+    makeGroup({ id: "c", name: "Dev", skillIds: ["a"] }),
+    makeGroup({ id: "o", name: "Other", skillIds: ["b"] }),
+  ]);
+  handlers.set("get_config", () => ({
+    activeGroups: { codex: { groupId: "c", skillIds: ["a"], entries: [] } },
+  }));
+  renderWithProviders(<GroupsPage />);
+  // 没在用的卡片上不显示已关闭管理的 Agent
+  expect(
+    await screen.findByRole("button", { name: "为 Claude Code 启用「Other」" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /为 Codex .*「Other」/ }),
+  ).toBeNull();
+  // 它仍在用 Dev：保留一个只能停用的图标，分组按在用处理，不能删
+  const stop = screen.getByRole("button", {
+    name: "为 Codex 停用「Dev」（已关闭管理）",
+  });
+  expect(screen.getByText("使用中")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "删除 Dev" })).toBeDisabled();
+  fireEvent.click(stop);
+  await waitFor(() =>
+    expect(
+      calls.find((c) => c.command === "activate_agent_group")?.args,
+    ).toEqual({ agentId: "codex", groupId: null }),
+  );
+  // 单 Agent 标签的选择器里也没有它
+  fireEvent.mouseDown(screen.getByRole("tab", { name: /已安装 skill/ }), {
+    button: 0,
+    ctrlKey: false,
+  });
+  const picker = screen.getByLabelText("选择 Agent");
+  expect(within(picker).queryByRole("option", { name: "Codex" })).toBeNull();
+  expect(picker).toHaveValue("claude-code");
+});
+
+it("disables every Agent icon while any switch is in progress", async () => {
+  setup();
+  handlers.set("list_groups", () => [
+    makeGroup({ id: "c", name: "Dev", skillIds: ["a"] }),
+  ]);
+  handlers.set("activate_agent_group", () => new Promise(() => {}));
+  renderWithProviders(<GroupsPage />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "为 Codex 启用「Dev」" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "为 Claude Code 启用「Dev」" }),
+    ).toBeDisabled(),
+  );
+  expect(
+    screen.getByRole("button", { name: "为 Codex 启用「Dev」" }),
+  ).toBeDisabled();
+});
+
+it("does not report pending changes when only the member order differs", async () => {
+  setup();
+  handlers.set("scan_skills", () => [
+    makeSkill({
+      id: "a",
+      name: "Alpha",
+      agents: { codex: agentState("source") },
+    }),
+    makeSkill({
+      id: "b",
+      name: "Beta",
+      agents: { codex: agentState("source") },
+    }),
+  ]);
+  handlers.set("list_groups", () => [
+    makeGroup({ id: "c", name: "Dev", skillIds: ["b", "a"] }),
+  ]);
+  handlers.set("get_config", () => ({
+    activeGroups: {
+      codex: { groupId: "c", skillIds: ["a", "b"], entries: [] },
+    },
+  }));
+  renderWithProviders(<GroupsPage />);
+  expect(await screen.findByText("使用中")).toBeInTheDocument();
+  expect(screen.queryByText("有待应用修改")).toBeNull();
+  expect(screen.queryByRole("button", { name: "应用修改「Dev」" })).toBeNull();
+});
+
+it("dims Agents that are not installed instead of hiding them", async () => {
+  setup();
+  handlers.set("list_agents", () => [
+    claudeAgent,
+    { ...codexAgent, detected: false },
+  ]);
+  handlers.set("list_groups", () => [
+    makeGroup({ id: "c", name: "Dev", skillIds: ["a"] }),
+  ]);
+  renderWithProviders(<GroupsPage />);
+  const icon = await screen.findByRole("button", {
+    name: "为 Codex 启用「Dev」（未检测到安装）",
+  });
+  expect(icon).toHaveClass("opacity-40");
+  expect(icon).toBeEnabled();
+  expect(
+    screen.getByRole("button", { name: "为 Claude Code 启用「Dev」" }),
+  ).not.toHaveClass("opacity-40");
 });

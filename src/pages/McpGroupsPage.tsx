@@ -9,7 +9,7 @@ import { mcpAgentId, supportsMcp } from "@/lib/mcpAgents";
 import { McpAgentNote } from "@/components/mcp/McpAgentNote";
 import { McpAssignments } from "@/components/mcp/McpAssignments";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   DndContext,
@@ -49,7 +49,10 @@ import {
   ListItemRow,
   RowActions,
 } from "@/components/common/ListItemRow";
-import { AgentToggleIcon } from "@/components/common/AgentToggleIcon";
+import { GroupAgentToggles } from "@/components/common/GroupAgentToggles";
+import { AgentSelect } from "@/components/common/AgentSelect";
+import { agentDetection } from "@/lib/agents";
+import { sameMembers } from "@/lib/utils";
 import { useTarget } from "@/components/targets/TargetProvider";
 import { useUnsavedProject } from "@/components/common/NavigationGuard";
 import { useAgents, useSettings } from "@/hooks/useData";
@@ -91,16 +94,18 @@ function snapshot(entry: ManagedMcp) {
   ]);
 }
 function LocalGroups() {
-  const { data: allAgents = [] } = useAgents();
+  const { data: allAgents = [], isDetecting, detectionFailed } = useAgents();
   const { data: settings } = useSettings();
-  // Skill 侧的 Agent 列表（含品牌图标），过滤到真正支持 MCP 且未关闭管理的
-  const agents = useMemo(
-    () =>
-      allAgents.filter(
-        (a) => !settings?.disabledAgents?.includes(a.id) && supportsMcp(a.id),
-      ),
-    [allAgents, settings?.disabledAgents],
+  // Skill 侧的 Agent 列表（含品牌图标），过滤到真正支持 MCP 的；agents 再去掉关闭管理的
+  const mcpAgents = useMemo(
+    () => allAgents.filter((a) => supportsMcp(a.id)),
+    [allAgents],
   );
+  const agents = useMemo(
+    () => mcpAgents.filter((a) => !settings?.disabledAgents?.includes(a.id)),
+    [mcpAgents, settings?.disabledAgents],
+  );
+  const managedIds = new Set(agents.map((a) => a.id));
   const status = useQuery({
     queryKey: ["mcp", "local"],
     queryFn: managementApi.list,
@@ -109,6 +114,7 @@ function LocalGroups() {
     refetchInterval: MCP_STATUS_POLL_INTERVAL,
   });
   const catalog = rows(status.data);
+  const activeGroups = status.data?.activeGroups ?? {};
   const groups = [...(status.data?.groups ?? [])].sort(
     (a, b) => a.sortOrder - b.sortOrder,
   );
@@ -121,16 +127,9 @@ function LocalGroups() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useUnsavedProject(false, busy);
-  // 「已配置 / 未托管」是单 Agent 视角，默认选第一个支持 MCP 的 Agent
-  const [installedAgentId, setInstalledAgentId] = useState<string | undefined>(
-    undefined,
-  );
-  useEffect(() => {
-    if (installedAgentId && agents.some((a) => a.id === installedAgentId))
-      return;
-    setInstalledAgentId(agents[0]?.id);
-  }, [agents, installedAgentId]);
-  const agent = agents.find((a) => a.id === installedAgentId);
+  // 「已配置 / 未托管」是单 Agent 视角；选中的 Agent 被关闭管理后回到第一个
+  const [pickedAgentId, setPickedAgentId] = useState<string>();
+  const agent = agents.find((a) => a.id === pickedAgentId) ?? agents[0];
   const selectedAgent = agent ? mcpAgentId(agent.id) : undefined;
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -139,21 +138,22 @@ function LocalGroups() {
     }),
   );
   async function run(
-    method: string,
-    params: Record<string, unknown>,
+    action: () => Promise<unknown>,
     message: string,
     done?: () => void,
   ) {
     setBusy(true);
     setError(null);
     try {
-      await mcpRequest(method, params);
+      await action();
       await status.refetch();
       done?.();
       toast.success(message);
     } catch (e) {
       setError(String(e));
       toast.error(String(e));
+      // 多步操作可能已部分生效（依次重新应用时后一个 Agent 失败），刷新出真实状态
+      void status.refetch();
     } finally {
       setBusy(false);
     }
@@ -177,11 +177,8 @@ function LocalGroups() {
     const from = groups.findIndex((g) => g.id === dragged.id),
       to = groups.findIndex((g) => g.id === over.id);
     if (from < 0 || to < 0) return;
-    void run(
-      "reorderGroups",
-      { ids: arrayMove(groups, from, to).map((g) => g.id) },
-      "分组顺序已保存",
-    );
+    const ids = arrayMove(groups, from, to).map((g) => g.id);
+    void run(() => mcpRequest("reorderGroups", { ids }), "分组顺序已保存");
   }
   /**
    * 一个 MCP 分组对某个（MCP 后端）Agent id 当前是什么状态。
@@ -194,8 +191,10 @@ function LocalGroups() {
     if (!active || !current)
       return { active, changed: false, issue: undefined };
     const changed =
-      JSON.stringify(current.entries.map((e) => e.id)) !==
-        JSON.stringify(g.entryIds) ||
+      !sameMembers(
+        current.entries.map((e) => e.id),
+        g.entryIds,
+      ) ||
       current.entries.some((e) => {
         const found = catalog.find((r) => r.entry.id === e.id)?.entry;
         return !found || snapshot(found) !== snapshot(e);
@@ -270,23 +269,12 @@ function LocalGroups() {
                 <span className="text-xs opacity-60">{manual.length}</span>
               </TabsTrigger>
             </TabsList>
-            {/*
-              原生 <select> 而不是 Radix —— 本项目的 jsdom 测试约定不测 Radix 浮层的
-              展开交互（floating-ui 在 jsdom 里单次展开要 3–50 秒，必然抖）。
-            */}
-            {showInstalled && agents.length > 0 && (
-              <select
-                aria-label="选择 Agent"
-                className="h-9 shrink-0 rounded-md border border-border-default bg-background px-2 text-sm"
-                value={installedAgentId ?? ""}
-                onChange={(e) => setInstalledAgentId(e.target.value)}
-              >
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.displayName}
-                  </option>
-                ))}
-              </select>
+            {showInstalled && agent && (
+              <AgentSelect
+                agents={agents}
+                value={agent.id}
+                onChange={setPickedAgentId}
+              />
             )}
           </SummaryStart>
           <SummaryEnd>
@@ -315,7 +303,7 @@ function LocalGroups() {
               {String(status.error)}
             </p>
           )}
-          {agents.map((a) => {
+          {mcpAgents.map((a) => {
             const issue = status.data?.groupIssues?.[mcpAgentId(a.id)];
             return issue ? (
               <p
@@ -357,25 +345,41 @@ function LocalGroups() {
                       const missingMembers = group.entryIds.some(
                         (id) => !catalog.some((r) => r.entry.id === id),
                       );
-                      const statuses = agents.map((a) => {
-                        const mcpId = mcpAgentId(a.id);
-                        return {
-                          agent: a,
-                          mcpId,
-                          ...groupStatus(group, mcpId),
-                        };
-                      });
+                      // 已关闭管理的 Agent 不显示图标，但若它仍在用这个分组，保留一个只能停用的图标
+                      const statuses = mcpAgents
+                        .filter(
+                          (a) =>
+                            managedIds.has(a.id) ||
+                            activeGroups[mcpAgentId(a.id)]?.groupId ===
+                              group.id,
+                        )
+                        .map((a) => {
+                          const mcpId = mcpAgentId(a.id);
+                          return {
+                            agent: a,
+                            mcpId,
+                            managed: managedIds.has(a.id),
+                            ...groupStatus(group, mcpId),
+                          };
+                        });
                       const activeStatuses = statuses.filter((s) => s.active);
+                      // 是否在用以全部启用记录为准，不只看显示出来的 Agent
+                      const inUse = Object.values(activeGroups).some(
+                        (g) => g.groupId === group.id,
+                      );
                       const hasIssue = activeStatuses.some((s) => !!s.issue);
                       const changedForAny = activeStatuses.some(
                         (s) => s.changed,
+                      );
+                      const reapplyTargets = activeStatuses.filter(
+                        (s) => s.managed && (s.changed || !!s.issue),
                       );
                       return (
                         <GroupCard
                           key={group.id}
                           group={group}
                           disabled={busy}
-                          active={activeStatuses.length > 0}
+                          active={inUse}
                         >
                           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted">
                             <Layers className="h-5 w-5" />
@@ -386,7 +390,7 @@ function LocalGroups() {
                               <Badge variant="outline">
                                 {group.entryIds.length} 个 MCP
                               </Badge>
-                              {activeStatuses.length > 0 && (
+                              {inUse && (
                                 <Badge
                                   variant={hasIssue ? "warning" : "success"}
                                   title={activeStatuses
@@ -413,51 +417,78 @@ function LocalGroups() {
                                 .join(" · ") || "尚未选择 MCP"}
                             </p>
                           </div>
-                          <div className="flex shrink-0 items-center gap-1">
-                            {statuses.map(
-                              ({ agent: a, mcpId, active, changed, issue }) => {
-                                // changed（成员与已部署的不一致）点击可以安全重新同步；
-                                // issue 和成员已缺失只影响提醒点，点击仍是单纯停用 ——
-                                // 不能让一个有问题的分组连关都关不掉。
-                                const attention =
-                                  changed ||
-                                  !!issue ||
-                                  (active && missingMembers);
-                                const needsReapply = changed;
-                                return (
-                                  <AgentToggleIcon
-                                    key={a.id}
-                                    agentId={a.id}
-                                    label={a.displayName}
-                                    active={active}
-                                    attention={attention}
-                                    reapply={needsReapply}
-                                    disabled={
-                                      busy ||
-                                      (!active &&
-                                        (missingMembers ||
-                                          !group.entryIds.length))
-                                    }
-                                    onClick={() =>
-                                      void run(
-                                        "activateGroup",
-                                        {
-                                          agent: mcpId,
-                                          id:
-                                            !active || needsReapply
-                                              ? group.id
-                                              : null,
-                                        },
-                                        !active || needsReapply
-                                          ? "分组已启用，请在 Agent 中重新加载 MCP"
-                                          : "分组已停用，请在 Agent 中重新加载 MCP",
-                                      )
-                                    }
-                                  />
-                                );
+                          <GroupAgentToggles
+                            groupName={group.name}
+                            busy={busy}
+                            agents={statuses.map(
+                              ({
+                                agent: a,
+                                managed,
+                                active,
+                                changed,
+                                issue,
+                              }) => {
+                                const detection = agentDetection(a, {
+                                  isDetecting,
+                                  detectionFailed,
+                                });
+                                return {
+                                  agentId: a.id,
+                                  label: a.displayName,
+                                  active,
+                                  attention: changed
+                                    ? "有待应用修改"
+                                    : issue
+                                      ? "需要检查"
+                                      : active && missingMembers
+                                        ? "成员已缺失"
+                                        : undefined,
+                                  note: managed ? detection.note : "已关闭管理",
+                                  dimmed: managed && detection.notInstalled,
+                                  canActivate:
+                                    managed &&
+                                    !missingMembers &&
+                                    group.entryIds.length > 0,
+                                };
                               },
                             )}
-                          </div>
+                            onToggle={(agentId, on) =>
+                              void run(
+                                () =>
+                                  mcpRequest("activateGroup", {
+                                    agent: mcpAgentId(agentId),
+                                    id: on ? group.id : null,
+                                  }),
+                                on
+                                  ? "分组已启用，请在 Agent 中重新加载 MCP"
+                                  : "分组已停用，请在 Agent 中重新加载 MCP",
+                              )
+                            }
+                            reapply={
+                              reapplyTargets.length > 0
+                                ? {
+                                    label: reapplyTargets.some((t) => t.changed)
+                                      ? "应用修改"
+                                      : "重新应用",
+                                    targets: reapplyTargets.map(
+                                      (t) => t.agent.displayName,
+                                    ),
+                                    // 成员缺失时重新应用必然失败，先编辑分组
+                                    disabled:
+                                      missingMembers || !group.entryIds.length,
+                                    onClick: () =>
+                                      void run(async () => {
+                                        // 依次重新应用：遇到第一个失败就停下报错
+                                        for (const t of reapplyTargets)
+                                          await mcpRequest("activateGroup", {
+                                            agent: t.mcpId,
+                                            id: group.id,
+                                          });
+                                      }, "修改已应用，请在 Agent 中重新加载 MCP"),
+                                  }
+                                : undefined
+                            }
+                          />
                           <RowActions busy={busy}>
                             <Button
                               variant="ghost"
@@ -472,12 +503,8 @@ function LocalGroups() {
                               variant="ghost"
                               size="icon"
                               aria-label={`删除 ${group.name}`}
-                              title={
-                                activeStatuses.length > 0
-                                  ? "请先停用分组"
-                                  : "删除分组"
-                              }
-                              disabled={busy || activeStatuses.length > 0}
+                              title={inUse ? "请先停用分组" : "删除分组"}
+                              disabled={busy || inUse}
                               onClick={() => setDeleting(group)}
                             >
                               <Trash2 className="h-4 w-4" />
@@ -648,20 +675,20 @@ function LocalGroups() {
               onClick={() =>
                 editing &&
                 void run(
-                  "saveGroup",
-                  {
-                    group: editing,
-                    imports: catalog
-                      .filter(
-                        (r) =>
-                          !r.managed && editing.entryIds.includes(r.entry.id),
-                      )
-                      .map((r) => ({
-                        id: r.entry.id,
-                        definition: r.entry.definition,
-                        sourceIds: r.sources.map((source) => source.id),
-                      })),
-                  },
+                  () =>
+                    mcpRequest("saveGroup", {
+                      group: editing,
+                      imports: catalog
+                        .filter(
+                          (r) =>
+                            !r.managed && editing.entryIds.includes(r.entry.id),
+                        )
+                        .map((r) => ({
+                          id: r.entry.id,
+                          definition: r.entry.definition,
+                          sourceIds: r.sources.map((source) => source.id),
+                        })),
+                    }),
                   "组合已保存，可在卡片上为需要的 Agent 启用",
                   () => setEditing(null),
                 )
@@ -681,8 +708,10 @@ function LocalGroups() {
         pending={busy}
         onConfirm={() =>
           deleting &&
-          void run("removeGroup", { id: deleting.id }, "分组已删除", () =>
-            setDeleting(null),
+          void run(
+            () => mcpRequest("removeGroup", { id: deleting.id }),
+            "分组已删除",
+            () => setDeleting(null),
           )
         }
       />
