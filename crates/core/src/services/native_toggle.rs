@@ -3,6 +3,7 @@
 //! 停用**不删文件**，而是写各 agent 自己的原生配置开关：
 //! - Claude Code → `settings.json` 的 `skillOverrides: { "<name>": "off" }`
 //! - Codex → `config.toml` 的 `[[skills.config]] path / enabled`（读取兼容名称规则）
+//! - Pi → `settings.json` 的 `skills: ["-<skill 目录>"]`（精确排除自动发现的条目）
 //!
 //! 这样瞬时、无损、可逆，而且用户在 agent 里 `/skills` 看到的状态与 Studio 一致。
 //!
@@ -249,6 +250,71 @@ pub fn set_codex_skill_enabled_at(
     atomic::write_text_file(config_path, &doc.to_string())
 }
 
+const PI_SKILLS_KEY: &str = "skills";
+
+/// 这条 pi 资源覆盖是否精确排除了 `dir`（pi 也接受写成 `<dir>/SKILL.md`、以及 `~/` 开头）。
+fn pi_excludes(entry: &Value, dir: &Path) -> bool {
+    let Some(pattern) = entry.as_str().and_then(|s| s.trim().strip_prefix('-')) else {
+        return false;
+    };
+    let pattern = match pattern.strip_prefix("~/") {
+        Some(rest) => crate::fs::paths::home_dir().join(rest),
+        None => PathBuf::from(pattern),
+    };
+    let pattern = match pattern.file_name() {
+        Some(name) if name == "SKILL.md" => pattern.parent().map(Path::to_path_buf),
+        _ => Some(pattern),
+    };
+    pattern.is_some_and(|p| p.components().eq(dir.components()))
+}
+
+/// Pi 里这个 skill 是否被停用。Pi 按**未解析软链**的路径匹配，这里同样不跟随链接。
+pub fn is_pi_skill_disabled_at(settings_path: &Path, document: &Path) -> bool {
+    let Some(dir) = document.parent() else {
+        return false;
+    };
+    read_json_object(settings_path)
+        .ok()
+        .and_then(|root| {
+            root.get(PI_SKILLS_KEY)?
+                .as_array()
+                .map(|list| list.iter().any(|entry| pi_excludes(entry, dir)))
+        })
+        .unwrap_or(false)
+}
+
+/// 停用写一条 `-<skill 目录绝对路径>`；启用则移除指向它的精确排除。
+///
+/// 写绝对路径：相对路径在 pi 里按各自的 baseDir 解析，`~/.pi/agent/skills` 和
+/// `~/.agents/skills` 的 baseDir 不同，同一个 `skills/<name>` 会同时命中两边。
+pub fn set_pi_skill_enabled_at(settings_path: &Path, document: &Path, enabled: bool) -> Result<()> {
+    let dir = document
+        .parent()
+        .ok_or_else(|| Error::invalid("skill 路径无效"))?;
+    let mut root = read_json_object(settings_path)?;
+    let entry = root
+        .entry(PI_SKILLS_KEY.to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let Some(list) = entry.as_array_mut() else {
+        return Err(Error::config(format!(
+            "{} 里的 {PI_SKILLS_KEY} 不是数组",
+            settings_path.display()
+        )));
+    };
+    list.retain(|entry| !pi_excludes(entry, dir));
+    if !enabled {
+        list.push(Value::String(format!("-{}", dir.display())));
+    }
+    if root
+        .get(PI_SKILLS_KEY)
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty)
+    {
+        root.remove(PI_SKILLS_KEY);
+    }
+    write_json_preserving_order(settings_path, &root)
+}
+
 pub fn is_skill_disabled_at(
     agent: &AgentDescriptor,
     overrides: &HashMap<String, PathBuf>,
@@ -261,6 +327,7 @@ pub fn is_skill_disabled_at(
     match agent.toggle {
         ToggleMechanism::ClaudeSettingsJson => is_claude_skill_disabled(&path, name),
         ToggleMechanism::CodexConfigToml => is_codex_skill_disabled_at(&path, name, document),
+        ToggleMechanism::PiSettingsJson => is_pi_skill_disabled_at(&path, document),
         ToggleMechanism::None => false,
     }
 }
@@ -278,6 +345,7 @@ pub fn set_skill_enabled_at(
     match agent.toggle {
         ToggleMechanism::ClaudeSettingsJson => set_claude_skill_enabled(&path, name, enabled),
         ToggleMechanism::CodexConfigToml => set_codex_skill_enabled_at(&path, document, enabled),
+        ToggleMechanism::PiSettingsJson => set_pi_skill_enabled_at(&path, document, enabled),
         ToggleMechanism::None => unreachable!(),
     }
 }
@@ -285,6 +353,66 @@ pub fn set_skill_enabled_at(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pi 的停用是 `skills` 数组里的一条 `-<skill 目录>`：用户自己的资源路径、其他设置和键序
+    /// 都要保住；重复停用不堆重复条目，启用时连用户写成 `/SKILL.md` 的等价条目一起去掉。
+    #[test]
+    fn pi_exclusion_round_trip_keeps_user_resources_and_order() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("settings.json");
+        let skill = d.path().join("agents/skills/demo");
+        std::fs::write(
+            &p,
+            format!(
+                r#"{{
+  "defaultModel": "opus",
+  "skills": ["../team-skills", "-{}/SKILL.md"],
+  "theme": "dark"
+}}"#,
+                skill.display()
+            ),
+        )
+        .unwrap();
+        let document = skill.join("SKILL.md");
+        assert!(
+            is_pi_skill_disabled_at(&p, &document),
+            "用户写的 SKILL.md 形式也算"
+        );
+
+        set_pi_skill_enabled_at(&p, &document, false).unwrap();
+        set_pi_skill_enabled_at(&p, &document, false).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            v["skills"],
+            serde_json::json!(["../team-skills", format!("-{}", skill.display())])
+        );
+        assert!(
+            text.find("defaultModel").unwrap() < text.find("theme").unwrap(),
+            "键序不变：{text}"
+        );
+
+        set_pi_skill_enabled_at(&p, &document, true).unwrap();
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!(v["skills"], serde_json::json!(["../team-skills"]));
+        assert_eq!(v["defaultModel"], "opus");
+        assert!(!is_pi_skill_disabled_at(&p, &document));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn pi_exclusion_understands_home_shorthand_and_removes_empty_list() {
+        let d = tempfile::tempdir().unwrap();
+        std::env::set_var(crate::fs::paths::TEST_HOME_ENV, d.path());
+        let p = d.path().join("settings.json");
+        std::fs::write(&p, r#"{"skills": ["-~/.agents/skills/demo"]}"#).unwrap();
+        let document = d.path().join(".agents/skills/demo/SKILL.md");
+        assert!(is_pi_skill_disabled_at(&p, &document));
+        set_pi_skill_enabled_at(&p, &document, true).unwrap();
+        std::env::remove_var(crate::fs::paths::TEST_HOME_ENV);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert!(v.get("skills").is_none(), "空列表不留：{v}");
+    }
 
     #[test]
     fn claude_disable_then_enable_leaves_other_settings_intact() {

@@ -36,6 +36,21 @@ fn sources_and_full_backup_survive_collection_reload_and_release() {
         let record = c.skill_provenance[&adopted.id].clone();
         assert_eq!(record.source_ids, ids);
         assert_eq!(record.original_path, source);
+        // 原件在共享根：纳入托管后那里不留回链，改为 Codex 自己目录里的入口
+        let codex_entry = env.codex_skills().join("demo");
+        assert!(fs::symlink_metadata(&source).is_err());
+        assert_eq!(
+            linker::link_status(&adopted.source_path, &codex_entry),
+            if mode == LinkMode::Copy {
+                LinkStatus::Copied
+            } else {
+                LinkStatus::Linked
+            }
+        );
+        assert_eq!(
+            c.registrations[&adopted.id]["codex"].target_path,
+            codex_entry
+        );
         assert_eq!(
             fs::read_to_string(record.backup_path.join("content/resource.txt")).unwrap(),
             "original"
@@ -46,20 +61,24 @@ fn sources_and_full_backup_survive_collection_reload_and_release() {
         let mut c = studio.load_config().unwrap();
         assert_eq!(studio.scan_skills(&c).unwrap()[0].source_ids, ids);
         let restored = studio.release_from_hub(&mut c, &adopted.id).unwrap();
-        assert_eq!(restored.id, view.skill.id);
-        assert_eq!(restored.source_path, source);
-        assert!(!scanner::is_symlink_or_junction(&source));
-        assert!(!source.join(scanner::COPY_SIDECAR).exists());
+        // 移出 Hub 也不回到共享根：放进所属 Agent（Codex）自己的目录
+        assert_eq!(restored.source_path, codex_entry);
+        assert_eq!(restored.root, env.codex_skills());
+        assert!(fs::symlink_metadata(&source).is_err());
+        assert!(!scanner::is_symlink_or_junction(&codex_entry));
+        assert!(!codex_entry.join(scanner::COPY_SIDECAR).exists());
         assert_eq!(
-            fs::read_to_string(source.join("resource.txt")).unwrap(),
+            fs::read_to_string(codex_entry.join("resource.txt")).unwrap(),
             "latest"
         );
         assert!(!adopted.source_path.exists());
+        assert!(!c.registrations.contains_key(&restored.id));
         assert_eq!(c.groups[0].skill_ids, vec![restored.id.clone()]);
+        // 来源记录描述的是「最初从哪来」，移到 Codex 目录后保持不变
         assert_eq!(studio.scan_skills(&c).unwrap()[0].source_ids, ids);
         #[cfg(unix)]
         assert_eq!(
-            linker::link_status(&source, &env.codex_skills().join("alias")),
+            linker::link_status(&codex_entry, &env.codex_skills().join("alias")),
             LinkStatus::Linked
         );
         assert_eq!(

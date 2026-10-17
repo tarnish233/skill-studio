@@ -110,7 +110,8 @@ export const skillOnlyAgents: AgentInfo[] = [
     configDir: `/home/u/${configDir}`,
     globalSkillDirs: [`/home/u/${configDir}/skills`, "/home/u/.agents/skills"],
     projectSkillDir,
-    supportsNativeToggle: false,
+    // 与后端一致：Pi 用 settings.json 的 `-<路径>` 精确排除，另两个没有原生开关
+    supportsNativeToggle: id === "pi",
   }),
 );
 

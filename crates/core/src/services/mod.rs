@@ -17,5 +17,7 @@ pub mod project_write;
 
 pub(crate) mod manual_policy;
 
+pub mod isolation;
+
 pub mod skill_files;
 pub mod variants;

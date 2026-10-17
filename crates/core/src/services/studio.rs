@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::models::agent::{AgentInfo, AGENTS};
+use crate::models::agent::{find_agent, in_shared_root, AgentInfo, AGENTS};
 use crate::models::config::{AppConfig, Registration, SkillProvenance};
 use crate::models::skill::{
     skill_id_for, LinkMode, LinkReport, LinkResult, LinkStatus, Skill, SkillOrigin,
@@ -986,12 +986,43 @@ impl Studio {
             .collect();
         linker::ensure_distinct_roots(&hub, &all_roots)?;
 
+        // 原件在共享根（~/.agents/skills）时，回链和移出 Hub 都写到所属 agent 自己的根：
+        // 共享根里的东西会被每个读它的 agent 加载，分组和开关管不住。
+        let owner = match if restore {
+            saved.as_ref().map(|p| &p.original_origin)
+        } else {
+            Some(&skill.origin)
+        } {
+            Some(SkillOrigin::InPlace { owner_agent }) => find_agent(owner_agent),
+            _ => None,
+        };
+        let private_home = |path: &std::path::Path| -> Option<PathBuf> {
+            if !in_shared_root(path, &overrides) {
+                return None;
+            }
+            let root = owner?.primary_global_root(&overrides);
+            // 只比较目录本身：条目可能正是指向原件的软链，跟随它会误判成同一位置
+            let distinct = !path
+                .parent()
+                .is_some_and(|parent| crate::fs::paths::paths_alias(parent, &root));
+            let name = path.file_name()?;
+            distinct.then(|| root.join(name))
+        };
+
         std::fs::create_dir_all(&hub).map_err(|e| Error::io(&hub, e))?;
+        let released_to_private = restore
+            .then(|| private_home(&saved.as_ref().unwrap().original_path))
+            .flatten();
         let target = if restore {
-            saved.as_ref().unwrap().original_path.clone()
+            released_to_private
+                .clone()
+                .unwrap_or_else(|| saved.as_ref().unwrap().original_path.clone())
         } else {
             hub.join(&skill.name)
         };
+        if let Some(parent) = released_to_private.as_ref().and_then(|t| t.parent()) {
+            std::fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+        }
         scanner::validate_sync_source(&skill.source_path)?;
         if restore {
             let parent = target
@@ -1065,6 +1096,8 @@ impl Studio {
         let mut seen = HashSet::new();
         let mut copies = Vec::new();
         let mut links = Vec::new();
+        // 共享根里指向旧位置的链接不再改指，直接移除
+        let mut shared_links = Vec::new();
         for dest in candidates {
             let parent = dest.parent().unwrap();
             let key = parent
@@ -1084,7 +1117,11 @@ impl Studio {
             }
             if scanner::is_symlink_or_junction(&dest) {
                 if linker::link_status(&old_path, &dest) == LinkStatus::Linked {
-                    links.push(dest);
+                    if in_shared_root(&dest, &overrides) {
+                        shared_links.push(dest);
+                    } else {
+                        links.push(dest);
+                    }
                 }
             } else if let Some(mut sidecar) = scanner::read_copy_sidecar(&dest) {
                 if crate::fs::paths::paths_alias(&sidecar.source_path, &old_path) {
@@ -1099,6 +1136,21 @@ impl Studio {
                 )));
             }
         }
+        // 纳入托管后留给所属 agent 的入口：原位置，或（原件在共享根时）它自己的根。
+        // 自己的根里已有指向原件的链接就沿用；被别的条目占着就不覆盖。
+        let (link_back, alias_back) = match (!restore).then(|| private_home(&old_path)) {
+            None => (None, None),
+            Some(None) => (Some(old_path.clone()), None),
+            Some(Some(private))
+                if links
+                    .iter()
+                    .any(|l| crate::fs::paths::is_same_path(l, &private)) =>
+            {
+                (None, Some(private))
+            }
+            Some(Some(private)) if std::fs::symlink_metadata(&private).is_ok() => (None, None),
+            Some(Some(private)) => (Some(private), None),
+        };
         let backup_path = self.store.dir().join("skill-backups").join(format!(
             "{}-{}",
             skill.id,
@@ -1126,6 +1178,7 @@ impl Studio {
                 collected_at: linker::now_secs(),
                 entry_paths: links
                     .iter()
+                    .chain(&shared_links)
                     .cloned()
                     .chain(
                         copies
@@ -1133,6 +1186,7 @@ impl Studio {
                             .filter_map(|(p, _)| p.parent().map(|p| p.to_path_buf())),
                     )
                     .chain(std::iter::once(old_path.clone()))
+                    .chain(link_back.iter().filter(|p| **p != old_path).cloned())
                     .collect(),
             }
         };
@@ -1151,6 +1205,15 @@ impl Studio {
                 regs.retain(|_, r| r.target_path != target);
             }
         }
+        // 旧版本留在共享根里的回链会被移除，对应的登记一并去掉
+        for regs in next.registrations.values_mut() {
+            regs.retain(|_, r| {
+                !shared_links
+                    .iter()
+                    .any(|l| crate::fs::paths::is_same_path(l, &r.target_path))
+            });
+        }
+        next.registrations.retain(|_, regs| !regs.is_empty());
         let mut tx =
             super::transaction::Transaction::begin(self.store.dir().join("migration.json"))?;
         let operation = (|| -> Result<()> {
@@ -1188,14 +1251,20 @@ impl Studio {
             }
             scanner::validate_sync_source(&target)?;
             tx.reserve(&old_path)?;
-            if !restore {
+            if let Some(link_back) = &link_back {
+                if link_back != &old_path {
+                    if let Some(parent) = link_back.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+                    }
+                    tx.reserve(link_back)?;
+                }
                 // Stay inside the outer journal: a nested copy transaction could undo
                 // the restored source during startup recovery.
                 let mode = config.settings.default_link_mode;
                 let linked = if mode == LinkMode::Copy {
                     false
                 } else {
-                    match linker::create_symlink(&target, &old_path) {
+                    match linker::create_symlink(&target, link_back) {
                         Ok(()) => true,
                         Err(err) if mode == LinkMode::Symlink => return Err(err),
                         Err(_) => false,
@@ -1208,12 +1277,12 @@ impl Studio {
                         source_hash: None,
                     }
                 } else {
-                    linker::copy_tree(&target, &old_path)?;
-                    if scanner::dir_content_hash(&old_path)? != before {
+                    linker::copy_tree(&target, link_back)?;
+                    if scanner::dir_content_hash(link_back)? != before {
                         return Err(Error::invalid("原位置副本校验失败"));
                     }
                     crate::fs::atomic::write_json_file(
-                        &old_path.join(scanner::COPY_SIDECAR),
+                        &link_back.join(scanner::COPY_SIDECAR),
                         &scanner::CopySidecar {
                             skill_id: new_id.clone(),
                             source_path: target.clone(),
@@ -1233,16 +1302,34 @@ impl Studio {
                         owner_agent,
                         Registration {
                             mode: done.mode,
-                            target_path: old_path.clone(),
+                            target_path: link_back.clone(),
                             registered_at: linker::now_secs(),
                             source_hash_at_copy: done.source_hash,
                         },
                     );
                 }
             }
+            if let (Some(alias), SkillOrigin::InPlace { owner_agent }) =
+                (&alias_back, &skill.origin)
+            {
+                // 所属 agent 自己的根里本来就有指向原件的链接：下面改指到 Hub，并登记为它的入口
+                next.set_registration(
+                    &new_id,
+                    owner_agent,
+                    Registration {
+                        mode: LinkMode::Symlink,
+                        target_path: alias.clone(),
+                        registered_at: linker::now_secs(),
+                        source_hash_at_copy: None,
+                    },
+                );
+            }
             for dest in &links {
                 tx.reserve(dest)?;
                 linker::create_symlink(&target, dest)?;
+            }
+            for dest in &shared_links {
+                tx.reserve(dest)?;
             }
             for (path, sidecar) in &copies {
                 tx.reserve(path)?;
@@ -1267,7 +1354,14 @@ impl Studio {
         let mut adopted = skill;
         adopted.id = new_id;
         adopted.source_path = target;
-        adopted.root = if restore { record.original_root } else { hub };
+        adopted.root = match (restore, &released_to_private) {
+            (true, Some(private)) => private
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or(record.original_root),
+            (true, None) => record.original_root,
+            (false, _) => hub,
+        };
         adopted.origin = if restore {
             record.original_origin
         } else {

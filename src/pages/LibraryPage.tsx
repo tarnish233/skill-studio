@@ -208,7 +208,7 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
               onClick={() => setSourceFilter(sourceFilter === id ? null : id)}
               title={
                 id === "agent"
-                  ? "共享 Agent 目录（~/.agents/skills）"
+                  ? "共享 Agent 目录（~/.agents/skills）：Codex、OpenCode、Pi、Grok Build 都会直接加载这里的 skill，分组管不住。Skill Studio 不会往里部署；纳入托管会把它移出共享目录。"
                   : `筛选 ${label} 来源`
               }
               className={`${summaryPillClass} border-transparent transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${color} ${activeSourceFilter === id ? "ring-2 ring-current" : ""}`}

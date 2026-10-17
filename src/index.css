@@ -214,9 +214,37 @@ html.dark[data-window-material] .app-shell {
   }
 }
 
-/* A native toolbar can open a dialog while WKWebView's animation clock is
-   suspended. Keep modal controls visible and let Radix unmount them immediately. */
-html[data-window-material] [data-slot="dialog-overlay"],
-html[data-window-material] [data-slot="dialog-content"] {
+/* Dialogs (card detail / edit) fade in linearly. The start frame is deliberately
+   not fully transparent: a native toolbar can open a dialog while WKWebView's
+   animation clock is suspended, and a frozen clock leaves the dialog sitting on
+   that first frame. dialog.tsx marks the dialog data-entered after 400ms (a task,
+   not an animation frame), which drops the entry animation below, so a stuck
+   dialog snaps to its final state instead of staying semi-transparent. */
+@keyframes ss-dialog-overlay-in {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes ss-dialog-in {
+  from {
+    opacity: 0.45;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+[data-slot="dialog-overlay"][data-state="open"][data-entered],
+[data-slot="dialog-content"][data-state="open"][data-entered] {
+  animation: none;
+}
+/* A stuck *exit* animation is worse: it leaves a ghost dialog on screen and
+   holds back Radix's unmount. On material windows the exit stays instant. */
+html[data-window-material] [data-slot="dialog-overlay"][data-state="closed"],
+html[data-window-material] [data-slot="dialog-content"][data-state="closed"] {
   animation: none;
 }

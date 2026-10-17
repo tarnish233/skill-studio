@@ -34,7 +34,8 @@ fn dedicated_roots_and_metadata_match_each_agent_without_false_detection() {
         assert_eq!(info.global_skill_dirs[0], env.path().join(global));
         assert_eq!(info.global_skill_dirs[1], env.agents_skills());
         assert_eq!(info.project_skill_dir.as_deref(), Some(project));
-        assert!(!info.supports_native_toggle);
+        // Pi 用 settings.json 的 `-<路径>` 精确排除，另两个没有原生开关
+        assert_eq!(info.supports_native_toggle, id == "pi", "{id}");
         env.write_simple_skill(&env.path().join(global), id);
         assert!(detector::describe_agent(agent, &HashMap::new(), true).detected);
     }
@@ -127,7 +128,8 @@ fn install_and_remove_target_only_each_agents_private_root() {
 #[test]
 #[serial]
 fn manual_policy_does_not_block_group_switches_or_rewrite_native_configuration() {
-    for (agent, root, _) in AGENTS {
+    // Pi 有原生开关，策略会写它的 settings.json，见 native_isolation.rs
+    for (agent, root, _) in AGENTS.into_iter().filter(|(agent, _, _)| *agent != "pi") {
         let env = Env::new();
         let studio = env.studio();
         let mut c = studio.load_config().unwrap();

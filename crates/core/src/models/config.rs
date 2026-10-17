@@ -180,6 +180,11 @@ pub struct AppConfig {
     pub skill_provenance: HashMap<String, SkillProvenance>,
     #[serde(default)]
     pub skill_installations: HashMap<String, SkillInstallation>,
+    /// agent → Studio 为了让分组管得住它而关掉的兼容读取开关（如 Grok 的
+    /// `compat.claude.skills`）。只记 Studio 自己改动的：退出管理时据此还原，
+    /// 用户本来就关着的、或之后自己改回去的都不碰。
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub native_isolation: HashMap<String, Vec<String>>,
 }
 
 fn default_version() -> u32 {
@@ -226,6 +231,7 @@ impl Default for AppConfig {
             skill_meta: HashMap::new(),
             skill_provenance: HashMap::new(),
             skill_installations: HashMap::new(),
+            native_isolation: HashMap::new(),
         }
     }
 }

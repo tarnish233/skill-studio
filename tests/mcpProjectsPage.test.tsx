@@ -116,6 +116,15 @@ it("MCP 项目卡片按名字生成图标，点卡片进详情", async () => {
   // 不再共用同一个文件夹图标：首字来自项目名
   expect(screen.getByText("W")).toBeInTheDocument();
   expect(screen.getByText("N")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "查看 webapp 的 MCP" }));
-  expect(await screen.findByText("项目 MCP")).toBeInTheDocument();
+  const card = screen.getByRole("button", { name: "查看 webapp 的 MCP" });
+  const transition = (el: HTMLElement) =>
+    el.closest<HTMLElement>('[data-transition="detail"]');
+  // 刚进入页面不叠加列表淡入
+  expect(transition(card)).not.toHaveAttribute("data-appear");
+  fireEvent.click(card);
+  const content = await screen.findByText("项目 MCP");
+  // 标题栏和内容在同一个过渡容器里一起淡入，与 Skill 项目详情一致
+  const back = screen.getByRole("button", { name: "返回" });
+  expect(transition(back)).toHaveAttribute("data-appear");
+  expect(transition(content)).toBe(transition(back));
 });

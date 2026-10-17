@@ -133,8 +133,11 @@ impl Studio {
                 updates.push((agent, toggles));
             }
         }
+        // 管理期间关掉 Grok 对 ~/.claude/skills 的兼容读取，退出管理时撤回
+        let isolation = super::isolation::plan(config, &mut next);
         if !force_save
             && updates.is_empty()
+            && isolation.is_empty()
             && serde_json::to_value(&next).map_err(|source| Error::JsonSerialize { source })?
                 == serde_json::to_value(&*config)
                     .map_err(|source| Error::JsonSerialize { source })?
@@ -157,6 +160,10 @@ impl Studio {
                         enabled,
                     )?;
                 }
+            }
+            for change in &isolation {
+                let path = tx.reserve_file_for_update(&change.path)?;
+                super::isolation::apply(change, &path)?;
             }
             self.store().reserve_config(&mut tx, &next)?;
             self.save_config(&next)?;

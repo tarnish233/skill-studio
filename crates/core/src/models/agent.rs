@@ -20,6 +20,9 @@ pub enum ToggleMechanism {
     ClaudeSettingsJson,
     /// `~/.codex/config.toml` 的 `[[skills.config]] name/enabled`
     CodexConfigToml,
+    /// `~/.pi/agent/settings.json` 的 `skills` 数组：`-<skill 目录>` 精确排除自动发现的
+    /// skill（含 `~/.agents/skills` 里的），见 pi 的 settings 文档「Resources」
+    PiSettingsJson,
     /// 尚未接入该 agent 的原生启停机制；分组仅撤回 Studio 自己部署的文件
     None,
 }
@@ -121,6 +124,16 @@ impl AgentDescriptor {
             .expect("每个 agent 至少要有一个全局 skill 根")
     }
 
+    /// 该 agent 会读、但同时被其他 agent 读取的全局根（如 `~/.agents/skills`）。
+    pub fn resolved_shared_roots(&self, overrides: &HashMap<String, PathBuf>) -> Vec<PathBuf> {
+        self.global_roots
+            .iter()
+            .zip(self.resolved_global_roots(overrides))
+            .filter(|(root, _)| root.shared)
+            .map(|(_, path)| path)
+            .collect()
+    }
+
     /// 该项目下这个 agent 的 skill 目录。不支持项目级时返回 `None`。
     pub fn project_root(&self, project_root: &std::path::Path) -> Option<PathBuf> {
         self.project_skill_dir.map(|rel| project_root.join(rel))
@@ -132,6 +145,7 @@ impl AgentDescriptor {
         match self.toggle {
             ToggleMechanism::ClaudeSettingsJson => Some(dir.join("settings.json")),
             ToggleMechanism::CodexConfigToml => Some(dir.join("config.toml")),
+            ToggleMechanism::PiSettingsJson => Some(dir.join("settings.json")),
             ToggleMechanism::None => None,
         }
     }
@@ -245,7 +259,7 @@ const PI: AgentDescriptor = AgentDescriptor {
     ],
     project_skill_dir: Some(".pi/skills"),
     cli_command: "pi",
-    toggle: ToggleMechanism::None,
+    toggle: ToggleMechanism::PiSettingsJson,
     reserved_dir_names: &[],
 };
 
@@ -279,6 +293,20 @@ const SHARED_SKILLS: SkillRoot = SkillRoot {
 
 /// 支持 Skill 管理的 Agent；MCP 使用自己的能力白名单。
 pub static AGENTS: &[AgentDescriptor] = &[CLAUDE_CODE, CODEX, OPENCODE, PI, GROK];
+
+/// `path` 是否直接位于共享根下（`~/.agents/skills/<name>`）。
+///
+/// 放进共享根的 skill 会被 Codex、OpenCode、Pi、Grok 同时加载，分组和原生开关都管不住，
+/// 所以 Studio 从不代替某一个 agent 往这里写：回链、还原、移出 Hub 都改写到该 agent
+/// 自己的根（见 `primary_global_root`）。
+pub fn in_shared_root(path: &std::path::Path, overrides: &HashMap<String, PathBuf>) -> bool {
+    path.parent().is_some_and(|parent| {
+        AGENTS
+            .iter()
+            .flat_map(|agent| agent.resolved_shared_roots(overrides))
+            .any(|root| paths::paths_alias(parent, &root))
+    })
+}
 
 pub fn find_agent(id: &str) -> Option<&'static AgentDescriptor> {
     AGENTS.iter().find(|a| a.id == id)

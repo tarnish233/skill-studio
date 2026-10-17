@@ -310,6 +310,10 @@ export function GroupsPage() {
                 安装、托管和分组部署，暂不读取或修改原生启停配置。
                 分组停用只撤回 Studio 部署的副本，手动安装的 Skill
                 始终保留。修改后请在 Agent 中重新加载 Skill 或重启会话。
+                {viewAgent.id === "grok" &&
+                  " Grok 默认还会读取 ~/.claude/skills（Claude Code 兼容），给 Claude Code 部署的 skill 也会被它加载：管理期间 Studio 在 ~/.grok/config.toml 写入 [compat.claude] skills = false 关闭这项读取，退出管理时恢复。"}
+                {viewAgent.id === "opencode" &&
+                  " OpenCode 还会读取 ~/.claude/skills（Claude Code 兼容），给 Claude Code 部署的 skill 也会被它加载；这项读取只能通过环境变量 OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1 关闭。"}
               </HelpPopover>
             )}
           </>

@@ -603,6 +603,12 @@ fn restored_shared_skill_keeps_one_identity_and_group_policy_after_reenable() {
     std::os::unix::fs::symlink(&original, &alias).unwrap();
     let source = studio.scan_skills(&c).unwrap().remove(0).skill;
     let hub = studio.adopt_to_hub(&mut c, &source.id).unwrap();
+    // 纳入托管后共享根里不留任何东西：Codex 的入口只剩它自己目录里的那个
+    assert!(fs::symlink_metadata(&original).is_err());
+    assert_eq!(
+        c.registrations[&hub.id]["codex"].target_path, alias,
+        "Codex 自己目录里的软链改指 Hub 并登记为它的入口"
+    );
     let group = studio
         .save_group(&mut c, "restored".into(), "restored", vec![hub.id.clone()])
         .unwrap();
@@ -617,7 +623,13 @@ fn restored_shared_skill_keeps_one_identity_and_group_policy_after_reenable() {
         assert_eq!(views[0].skill.id, hub.id);
         assert!(views[0].agents["codex"].manual);
         assert!(views[0].agents["codex"].disabled);
-        assert_eq!(views[0].agents["codex"].entry_paths.len(), 2);
+        // 只还原到 Codex 自己的目录；共享根始终为空，Pi 等其他 Agent 读不到
+        assert_eq!(views[0].agents["codex"].entry_paths, vec![alias.clone()]);
+        assert!(fs::symlink_metadata(&original).is_err());
+        assert_eq!(
+            views[0].agents["pi"].status,
+            skill_studio_core::models::skill::LinkStatus::NotLinked
+        );
         studio
             .activate_agent_groups(&mut c, "codex", std::slice::from_ref(&group.id))
             .unwrap();

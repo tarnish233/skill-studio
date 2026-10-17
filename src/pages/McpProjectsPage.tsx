@@ -18,6 +18,10 @@ import { McpAssignments } from "@/components/mcp/McpAssignments";
 import { PageTools } from "@/components/common/PageTools";
 import { NameAvatar } from "@/components/common/NameAvatar";
 import {
+  DetailTransition,
+  useDetailAppear,
+} from "@/components/common/DetailTransition";
+import {
   ListContainer,
   ListItemRow,
   RowActions,
@@ -87,6 +91,7 @@ function McpProjectsContent() {
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [detail, setDetail] = useState<string | null>(null);
+  const appear = useDetailAppear();
   const [creating, setCreating] = useState(false);
   const [removingProject, setRemovingProject] = useState(false);
   const [removeBusy, setRemoveBusy] = useState(false);
@@ -201,7 +206,8 @@ function McpProjectsContent() {
         }
       />
       {active ? (
-        <>
+        // 标题栏和内容一起过渡，与 Skill 项目详情一致
+        <DetailTransition key={active.id} appear={appear}>
           <div className="flex items-center gap-3 py-4">
             <Button
               variant="outline"
@@ -238,129 +244,131 @@ function McpProjectsContent() {
             )}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto pb-6">
-            <McpAssignments key={active.id} project={active} />
+            <McpAssignments project={active} />
           </div>
-        </>
+        </DetailTransition>
       ) : (
         <>
-          <SummaryBar>
-            <SummaryStart
-              role="group"
-              aria-label="按项目 Agent 筛选"
-              title="点击 Agent 筛选：这些项目里配了该 Agent 的 MCP（含未托管的原有配置）"
-            >
-              {mcpAgents.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  title={`筛选：${a.displayName} 配了 MCP 的项目（含未托管的原有配置）`}
-                  className={`${summaryPillClass} border-transparent transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${agentSourceColor(a.id)} ${agentFilter === a.id ? "ring-2 ring-current" : ""}`}
-                  aria-pressed={agentFilter === a.id}
-                  aria-label={`${a.displayName}: ${agentCount(a.id)}`}
-                  onClick={() =>
-                    setAgentFilter(agentFilter === a.id ? null : a.id)
-                  }
+          <DetailTransition appear={appear}>
+            <SummaryBar>
+              <SummaryStart
+                role="group"
+                aria-label="按项目 Agent 筛选"
+                title="点击 Agent 筛选：这些项目里配了该 Agent 的 MCP（含未托管的原有配置）"
+              >
+                {mcpAgents.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    title={`筛选：${a.displayName} 配了 MCP 的项目（含未托管的原有配置）`}
+                    className={`${summaryPillClass} border-transparent transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${agentSourceColor(a.id)} ${agentFilter === a.id ? "ring-2 ring-current" : ""}`}
+                    aria-pressed={agentFilter === a.id}
+                    aria-label={`${a.displayName}: ${agentCount(a.id)}`}
+                    onClick={() =>
+                      setAgentFilter(agentFilter === a.id ? null : a.id)
+                    }
+                  >
+                    <AgentIcon agentId={a.id} size="sm" />
+                    {agentCount(a.id)}
+                  </button>
+                ))}
+              </SummaryStart>
+              <SummaryEnd title="按 Studio 已写入的项目接入统计，同一项目只计一次">
+                <Badge
+                  variant="outline"
+                  className={summaryPillClass}
+                  title="已登记的项目目录数量"
                 >
-                  <AgentIcon agentId={a.id} size="sm" />
-                  {agentCount(a.id)}
-                </button>
-              ))}
-            </SummaryStart>
-            <SummaryEnd title="按 Studio 已写入的项目接入统计，同一项目只计一次">
-              <Badge
-                variant="outline"
-                className={summaryPillClass}
-                title="已登记的项目目录数量"
-              >
-                项目 {list.length} 个
-              </Badge>
-              <Badge
-                variant="outline"
-                className={summaryPillClass}
-                title="Studio 写进这些项目的接入条数，同一项目可以有多条"
-              >
-                托管接入 {projectBindings.length} 处
-              </Badge>
-              <Badge
-                variant="outline"
-                className={summaryPillClass}
-                title="项目里已有、但没纳入 Studio 管理的 MCP 配置，可在项目详情里「纳入管理」"
-              >
-                未托管 {unmanagedSources.length} 处
-              </Badge>
-              <Badge
-                variant="outline"
-                className={summaryPillClass}
-                title="至少有一条托管接入的项目数量"
-              >
-                已启用 {enabledProjects} 个
-              </Badge>
-            </SummaryEnd>
-          </SummaryBar>
-          <div className="min-h-0 flex-1 overflow-y-auto pb-6">
-            {(projects.isPending || status.isPending) && (
-              <p className="py-6 text-sm text-muted-foreground">
-                正在读取项目 MCP…
-              </p>
-            )}
-            {(projects.error || status.error) && (
-              <p role="alert" className="text-sm text-destructive">
-                {String(projects.error ?? status.error)}
-              </p>
-            )}
-            {!projects.isPending &&
-              !projects.error &&
-              !projects.data?.length && (
-                <EmptyState
-                  icon={FolderGit2}
-                  title="还没有项目"
-                  description="添加项目目录后，可从 MCP Hub 选择服务，只在该项目中接入。"
-                />
+                  项目 {list.length} 个
+                </Badge>
+                <Badge
+                  variant="outline"
+                  className={summaryPillClass}
+                  title="Studio 写进这些项目的接入条数，同一项目可以有多条"
+                >
+                  托管接入 {projectBindings.length} 处
+                </Badge>
+                <Badge
+                  variant="outline"
+                  className={summaryPillClass}
+                  title="项目里已有、但没纳入 Studio 管理的 MCP 配置，可在项目详情里「纳入管理」"
+                >
+                  未托管 {unmanagedSources.length} 处
+                </Badge>
+                <Badge
+                  variant="outline"
+                  className={summaryPillClass}
+                  title="至少有一条托管接入的项目数量"
+                >
+                  已启用 {enabledProjects} 个
+                </Badge>
+              </SummaryEnd>
+            </SummaryBar>
+            <div className="min-h-0 flex-1 overflow-y-auto pb-6">
+              {(projects.isPending || status.isPending) && (
+                <p className="py-6 text-sm text-muted-foreground">
+                  正在读取项目 MCP…
+                </p>
               )}
-            <ListContainer cards>
-              {filtered.map((project) => (
-                <ListItemRow
-                  key={project.id}
-                  card
-                  onPreview={() => setDetail(project.id)}
-                  previewLabel={`查看 ${project.name} 的 MCP`}
-                >
-                  <NameAvatar name={project.name} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-sm font-medium">
-                        {project.name}
-                      </span>
-                      {!status.isPending && !status.error && (
-                        <Badge variant="outline">
-                          {count(project.root)} 个 MCP
-                        </Badge>
-                      )}
+              {(projects.error || status.error) && (
+                <p role="alert" className="text-sm text-destructive">
+                  {String(projects.error ?? status.error)}
+                </p>
+              )}
+              {!projects.isPending &&
+                !projects.error &&
+                !projects.data?.length && (
+                  <EmptyState
+                    icon={FolderGit2}
+                    title="还没有项目"
+                    description="添加项目目录后，可从 MCP Hub 选择服务，只在该项目中接入。"
+                  />
+                )}
+              <ListContainer cards>
+                {filtered.map((project) => (
+                  <ListItemRow
+                    key={project.id}
+                    card
+                    onPreview={() => setDetail(project.id)}
+                    previewLabel={`查看 ${project.name} 的 MCP`}
+                  >
+                    <NameAvatar name={project.name} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-sm font-medium">
+                          {project.name}
+                        </span>
+                        {!status.isPending && !status.error && (
+                          <Badge variant="outline">
+                            {count(project.root)} 个 MCP
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="truncate pt-0.5 text-xs text-muted-foreground">
+                        {project.root}
+                      </p>
                     </div>
-                    <p className="truncate pt-0.5 text-xs text-muted-foreground">
-                      {project.root}
-                    </p>
-                  </div>
-                  <RowActions>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      title="打开项目目录"
-                      onClick={() => void systemApi.revealPath(project.root)}
-                    >
-                      <FolderOpen className="h-4 w-4" />
-                    </Button>
-                  </RowActions>
-                </ListItemRow>
-              ))}
-            </ListContainer>
-            {!!projects.data?.length && !filtered.length && (
-              <p className="py-6 text-center text-sm text-muted-foreground">
-                没有匹配的项目
-              </p>
-            )}
-          </div>
+                    <RowActions>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        title="打开项目目录"
+                        onClick={() => void systemApi.revealPath(project.root)}
+                      >
+                        <FolderOpen className="h-4 w-4" />
+                      </Button>
+                    </RowActions>
+                  </ListItemRow>
+                ))}
+              </ListContainer>
+              {!!projects.data?.length && !filtered.length && (
+                <p className="py-6 text-center text-sm text-muted-foreground">
+                  没有匹配的项目
+                </p>
+              )}
+            </div>
+          </DetailTransition>
         </>
       )}
       <Dialog

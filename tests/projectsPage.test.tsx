@@ -140,14 +140,21 @@ it("整张项目卡片可点：点卡片进项目详情，原来的铅笔按钮�
     makeProject({ id: "p1", name: "webapp", skillIds: [], groupIds: [] }),
   ]);
   renderWithProviders(<ProjectsPage />);
+  const transition = (el: HTMLElement) =>
+    el.closest<HTMLElement>('[data-transition="detail"]');
+  const card = await screen.findByRole("button", { name: "编辑 webapp" });
+  // 刚进入页面：页面级过渡已经在淡入，列表不再叠一层（否则起点成了 0.4 × 0.4）
+  expect(transition(card)).not.toHaveAttribute("data-appear");
   // 卡片本身就是入口（与 MCP 项目页、Hub 卡片一致）
-  fireEvent.click(await screen.findByRole("button", { name: "编辑 webapp" }));
-  expect(await screen.findByText("项目已有 skill")).toBeInTheDocument();
-  // 行内的就地按钮不再触发整卡点击
-  fireEvent.click(screen.getByRole("button", { name: "返回" }));
-  expect(
-    await screen.findByRole("button", { name: "编辑 webapp" }),
-  ).toBeInTheDocument();
+  fireEvent.click(card);
+  // 详情（含标题栏）在过渡容器里，并且这次挂载会播放线性淡入（见 tests/motion.test.ts）
+  const back = await screen.findByRole("button", { name: "返回" });
+  expect(transition(back)).toHaveAttribute("data-appear");
+  expect(transition(screen.getByText("项目已有 skill"))).toBe(transition(back));
+  // 返回列表同样淡入
+  fireEvent.click(back);
+  const again = await screen.findByRole("button", { name: "编辑 webapp" });
+  expect(transition(again)).toHaveAttribute("data-appear");
 });
 
 it("项目卡片按名字生成图标：不同项目首字不同，不再是统一的文件夹图标", async () => {

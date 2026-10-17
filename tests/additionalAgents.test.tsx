@@ -162,7 +162,7 @@ it.each(skillOnlyAgents)(
   },
 );
 
-it.each(skillOnlyAgents)(
+it.each(skillOnlyAgents.filter((agent) => !agent.supportsNativeToggle))(
   "explains how $displayName loads skills in its Agent view, since it has no native toggle",
   async (agent) => {
     setup();
@@ -185,6 +185,25 @@ it.each(skillOnlyAgents)(
     ).toBeEnabled();
   },
 );
+
+it("Pi 已接入原生开关：Agent 视角按已启用统计，不再显示「暂不读取原生配置」的说明", async () => {
+  setup();
+  const pi = skillOnlyAgents.find((agent) => agent.id === "pi")!;
+  expect(pi.supportsNativeToggle).toBe(true);
+  handlers.set("scan_skills", () => [
+    makeSkill({
+      id: "demo",
+      name: "Demo",
+      agents: { pi: agentState("source") },
+    }),
+  ]);
+  renderWithProviders(<GroupsPage />);
+  fireEvent.click(await waitFor(() => viewChip(/^Pi/)));
+  expect(screen.getByText("已启用 1 个 skill")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Pi Skill 使用说明" }),
+  ).not.toBeInTheDocument();
+});
 
 it("persists management visibility for new Agents through settings", async () => {
   setup();

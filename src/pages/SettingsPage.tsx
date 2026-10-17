@@ -212,7 +212,7 @@ export function SettingsPage() {
                     是否保留手动安装的 skill
                   </label>
                 }
-                description="开启后保留手动安装的 skill；关闭后仅当前启用分组中的 skill 生效，组外 skill 暂时停用，文件保留。没有启用分组时同样生效。重新开启只恢复由此策略停用的 skill；退出应用管理时恢复原状态。此策略仅适用于已接入原生启停的 Codex 和 Claude Code；OpenCode、Pi、Grok Build 的手动 Skill 始终保留。"
+                description="开启后保留手动安装的 skill；关闭后仅当前启用分组中的 skill 生效，组外 skill 暂时停用，文件保留。没有启用分组时同样生效。重新开启只恢复由此策略停用的 skill；退出应用管理时恢复原状态。此策略仅适用于已接入原生启停的 Claude Code、Codex 和 Pi（含共享目录 ~/.agents/skills 里的 skill）；OpenCode、Grok Build 的手动 Skill 始终保留。"
                 icon={<BookmarkCheck />}
               >
                 <Switch
