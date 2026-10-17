@@ -37,15 +37,21 @@ fn pi_policy_excludes_unmanaged_skills_by_path_and_releases_them_on_leave() {
     c.settings.preserve_manual_skills = false;
     studio.reconcile_manual_policy(&mut c, true).unwrap();
 
-    // 组外的手动 skill 都停用：Pi 自己目录里的，和共享根里别的工具装进来的
-    assert_eq!(
-        pi_skills(&env),
-        serde_json::json!([
-            "../team-skills",
-            format!("-{}", manual.display()),
-            format!("-{}", shared.display()),
-        ]),
-    );
+    // 组外的手动 skill 都停用：Pi 自己目录里的，和共享根里别的工具装进来的。
+    // 按路径分量比较（Pi 也是这样匹配的）：Windows 上同一路径可能混用 `/` 和 `\`。
+    let skills = pi_skills(&env);
+    let entries: Vec<&str> = skills
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(entries[0], "../team-skills", "用户自己的资源路径保留在原位");
+    let excluded: Vec<std::path::PathBuf> = entries[1..]
+        .iter()
+        .map(|e| std::path::PathBuf::from(e.strip_prefix('-').expect("精确排除以 - 开头")))
+        .collect();
+    assert_eq!(excluded, vec![manual.clone(), shared.clone()]);
     let views = studio.scan_skills(&c).unwrap();
     for view in &views {
         assert!(view.agents["pi"].disabled, "{}", view.skill.name);

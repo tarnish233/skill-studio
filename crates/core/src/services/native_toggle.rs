@@ -361,18 +361,13 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("settings.json");
         let skill = d.path().join("agents/skills/demo");
-        std::fs::write(
-            &p,
-            format!(
-                r#"{{
-  "defaultModel": "opus",
-  "skills": ["../team-skills", "-{}/SKILL.md"],
-  "theme": "dark"
-}}"#,
-                skill.display()
-            ),
-        )
-        .unwrap();
+        // 用 serde_json 生成：Windows 路径里的反斜杠必须转义
+        let settings = serde_json::json!({
+            "defaultModel": "opus",
+            "skills": ["../team-skills", format!("-{}", skill.join("SKILL.md").display())],
+            "theme": "dark",
+        });
+        std::fs::write(&p, serde_json::to_string_pretty(&settings).unwrap()).unwrap();
         let document = skill.join("SKILL.md");
         assert!(
             is_pi_skill_disabled_at(&p, &document),
