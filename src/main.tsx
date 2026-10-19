@@ -3,7 +3,7 @@ import { NavigationGuard } from "@/components/common/NavigationGuard";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { Toaster } from "sonner";
+import { Toaster } from "@/components/ui/sonner";
 import { queryClient } from "@/lib/query/queryClient";
 import { ThemeProvider } from "@/components/theme-provider";
 import App from "@/App";
@@ -21,7 +21,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             </StartupBoundary>
           </TargetProvider>
         </NavigationGuard>
-        <Toaster position="top-center" richColors duration={2000} />
+        <Toaster />
       </ThemeProvider>
     </QueryClientProvider>
   </React.StrictMode>,
