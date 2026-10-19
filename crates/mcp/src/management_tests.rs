@@ -262,7 +262,7 @@ fn project_bulk_remove_preserves_global_and_manual_entries() {
         None,
     )
     .unwrap();
-    assert_eq!(remove_project_bindings(&dir, &project).unwrap(), 1);
+    assert_eq!(remove_project_bindings(&dir, &project).unwrap().removed, 1);
     let project_doc: Value =
         serde_json::from_str(&std::fs::read_to_string(project_file).unwrap()).unwrap();
     assert_eq!(project_doc["mcpServers"]["manual"]["command"], "keep");
@@ -425,6 +425,107 @@ fn direct_probe_does_not_convert_sse_to_streamable_http() {
         "SSE must not become a Streamable HTTP probe"
     );
     assert!(result.err().unwrap().to_string().contains("请在 Agent 中"));
+}
+/// 把 Claude 和 Codex 里同一个已有的 MCP 交给网关托管，返回（Studio 目录, claude 配置, codex 配置, 原配置）
+fn adopt_into_gateway(root: &Path) -> (PathBuf, PathBuf, PathBuf, Value) {
+    let dir = root.join("studio");
+    let claude = root.join("claude.json");
+    let codex = root.join("config.toml");
+    let original = json!({"command":"demo","args":["--serve"]});
+    std::fs::write(&claude, json!({"mcpServers":{"demo":original}}).to_string()).unwrap();
+    std::fs::write(
+        &codex,
+        "[mcp_servers.demo]\ncommand='demo'\nargs=['--serve']\n",
+    )
+    .unwrap();
+    save(
+        &dir,
+        entry(native::canonical(&original, "claude"), "gateway"),
+        vec![
+            target(claude.clone(), "claude", "demo", Some(original.clone())),
+            target(codex.clone(), "codex", "demo", Some(original.clone())),
+        ],
+        Path::new("/app"),
+        None,
+    )
+    .unwrap();
+    (dir, claude, codex, original)
+}
+fn demo_entry(path: &Path, agent: &str) -> Option<Value> {
+    native::entry(&std::fs::read_to_string(path).unwrap(), agent, None, "demo").unwrap()
+}
+#[test]
+fn deleting_leaves_connections_another_tool_rewrote_and_reports_them() {
+    let root = tempfile::tempdir().unwrap();
+    let (dir, claude, codex, original) = adopt_into_gateway(root.path());
+    // 另一个工具（如 cc-switch）把原来的配置写回了 Claude，覆盖了 Studio 的网关接入
+    std::fs::write(&claude, json!({"mcpServers":{"demo":original}}).to_string()).unwrap();
+    let removal = remove(&dir, "sample", false).unwrap();
+    assert!(read(&dir).unwrap().entries.is_empty());
+    // 别人写的不动、报告出来；Studio 自己的接入照常删掉
+    assert_eq!(demo_entry(&claude, "claude"), Some(original.clone()));
+    assert_eq!(demo_entry(&codex, "codex"), None);
+    assert_eq!(removal.removed, 1);
+    assert_eq!(removal.foreign.len(), 1);
+    assert_eq!(removal.foreign[0].agent, "claude");
+    assert_eq!(removal.foreign[0].path, claude);
+    // 留下的那条成了普通的原有配置，可以按来源删除
+    remove_sources(
+        &dir,
+        vec![target(claude.clone(), "claude", "demo", Some(original))],
+    )
+    .unwrap();
+    assert_eq!(demo_entry(&claude, "claude"), None);
+}
+#[test]
+fn deleting_counts_only_connections_it_actually_rewrote() {
+    let root = tempfile::tempdir().unwrap();
+    let (dir, claude, codex, _) = adopt_into_gateway(root.path());
+    // Claude 里的接入已被删掉：没有要写的，不算进「已移除」（界面据此判断有没有写配置、留备份）
+    std::fs::write(&claude, json!({"mcpServers":{}}).to_string()).unwrap();
+    let removal = remove(&dir, "sample", false).unwrap();
+    assert_eq!((removal.removed, removal.foreign.len()), (1, 0));
+    assert_eq!(demo_entry(&codex, "codex"), None);
+}
+#[test]
+fn restoring_puts_the_original_back_where_studios_connection_was_already_removed() {
+    let root = tempfile::tempdir().unwrap();
+    let (dir, claude, codex, original) = adopt_into_gateway(root.path());
+    // 有人删掉了 Studio 写的接入：那里没有别人的内容，照常按「还原」放回原配置
+    std::fs::write(&claude, json!({"mcpServers":{}}).to_string()).unwrap();
+    let removal = remove(&dir, "sample", true).unwrap();
+    assert!(removal.foreign.is_empty());
+    assert_eq!(removal.removed, 2);
+    assert_eq!(demo_entry(&claude, "claude"), Some(original.clone()));
+    assert_eq!(demo_entry(&codex, "codex"), Some(original));
+}
+#[test]
+fn project_removal_leaves_connections_another_tool_rewrote() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("studio");
+    let project = root.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let project_file = project.join(".mcp.json");
+    std::fs::write(&project_file, "{}").unwrap();
+    save(
+        &dir,
+        entry(json!({"type":"stdio","command":"demo"}), "direct"),
+        vec![target(project_file.clone(), "claude", "sample", None)],
+        Path::new("/app"),
+        None,
+    )
+    .unwrap();
+    std::fs::write(
+        &project_file,
+        r#"{"mcpServers":{"sample":{"command":"theirs"}}}"#,
+    )
+    .unwrap();
+    let removal = remove_project_bindings(&dir, &project).unwrap();
+    assert_eq!((removal.removed, removal.foreign.len()), (0, 1));
+    assert!(read(&dir).unwrap().entries[0].bindings.is_empty());
+    let doc: Value =
+        serde_json::from_str(&std::fs::read_to_string(&project_file).unwrap()).unwrap();
+    assert_eq!(doc["mcpServers"]["sample"]["command"], "theirs");
 }
 #[test]
 fn migration_reuses_original_keys_and_restores_original_entries() {

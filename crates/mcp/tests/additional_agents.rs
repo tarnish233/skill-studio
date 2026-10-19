@@ -201,7 +201,12 @@ fn groups_and_project_removal_restore_each_agents_original_definition() {
         management::set_enabled(&dir, true).unwrap();
         groups::activate(&dir, agent, &[], &global, Path::new("/studio")).unwrap();
         assert!(read(&global, agent, "sample").is_none());
-        assert_eq!(management::remove_project_bindings(&dir, &root).unwrap(), 1);
+        assert_eq!(
+            management::remove_project_bindings(&dir, &root)
+                .unwrap()
+                .removed,
+            1
+        );
         assert_eq!(read(&path, agent, "sample"), before);
         assert!(management::read(&dir).unwrap().entries[0]
             .bindings

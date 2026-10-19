@@ -7,7 +7,12 @@ import {
   agentOption,
   summaryPillClass,
 } from "@/components/common/SummaryBar";
-import { MCP_AGENTS, mcpAgentName, mcpAppId } from "@/lib/mcpAgents";
+import {
+  MCP_AGENTS,
+  foreignNote,
+  mcpAgentName,
+  mcpAppId,
+} from "@/lib/mcpAgents";
 import { useSettings } from "@/hooks/useData";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { useEffect, useState } from "react";
@@ -61,6 +66,7 @@ import {
   type McpRow,
   type ManagedMcp,
   type McpInstallResult,
+  type McpRemoval,
 } from "@/lib/api/mcpManagement";
 
 export type McpEditorState = { row: McpRow | null };
@@ -907,13 +913,15 @@ function LocalMcpPage({
           <>
             <span className="block">
               {restore
-                ? "移除 Hub 托管记录，恢复托管前的原始配置；由 Studio 新建的接入会移除。"
+                ? "移除 Hub 托管记录，恢复托管前的原始配置；由 Studio 新建的接入会移除。已被其他程序改写的接入原样保留。"
                 : remove?.managed
-                  ? "删除 Hub 中的服务和全部受托管接入。扫描到但未托管的原有配置保留。"
+                  ? "删除 Hub 中的服务和全部受托管接入。扫描到但未托管的原有配置，以及已被其他程序改写的接入原样保留。"
                   : `删除扫描到的 ${remove?.sources.length ?? 0} 处原有 MCP 配置。`}
             </span>
             <span className="mt-2 block">
-              配置文件会先备份。配置被外部修改或仍被启用的分组使用时，操作会停止。
+              {remove?.managed
+                ? "配置文件会先备份。仍被启用的分组使用时，操作会停止。"
+                : "配置文件会先备份。配置被外部修改或仍被启用的分组使用时，操作会停止。"}
             </span>
             <span className="mt-2 block space-y-1 break-all text-xs">
               {(remove?.managed
@@ -930,8 +938,12 @@ function LocalMcpPage({
         onConfirm={() =>
           remove &&
           void run(async () => {
+            let removal: McpRemoval | null = null;
             if (remove.managed)
-              await mcpRequest("removeEntry", { id: remove.entry.id, restore });
+              removal = await mcpRequest<McpRemoval>("removeEntry", {
+                id: remove.entry.id,
+                restore,
+              });
             else
               await mcpRequest("removeSources", {
                 entry: remove.entry,
@@ -941,9 +953,20 @@ function LocalMcpPage({
                 })),
               });
             setRemove(null);
-            toast.success(
-              restore ? "已移出 Hub 并还原" : "MCP 已删除，配置文件已备份",
-            );
+            // 接入全被其他程序改写时一个配置文件都没写，也就没有备份可说
+            const wrote = !removal || removal.removed > 0;
+            const done = restore
+              ? wrote
+                ? "已移出 Hub 并还原"
+                : "已移出 Hub"
+              : wrote
+                ? "MCP 已删除，配置文件已备份"
+                : "MCP 已从 Hub 删除";
+            if (removal?.foreign.length)
+              toast.warning(`${done}。${foreignNote(removal.foreign)}。`, {
+                duration: 8000,
+              });
+            else toast.success(done);
           })
         }
       />

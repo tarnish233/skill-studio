@@ -1,5 +1,6 @@
 import { screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
-import { beforeEach, afterEach, expect, it } from "vitest";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 import App from "@/App";
 import { McpPage } from "@/pages/McpPage";
 import { calls, handlers, defaultSettings } from "./mocks/tauri";
@@ -404,37 +405,36 @@ it("adopts discovered MCP sources through the card action without adding new tar
   });
 });
 
+const managedTools = {
+  id: "managed",
+  name: "Tools",
+  mode: "direct",
+  definition: { command: "tools" },
+  oauth: false,
+  clientId: null,
+  scopes: [],
+  bindings: [
+    {
+      id: "b1",
+      agent: "claude",
+      path: "/tmp/.claude.json",
+      project: null,
+      key: "Tools",
+      original: { command: "tools" },
+      installed: { command: "tools" },
+    },
+  ],
+};
+
 it.each([true, false])(
   "separates restore=%s from deletion on managed cards",
   async (restore) => {
     handlers.set("mcp_request", ({ method }) =>
       method === "list"
-        ? {
-            ...empty,
-            entries: [
-              {
-                id: "managed",
-                name: "Tools",
-                mode: "direct",
-                definition: { command: "tools" },
-                oauth: false,
-                clientId: null,
-                scopes: [],
-                bindings: [
-                  {
-                    id: "b1",
-                    agent: "claude",
-                    path: "/tmp/.claude.json",
-                    project: null,
-                    key: "Tools",
-                    original: { command: "tools" },
-                    installed: { command: "tools" },
-                  },
-                ],
-              },
-            ],
-          }
-        : null,
+        ? { ...empty, entries: [managedTools] }
+        : method === "removeEntry"
+          ? { removed: 1, foreign: [] }
+          : null,
     );
     renderWithProviders(<McpPage />);
     expect(await screen.findByText("托管中")).toBeVisible();
@@ -457,6 +457,42 @@ it.each([true, false])(
     ).toMatchObject({ params: { id: "managed", restore } });
   },
 );
+
+it("deletes a managed MCP another program rewrote, naming the connection it left alone", async () => {
+  const warning = vi.spyOn(toast, "warning");
+  handlers.set("mcp_request", ({ method }) =>
+    method === "list"
+      ? { ...empty, entries: [managedTools] }
+      : method === "removeEntry"
+        ? {
+            removed: 0,
+            foreign: [
+              {
+                agent: "claude",
+                path: "/tmp/.claude.json",
+                project: null,
+                key: "Tools",
+              },
+            ],
+          }
+        : null,
+  );
+  renderWithProviders(<McpPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "删除 Tools" }));
+  // 确认框说清楚：已被其他程序改写的接入不会被删
+  expect(
+    screen.getByText(/已被其他程序改写的接入原样保留/),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "删除" }));
+  await waitFor(() => expect(warning).toHaveBeenCalledTimes(1));
+  const message = String(warning.mock.calls[0][0]);
+  expect(message).toContain("Claude Code（/tmp/.claude.json）里的同名配置");
+  expect(message).toContain("已被其他程序改写");
+  // 一处配置都没写：不能说「配置文件已备份」
+  expect(message).toMatch(/^MCP 已从 Hub 删除。/);
+  expect(message).not.toContain("已备份");
+  warning.mockRestore();
+});
 
 it("deletes an unmanaged source only after confirmation, retaining its snapshot", async () => {
   const definition = { command: "tools" };

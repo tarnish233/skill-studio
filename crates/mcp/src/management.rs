@@ -542,7 +542,68 @@ pub fn save(
     catalog.entries.push(entry);
     commit(dir, files, &catalog)
 }
-pub fn remove(dir: &Path, id: &str, restore: bool) -> Result<()> {
+/// 删除托管、移除项目接入时原样留下的接入：文件里同名的配置已被其他程序改写，不再是 Studio 写的
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Foreign {
+    pub agent: String,
+    pub path: PathBuf,
+    pub project: Option<String>,
+    pub key: String,
+}
+/// 删除托管、移除项目接入的结果
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Removal {
+    /// Studio 实际改写的接入数（撤回，或还原成原配置）；为 0 时没有写任何配置文件
+    pub removed: usize,
+    /// 已被其他程序改写、原样留下的接入。它们交还给用户，之后作为原有配置出现在扫描结果里
+    pub foreign: Vec<Foreign>,
+}
+/// 撤回一条接入，写成 `next`。文件里还是 Studio 写的、或已被删掉，就照常处理；被其他程序
+/// 改写过的不碰——那已经不归 Studio，删了会毁掉别人的配置——记进 `removal.foreign`。
+/// 过去这里一律要求「仍是 Studio 写的」，被别的工具改写后托管就再也删不掉。
+fn release(
+    files: &mut BTreeMap<PathBuf, Change>,
+    b: &Binding,
+    next: &Option<Value>,
+    removal: &mut Removal,
+) -> Result<()> {
+    let text = match files.get(&b.path) {
+        Some(change) => change.after.clone(),
+        None => read_text(&b.path)?,
+    };
+    let current = native::entry(
+        text.as_deref().unwrap_or_default(),
+        &b.agent,
+        b.project.as_deref(),
+        &b.key,
+    )?;
+    if current.as_ref().is_some_and(|c| *c != b.installed) {
+        removal.foreign.push(Foreign {
+            agent: b.agent.clone(),
+            path: b.path.clone(),
+            project: b.project.clone(),
+            key: b.key.clone(),
+        });
+        return Ok(());
+    }
+    if current.is_none() && next.is_none() {
+        // 已被删掉，也不用还原：没有要写的
+        return Ok(());
+    }
+    let target = Target {
+        agent: b.agent.clone(),
+        path: b.path.clone(),
+        project: b.project.clone(),
+        key: b.key.clone(),
+        expected: None,
+    };
+    stage(files, &target, &current, next)?;
+    removal.removed += 1;
+    Ok(())
+}
+pub fn remove(dir: &Path, id: &str, restore: bool) -> Result<Removal> {
     let _lock = lock(dir)?;
     let mut catalog = read_unlocked(dir)?;
     ensure_active(&catalog)?;
@@ -560,26 +621,18 @@ pub fn remove(dir: &Path, id: &str, restore: bool) -> Result<()> {
         bail!("请先停用引用此 MCP 的分组");
     }
     let mut files = BTreeMap::new();
+    let mut removal = Removal::default();
     for b in &entry.bindings {
-        let target = Target {
-            agent: b.agent.clone(),
-            path: b.path.clone(),
-            project: b.project.clone(),
-            key: b.key.clone(),
-            expected: None,
-        };
-        stage(
-            &mut files,
-            &target,
-            &Some(b.installed.clone()),
-            &if restore { b.original.clone() } else { None },
-        )?;
+        let next = if restore { b.original.clone() } else { None };
+        release(&mut files, b, &next, &mut removal)?;
     }
     catalog.entries.retain(|e| e.id != id);
-    commit(dir, files, &catalog)
+    commit(dir, files, &catalog)?;
+    Ok(removal)
 }
 /// Remove only Studio-owned bindings for one registered project in a single transaction.
-pub fn remove_project_bindings(dir: &Path, root: &Path) -> Result<usize> {
+/// Bindings another program has since rewritten are dropped without touching their files.
+pub fn remove_project_bindings(dir: &Path, root: &Path) -> Result<Removal> {
     let _lock = lock(dir)?;
     let mut catalog = read_unlocked(dir)?;
     ensure_active(&catalog)?;
@@ -598,7 +651,7 @@ pub fn remove_project_bindings(dir: &Path, root: &Path) -> Result<usize> {
         .cloned()
         .collect();
     if bindings.is_empty() {
-        return Ok(0);
+        return Ok(Removal::default());
     }
     if bindings.iter().any(|b| {
         catalog
@@ -613,19 +666,9 @@ pub fn remove_project_bindings(dir: &Path, root: &Path) -> Result<usize> {
         bail!("项目接入正由分组使用，请先停用对应分组");
     }
     let mut files = BTreeMap::new();
+    let mut removal = Removal::default();
     for b in &bindings {
-        stage(
-            &mut files,
-            &Target {
-                agent: b.agent.clone(),
-                path: b.path.clone(),
-                project: b.project.clone(),
-                key: b.key.clone(),
-                expected: None,
-            },
-            &Some(b.installed.clone()),
-            &b.original,
-        )?;
+        release(&mut files, b, &b.original, &mut removal)?;
     }
     let identities: HashSet<_> = bindings
         .iter()
@@ -637,7 +680,7 @@ pub fn remove_project_bindings(dir: &Path, root: &Path) -> Result<usize> {
             .retain(|b| !identities.contains(&(b.path.clone(), b.project.clone(), b.key.clone())));
     }
     commit(dir, files, &catalog)?;
-    Ok(bindings.len())
+    Ok(removal)
 }
 /// Delete scanned, unmanaged entries without disturbing other configuration keys.
 pub fn remove_sources(dir: &Path, targets: Vec<Target>) -> Result<()> {

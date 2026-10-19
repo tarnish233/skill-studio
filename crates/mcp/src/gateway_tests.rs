@@ -414,3 +414,62 @@ async fn gateway_reads_committed_catalog_and_stops_serving_direct_entries() {
     daemon.await.unwrap().unwrap();
     mock.abort();
 }
+
+#[test]
+fn a_stopped_gateway_still_forgets_removed_servers_and_their_credentials() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().to_path_buf();
+    for id in ["gone", "kept"] {
+        let entry = crate::management::Entry {
+            id: id.into(),
+            name: id.into(),
+            mode: "gateway".into(),
+            definition: json!({"type":"stdio","command":id}),
+            oauth: false,
+            client_id: None,
+            scopes: vec![],
+            bindings: vec![],
+        };
+        crate::management::save(&dir, entry, vec![], Path::new("/app"), None).unwrap();
+        std::fs::write(dir.join(format!("oauth-{id}.json")), "{}").unwrap();
+    }
+    // 网关从没启动过：没有网关配置就什么都不写
+    assert_eq!(forget_removed(&dir).unwrap(), 0);
+    assert!(!dir.join("config.json").exists());
+    let servers = crate::management::projection(&dir)
+        .unwrap()
+        .unwrap()
+        .servers;
+    let tokens = [
+        ("gone".to_string(), "t1".to_string()),
+        ("kept".to_string(), "t2".to_string()),
+    ];
+    config::save(
+        &dir,
+        &config::Config {
+            servers,
+            tokens: tokens.into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    crate::management::remove(&dir, "gone", false).unwrap();
+    // 和网关下次启动时一样：不再托管的服务连同接入令牌、OAuth 凭据一并清掉
+    assert_eq!(forget_removed(&dir).unwrap(), 1);
+    let config = config::read(&dir).unwrap();
+    assert_eq!(
+        config
+            .servers
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect::<Vec<_>>(),
+        ["kept"]
+    );
+    assert_eq!(config.tokens.keys().collect::<Vec<_>>(), ["kept"]);
+    assert!(!dir.join("oauth-gone.json").exists());
+    assert!(dir.join("oauth-kept.json").exists());
+    // 暂停管理时保留凭据，重新开启后复用
+    crate::management::set_enabled(&dir, false).unwrap();
+    assert_eq!(forget_removed(&dir).unwrap(), 0);
+    assert!(dir.join("oauth-kept.json").exists());
+}

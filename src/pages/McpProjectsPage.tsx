@@ -7,6 +7,7 @@ import {
 } from "@/components/common/SummaryBar";
 import {
   MCP_PROJECT_SUFFIXES,
+  foreignNote,
   inProject,
   mcpAgentId,
   supportsMcp,
@@ -53,6 +54,7 @@ import {
   rows,
   MCP_STATUS_STALE_TIME,
   MCP_STATUS_POLL_INTERVAL,
+  type McpRemoval,
 } from "@/lib/api/mcpManagement";
 import { mcpRequest } from "@/lib/api/mcp";
 
@@ -116,15 +118,19 @@ function McpProjectsContent() {
     if (!active || removeBusy) return;
     setRemoveBusy(true);
     try {
-      const result = await mcpRequest<{ removed: number }>(
-        "removeProjectBindings",
-        { projectId: active.id },
-      );
+      const result = await mcpRequest<McpRemoval>("removeProjectBindings", {
+        projectId: active.id,
+      });
       await status.refetch();
       setRemovingProject(false);
-      toast.success(
-        `已移除 ${result.removed} 处托管接入，请在 Agent 中重新加载 MCP`,
-      );
+      const done = result.removed
+        ? `已移除 ${result.removed} 处托管接入，请在 Agent 中重新加载 MCP。`
+        : "";
+      if (result.foreign.length)
+        toast.warning(`${done}${foreignNote(result.foreign)}。`, {
+          duration: 8000,
+        });
+      else toast.success(done || "已移除托管记录");
     } catch (error) {
       toast.error(String(error));
     } finally {
@@ -427,7 +433,7 @@ function McpProjectsContent() {
         open={removingProject}
         onOpenChange={setRemovingProject}
         title={`移除 ${active?.name ?? "此项目"} 的托管 MCP？`}
-        description="仅恢复此项目中由 Studio 写入的 MCP 接入，保留 Hub 服务、原有手动配置和项目中的 Skill。若配置已被手动修改，操作会停止，不会覆盖修改。"
+        description="仅恢复此项目中由 Studio 写入的 MCP 接入，保留 Hub 服务、原有手动配置和项目中的 Skill。已被其他程序或手动改过的接入原样保留，不会覆盖修改。"
         confirmText="移除托管接入"
         pending={removeBusy}
         onConfirm={() => void removeAll()}

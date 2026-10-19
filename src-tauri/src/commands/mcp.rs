@@ -20,6 +20,21 @@ pub async fn prune_backups(dir: PathBuf, keep: usize) {
     }
 }
 
+/// 写入后通知运行中的网关重读托管状态（不启动它；每次网关请求都会读最新的托管状态，漏一次
+/// 通知无妨）。网关没在运行时，替它清掉已删除服务的接入令牌和 OAuth 凭据：删掉最后一个网关
+/// 连接的 MCP 后，网关可能不会再启动。
+async fn notify_gateway(dir: &std::path::Path) {
+    if gateway::request(dir, "list", Value::Null).await.is_ok() {
+        return;
+    }
+    let dir = dir.to_path_buf();
+    match tokio::task::spawn_blocking(move || gateway::forget_removed(&dir)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => log::warn!("清理已删除 MCP 的网关凭据失败: {error:#}"),
+        Err(error) => log::warn!("清理已删除 MCP 的网关凭据失败: {error}"),
+    }
+}
+
 /// 找旧备份文件时要看的 Agent 配置文件
 fn backup_configs(state: &AppState) -> Vec<PathBuf> {
     scan_files(state)
@@ -163,7 +178,7 @@ pub async fn mcp_request(
             .map_err(|e| e.to_string())?;
         let keep = state.config().settings.backup_keep;
         prune_backups(dir.clone(), keep).await;
-        let _ = gateway::request(&dir, "list", Value::Null).await;
+        notify_gateway(&dir).await;
         return Ok(Value::Null);
     }
     if method == "removeProjectBindings" {
@@ -178,7 +193,7 @@ pub async fn mcp_request(
             .root
             .clone();
         let task_dir = dir.clone();
-        let count = tokio::task::spawn_blocking(move || {
+        let removal = tokio::task::spawn_blocking(move || {
             management::remove_project_bindings(&task_dir, &project_root)
         })
         .await
@@ -186,7 +201,7 @@ pub async fn mcp_request(
         .map_err(|e| e.to_string())?;
         let keep = state.config().settings.backup_keep;
         prune_backups(dir, keep).await;
-        return Ok(json!({"removed":count}));
+        return serde_json::to_value(removal).map_err(|e| e.to_string());
     }
     if matches!(
         method.as_str(),
@@ -328,7 +343,7 @@ pub async fn mcp_request(
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
         prune_backups(dir.clone(), keep).await;
-        let _ = gateway::request(&dir, "list", Value::Null).await;
+        notify_gateway(&dir).await;
         return Ok(Value::Null);
     }
     if method == "saveEntry" || method == "removeEntry" || method == "removeSources" {
@@ -337,14 +352,15 @@ pub async fn mcp_request(
         let state = state.inner().clone();
         let method = method.clone();
         let task_dir = dir.clone();
-        tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let result = tokio::task::spawn_blocking(move || -> Result<Value, String> {
             if method == "removeEntry" {
-                return management::remove(
+                let removal = management::remove(
                     &task_dir,
                     params["id"].as_str().ok_or("缺少 ID")?,
                     params["restore"].as_bool().unwrap_or(true),
                 )
-                .map_err(|e| e.to_string());
+                .map_err(|e| e.to_string())?;
+                return serde_json::to_value(removal).map_err(|e| e.to_string());
             }
             let entry: management::Entry =
                 serde_json::from_value(params["entry"].clone()).map_err(|e| e.to_string())?;
@@ -357,7 +373,9 @@ pub async fn mcp_request(
             let targets = resolve_targets(&state, &task_dir, &target_params, &entry, &catalog)
                 .map_err(|e| e.to_string())?;
             if method == "removeSources" {
-                return management::remove_sources(&task_dir, targets).map_err(|e| e.to_string());
+                return management::remove_sources(&task_dir, targets)
+                    .map(|()| Value::Null)
+                    .map_err(|e| e.to_string());
             }
             let expected: Option<management::Entry> =
                 serde_json::from_value(params["expectedEntry"].clone())
@@ -369,15 +387,14 @@ pub async fn mcp_request(
                 &std::env::current_exe().map_err(|e| e.to_string())?,
                 expected.as_ref(),
             )
+            .map(|()| Value::Null)
             .map_err(|e| e.to_string())
         })
         .await
         .map_err(|e| e.to_string())??;
         prune_backups(dir.clone(), keep).await;
-        // Notify a running gateway without starting it. Every gateway request also
-        // reads the latest committed catalog, so a missed notification is harmless.
-        let _ = gateway::request(&dir, "list", Value::Null).await;
-        return Ok(Value::Null);
+        notify_gateway(&dir).await;
+        return Ok(result);
     }
     if method == "list" {
         let mut value = match gateway::request(&dir, "list", Value::Null).await {

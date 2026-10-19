@@ -1,5 +1,6 @@
-import { fireEvent, screen, within } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { expect, it, vi } from "vitest";
+import { toast } from "sonner";
 import { McpProjectsPage } from "@/pages/McpProjectsPage";
 import { renderWithProviders } from "./utils/render";
 import {
@@ -105,6 +106,46 @@ it("汇总统计与 Agent 筛选：托管 / 未托管分开算，筛选能只留
   expect(screen.getByText("webapp")).toBeInTheDocument();
   fireEvent.click(group.getByRole("button", { name: "Codex 1" }));
   expect(await screen.findByText("note")).toBeInTheDocument();
+});
+
+it("移除项目接入时，已被其他程序改写的那处原样保留，并告诉用户是哪一处", async () => {
+  setup();
+  const warning = vi.spyOn(toast, "warning");
+  handlers.set("mcp_request", (args) => {
+    const method = (args as { method?: string })?.method;
+    if (method === "list") return status();
+    if (method === "removeProjectBindings")
+      return {
+        removed: 0,
+        foreign: [
+          {
+            agent: "codex",
+            path: "/work/webapp/.mcp.json",
+            project: p1.root,
+            key: "work",
+          },
+        ],
+      };
+    return null;
+  });
+  renderWithProviders(<McpProjectsPage />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "查看 webapp 的 MCP" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: /移除托管接入 \(1\)/ }),
+  );
+  const dialog = screen.getByRole("dialog", {
+    name: "移除 webapp 的托管 MCP？",
+  });
+  expect(dialog).toHaveTextContent("原样保留");
+  fireEvent.click(within(dialog).getByRole("button", { name: "移除托管接入" }));
+  await waitFor(() => expect(warning).toHaveBeenCalledTimes(1));
+  const message = String(warning.mock.calls[0][0]);
+  expect(message).toContain("Codex（/work/webapp/.mcp.json）里的同名配置");
+  // 一处都没移除时不说「已移除 0 处」
+  expect(message).not.toContain("已移除");
+  warning.mockRestore();
 });
 
 it("MCP 项目卡片按名字生成图标，点卡片进详情", async () => {

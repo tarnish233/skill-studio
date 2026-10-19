@@ -850,6 +850,43 @@ pub async fn serve(dir: PathBuf) -> Result<()> {
     Ok(())
 }
 /// Desktop-only control channel; never send its bearer token to an upstream server.
+/// 网关没在运行时，替它做下次启动时的清理：不再由网关连接的服务从网关配置里去掉，连同接入
+/// 令牌和 OAuth 凭据（与 [`App::reload`] 对已删除服务的处理一致），返回清掉的服务数。删掉
+/// 最后一个网关连接的 MCP 后网关可能不会再启动，不清的话凭据会一直留在磁盘上。
+/// 暂停管理时不清：重新开启后要复用。
+pub fn forget_removed(dir: &Path) -> Result<usize> {
+    if !dir.join("config.json").is_file() {
+        return Ok(0);
+    }
+    let Some(projection) = crate::management::projection(dir)? else {
+        return Ok(0);
+    };
+    if projection.suspended {
+        return Ok(0);
+    }
+    let live: HashSet<String> = projection.servers.into_iter().map(|s| s.id).collect();
+    let mut config = config::read(dir)?;
+    let stale: Vec<String> = config
+        .servers
+        .iter()
+        .map(|s| s.id.clone())
+        .filter(|id| !live.contains(id))
+        .collect();
+    if stale.is_empty() {
+        return Ok(0);
+    }
+    for id in &stale {
+        match std::fs::remove_file(dir.join(format!("oauth-{id}.json"))) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    config.servers.retain(|s| live.contains(&s.id));
+    config.tokens.retain(|id, _| live.contains(id));
+    config::save(dir, &config)?;
+    Ok(stale.len())
+}
 pub async fn request(dir: &Path, method: &str, params: Value) -> Result<Value> {
     let c = config::read(dir)?;
     let value: Value = reqwest::Client::builder()

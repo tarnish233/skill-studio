@@ -1,3 +1,4 @@
+import type { McpForeign } from "@/lib/api/mcpManagement";
 /** IDs here match the MCP backend; Skill uses claude-code instead of claude. */
 export const MCP_AGENTS = [
   { id: "claude", appId: "claude-code", name: "Claude Code" },
@@ -36,3 +37,14 @@ export const inProject = (
   MCP_PROJECT_SUFFIXES.some(
     (suffix) => binding.path === normalize(project.root) + suffix,
   );
+
+/**
+ * 删除时原样留下的接入，写进提示：「Claude Code（~/.claude.json）里的同名配置……」。
+ * 它们之后作为原有配置出现在 MCP Hub 里，要删可以在那里删。
+ */
+export function foreignNote(foreign: McpForeign[]): string {
+  const places = foreign
+    .map((f) => `${mcpAgentName(f.agent)}（${f.path}）`)
+    .join("、");
+  return `${places}里的同名配置已被其他程序改写，Studio 没有动它，可在 MCP Hub 里作为原有配置管理或删除`;
+}

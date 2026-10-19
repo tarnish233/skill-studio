@@ -51,6 +51,18 @@ export interface ActiveMcpGroup {
   entries: ManagedMcp[];
   bindings: ManagedBinding[];
 }
+/** 删除托管、移除项目接入时原样留下的接入：配置里同名的那项已被其他程序改写，不是 Studio 写的了 */
+export interface McpForeign {
+  agent: string;
+  path: string;
+  project: string | null;
+  key: string;
+}
+export interface McpRemoval {
+  /** Studio 撤回（或还原成原配置）的接入数 */
+  removed: number;
+  foreign: McpForeign[];
+}
 /** 一次 MCP 写入的备份。状态在打开备份列表时按当前配置判断。 */
 export interface McpBackupView {
   id: string;
