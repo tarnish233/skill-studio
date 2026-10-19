@@ -1,8 +1,8 @@
 // jsdom 缺少 Radix 依赖的若干浏览器 API，必须在测试前 polyfill。
 import { vi } from "vitest";
 
-// 让回调立即触发反而会和 floating-ui 形成自激循环（实测单个菜单要 50s+），
-// 所以这里保持惰性 stub。Radix 浮层的交互不在 jsdom 里测，见 tests/libraryPage.test.tsx 的说明。
+// 惰性 stub，Radix 只需要它存在。过去让回调立即触发会让单个菜单卡 50s+，
+// 根因其实是下面 nwsapi 的递归：floating-ui 每重新定位一次就要栈溢出一次。
 class ResizeObserverStub {
   observe() {}
   unobserve() {}
@@ -54,6 +54,25 @@ if (typeof Element !== "undefined") {
   Element.prototype.setPointerCapture ??= () => {};
   Element.prototype.releasePointerCapture ??= () => {};
   Element.prototype.scrollIntoView ??= () => {};
+
+  // nwsapi（jsdom 的选择器引擎）匹配 :modal、:popover-open 等状态伪类时，会再调
+  // node.matches 询问“原生”状态，而 jsdom 的 matches 就是 nwsapi 自己，于是一路递归到
+  // 栈溢出才被吞掉、返回 false。floating-ui 每次定位浮层都会查 :popover-open / :modal，
+  // 打开一个 Radix 提示框或下拉框要卡几秒，CI 上几十秒。jsdom 不模拟这些状态，
+  // 重入的查询直接答 false，结果与原来一致；最外层调用照常交给 nwsapi。
+  const STATES =
+    /^:(open|closed|fullscreen|modal|picture-in-picture|popover-open)$/;
+  const matches = Element.prototype.matches;
+  let depth = 0;
+  Element.prototype.matches = function (this: Element, selector: string) {
+    if (depth > 0 && STATES.test(selector)) return false;
+    depth += 1;
+    try {
+      return matches.call(this, selector);
+    } finally {
+      depth -= 1;
+    }
+  };
 }
 
 // Radix 的浮层定位会用到它，jsdom 没有实现

@@ -198,8 +198,27 @@ it("项目已有 MCP：原有配置纳入管理时保留原位置，不写进别
   );
 });
 
+it("Claude Code 改成项目本地后保存", async () => {
+  setup();
+  await openDetail("webapp");
+  const trigger = screen.getByRole("combobox", {
+    name: "Claude Code 保存位置",
+  });
+  expect(trigger).toHaveTextContent("项目配置");
+  trigger.focus();
+  fireEvent.keyDown(trigger, { key: "Enter" });
+  fireEvent.click(await screen.findByRole("option", { name: "项目本地" }));
+  expect(trigger).toHaveTextContent("项目本地");
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() =>
+    expect(mcpCall("saveProject")).toMatchObject({
+      projectId: "p1",
+      claudeLocal: true,
+    }),
+  );
+});
+
 it("Claude Code 的保存位置随项目保存：读到「项目本地」，改了成员再保存时原样带上", async () => {
-  // 不在 jsdom 里打开 Radix 下拉框（见 tests/libraryPage.test.tsx 的说明），只验证读写两端
   setup((s) => {
     s.projects = {
       p1: {

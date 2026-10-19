@@ -12,10 +12,9 @@ import {
 import { renderWithProviders } from "./utils/render";
 
 /**
- * 注意：这里刻意**不测 Radix 下拉菜单打开后的交互**。
- * Radix 浮层用 floating-ui 定位，在 jsdom 里单次打开要 3–50 秒（根因是 jsdom 的
- * getComputedStyle 性能；让 ResizeObserver 立即回调还会形成自激循环），
- * 在 CI 上必然抖。菜单里那几个动作的正确性由两处兜住：
+ * 这里没有测 Radix 下拉菜单打开后的交互：过去 Radix 浮层在 jsdom 里单次打开要 3–50 秒。
+ * 根因是 nwsapi 匹配 :modal 等状态伪类时递归到栈溢出，已在 tests/setupGlobals.ts 绕过，
+ * 现在打开只要几十毫秒，新测试可以直接点开。菜单里那几个动作的正确性另由两处兜住：
  * - 参数形状：tests/apiLayer.test.ts 直接断言 invoke 收到的参数
  * - 命令名与参数名是否对得上后端：tests/ipcContract.test.ts 静态比对
  */

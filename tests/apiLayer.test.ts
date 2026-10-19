@@ -5,7 +5,7 @@ import { calls } from "./mocks/tauri";
 /**
  * API 层契约：断言每个方法真正传给 invoke 的命令名与参数形状。
  *
- * 页面里那些藏在 Radix 菜单后面的动作没法在 jsdom 里稳定点开（见
+ * 页面里那些藏在 Radix 菜单后面的动作过去没法在 jsdom 里稳定点开（见
  * tests/libraryPage.test.tsx 的说明），所以参数正确性在这一层验。
  * 命令名与后端签名是否对得上，由 tests/ipcContract.test.ts 静态比对。
  */

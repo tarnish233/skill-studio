@@ -12,9 +12,8 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./tests/setupGlobals.ts", "./tests/setupTests.ts"],
     include: ["tests/**/*.test.{ts,tsx}"],
-    // 默认 5s 对首次渲染 + tooltip 偏紧，给一点余量。
-    // 注意不要在 jsdom 里测 Radix 浮层的展开交互，那会慢到必然抖，
-    // 相关约定见 tests/libraryPage.test.tsx 顶部说明。
+    // 默认 5s 对首次渲染偏紧，给一点余量。
+    // Radix 浮层过去在 jsdom 里要卡几秒到几十秒，根因与绕过办法见 tests/setupGlobals.ts。
     testTimeout: 10_000,
     coverage: { reporter: ["text", "lcov"] },
   },
