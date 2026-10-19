@@ -17,7 +17,8 @@ import { isMac } from "@/lib/platform";
 type Blocker = () => { dirty: boolean; busy: boolean };
 const Context = createContext<{
   request: (action: () => void) => void;
-  blocker: React.MutableRefObject<Blocker | null>;
+  /** 页面和它展开的详情可以同时登记（页面的操作进行中、详情里有未保存修改），合起来判断 */
+  blockers: React.MutableRefObject<Set<Blocker>>;
 } | null>(null);
 
 export function NavigationGuard({ children }: { children: React.ReactNode }) {
@@ -25,21 +26,35 @@ export function NavigationGuard({ children }: { children: React.ReactNode }) {
   return parent ? <>{children}</> : <GuardProvider>{children}</GuardProvider>;
 }
 function GuardProvider({ children }: { children: React.ReactNode }) {
-  const blocker = useRef<Blocker | null>(null);
+  const blockers = useRef(new Set<Blocker>());
   const [pending, setPending] = useState<(() => void) | null>(null);
-  const request = useCallback((action: () => void) => {
-    const state = blocker.current?.();
-    if (state?.busy) {
-      toast.info("正在处理当前目标的操作，请稍候");
-      return;
+  /** 任一处在进行中就算进行中，任一处有未保存修改就算有修改 */
+  const current = useCallback(() => {
+    let dirty = false;
+    let busy = false;
+    for (const read of blockers.current) {
+      const state = read();
+      dirty ||= state.dirty;
+      busy ||= state.busy;
     }
-    if (state?.dirty) setPending(() => action);
-    else action();
+    return { dirty, busy };
   }, []);
+  const request = useCallback(
+    (action: () => void) => {
+      const state = current();
+      if (state.busy) {
+        toast.info("正在处理当前目标的操作，请稍候");
+        return;
+      }
+      if (state.dirty) setPending(() => action);
+      else action();
+    },
+    [current],
+  );
   useEffect(() => {
     const beforeUnload = (e: BeforeUnloadEvent) => {
-      const state = blocker.current?.();
-      if (state?.dirty || state?.busy || getPending()) {
+      const state = current();
+      if (state.dirty || state.busy || getPending()) {
         e.preventDefault();
         e.returnValue = "";
       }
@@ -51,7 +66,7 @@ function GuardProvider({ children }: { children: React.ReactNode }) {
       const win = getCurrentWindow();
       void win
         .onCloseRequested((event) => {
-          const state = blocker.current?.();
+          const state = current();
           if (isMac()) {
             // Keep the app (and its MCP gateway) active in the Dock on Cmd+W.
             // Closing with unsaved work still goes through the discard dialog.
@@ -59,7 +74,7 @@ function GuardProvider({ children }: { children: React.ReactNode }) {
             request(() => {
               void win.hide().catch((e) => toast.error(String(e)));
             });
-          } else if (state?.dirty || state?.busy || getPending()) {
+          } else if (state.dirty || state.busy || getPending()) {
             event.preventDefault();
             request(() => {
               void win.destroy().catch((e) => toast.error(String(e)));
@@ -77,8 +92,8 @@ function GuardProvider({ children }: { children: React.ReactNode }) {
       unlisten?.();
       window.removeEventListener("beforeunload", beforeUnload);
     };
-  }, [request]);
-  const value = useMemo(() => ({ request, blocker }), [request]);
+  }, [request, current]);
+  const value = useMemo(() => ({ request, blockers }), [request]);
   return (
     <Context.Provider value={value}>
       {children}
@@ -112,9 +127,10 @@ export function useUnsavedProject(dirty: boolean, busy: boolean) {
   useLayoutEffect(() => {
     if (!guard) return;
     const read = () => latest.current;
-    guard.blocker.current = read;
+    const blockers = guard.blockers.current;
+    blockers.add(read);
     return () => {
-      if (guard.blocker.current === read) guard.blocker.current = null;
+      blockers.delete(read);
     };
   }, [guard]);
 }
