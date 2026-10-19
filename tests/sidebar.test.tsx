@@ -18,12 +18,13 @@ it("keeps sidebar navigation mounted across Agent, settings and Hub pages", asyn
   fireEvent.click(await header.findByRole("button", { name: "MCP" }));
   fireEvent.click(groups);
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("分组");
-  expect(screen.getByPlaceholderText("搜索 MCP 分组…")).toBeVisible();
+  // 两个分组页文案相同，用空状态说明确认停在 MCP 分组页
+  expect(await screen.findByText(/从 MCP Hub 选择需要的 MCP/)).toBeVisible();
   fireEvent.click(within(sidebar).getByRole("button", { name: "设置" }));
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("设置");
   expect(within(nav).getByRole("button", { name: "分组" })).toBe(groups);
   fireEvent.click(screen.getByRole("button", { name: "返回" }));
-  expect(screen.getByPlaceholderText("搜索 MCP 分组…")).toBeVisible();
+  expect(await screen.findByText(/从 MCP Hub 选择需要的 MCP/)).toBeVisible();
   fireEvent.click(header.getByRole("button", { name: "Skill" }));
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("分组");
   fireEvent.click(within(nav).getByRole("button", { name: "Hub" }));

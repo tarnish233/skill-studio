@@ -92,6 +92,21 @@ pub struct GroupEntry {
     pub target_path: std::path::PathBuf,
 }
 
+/// 切换分组时 Studio 没有动的副本：部署后被修改、被替换，或在 Agent 里被手动停用。
+/// 不删、不覆盖——那已经不是 Studio 放进去的样子——只在结果里报告。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UntouchedCopy {
+    pub skill_id: String,
+    pub name: String,
+    pub path: std::path::PathBuf,
+    /// 「副本已被修改」「已被替换」「已被手动停用」
+    pub reason: String,
+    /// 仍在用它的分组继续管理它（卡片上会显示需要检查）；false 表示分组已不再管理，
+    /// 留在 Agent 目录里由用户处理
+    pub tracked: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActiveGroup {

@@ -100,7 +100,7 @@ fn manual_member_is_never_claimed_and_shared_group_is_independent_per_agent() {
 
 #[test]
 #[serial]
-fn local_edits_block_switch_without_changing_files_or_active_group() {
+fn local_edits_stay_in_place_when_switching_away() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
@@ -110,15 +110,138 @@ fn local_edits_block_switch_without_changing_files_or_active_group() {
         .activate_agent_groups(&mut c, "codex", &["a".to_string()])
         .unwrap();
     fs::write(env.codex_skills().join("one/local.txt"), "keep me").unwrap();
-    assert!(studio
+    // 被改过的副本不再拦住切换：不删、不再管理，其余照常切换，并报告留下了哪一份
+    let untouched = studio
         .activate_agent_groups(&mut c, "codex", &["b".to_string()])
-        .is_err());
-    assert_eq!(c.active_groups_of("codex")[0].group_id, "a");
+        .unwrap();
+    assert_eq!(c.active_groups_of("codex")[0].group_id, "b");
     assert_eq!(
         fs::read_to_string(env.codex_skills().join("one/local.txt")).unwrap(),
         "keep me"
     );
-    assert!(!env.codex_skills().join("two").exists());
+    assert!(env.codex_skills().join("two/SKILL.md").exists());
+    assert_eq!(untouched.len(), 1);
+    assert_eq!(untouched[0].name, "one");
+    assert_eq!(untouched[0].path, env.codex_skills().join("one"));
+    assert_eq!(untouched[0].reason, "副本已被修改");
+    assert!(!untouched[0].tracked);
+    assert!(c.registration(&untouched[0].skill_id, "codex").is_none());
+}
+
+#[test]
+#[serial]
+fn stopping_one_group_leaves_a_changed_copy_of_another_alone() {
+    let env = Env::new();
+    let studio = env.studio();
+    let mut c = studio.load_config().unwrap();
+    make(&env, &studio, &mut c, "a", &["one"]);
+    make(&env, &studio, &mut c, "b", &["two"]);
+    studio
+        .activate_agent_groups(&mut c, "codex", &["a".to_string(), "b".to_string()])
+        .unwrap();
+    fs::write(env.codex_skills().join("two/local.txt"), "keep me").unwrap();
+    // 只停用 a：b 里被改过的副本过去会让这次停用整个失败
+    let untouched = studio
+        .activate_agent_groups(&mut c, "codex", &["b".to_string()])
+        .unwrap();
+    assert!(!env.codex_skills().join("one").exists());
+    assert_eq!(
+        fs::read_to_string(env.codex_skills().join("two/local.txt")).unwrap(),
+        "keep me"
+    );
+    // b 还在用它：不覆盖，但仍归 b 管，卡片上会显示需要检查
+    let records = c.active_groups_of("codex");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].entries.len(), 1);
+    assert_eq!(
+        untouched
+            .iter()
+            .map(|u| (u.name.as_str(), u.reason.as_str(), u.tracked))
+            .collect::<Vec<_>>(),
+        [("two", "副本已被修改", true)]
+    );
+    // 重新应用同样不覆盖本地修改
+    let again = studio
+        .activate_agent_groups(&mut c, "codex", &["b".to_string()])
+        .unwrap();
+    assert_eq!(again.len(), 1);
+    assert_eq!(
+        fs::read_to_string(env.codex_skills().join("two/local.txt")).unwrap(),
+        "keep me"
+    );
+}
+
+#[test]
+#[serial]
+fn a_replaced_copy_is_left_alone_when_its_group_stops() {
+    let env = Env::new();
+    let studio = env.studio();
+    let mut c = studio.load_config().unwrap();
+    make(&env, &studio, &mut c, "a", &["one"]);
+    studio
+        .activate_agent_groups(&mut c, "codex", &["a".to_string()])
+        .unwrap();
+    // 另一个工具在同一位置放了自己的 skill
+    let target = env.codex_skills().join("one");
+    fs::remove_dir_all(&target).unwrap();
+    env.write_skill(
+        &env.codex_skills(),
+        "one",
+        "---\nname: one\n---\nsomeone else",
+    );
+    let untouched = studio.activate_agent_groups(&mut c, "codex", &[]).unwrap();
+    assert!(fs::read_to_string(target.join("SKILL.md"))
+        .unwrap()
+        .contains("someone else"));
+    assert!(c.active_groups_of("codex").is_empty());
+    assert_eq!(
+        untouched
+            .iter()
+            .map(|u| (u.reason.as_str(), u.tracked))
+            .collect::<Vec<_>>(),
+        [("已被替换", false)]
+    );
+}
+
+#[test]
+#[serial]
+fn a_natively_disabled_member_no_longer_blocks_stopping_another_group() {
+    let env = Env::new();
+    let studio = env.studio();
+    let mut c = studio.load_config().unwrap();
+    make(&env, &studio, &mut c, "a", &["one"]);
+    make(&env, &studio, &mut c, "b", &["two"]);
+    studio
+        .activate_agent_groups(&mut c, "codex", &["a".to_string(), "b".to_string()])
+        .unwrap();
+    let two = studio
+        .scan_skills(&c)
+        .unwrap()
+        .into_iter()
+        .find(|v| v.skill.name == "two")
+        .unwrap()
+        .skill
+        .id;
+    studio.set_skill_enabled(&c, &two, "codex", false).unwrap();
+    let untouched = studio
+        .activate_agent_groups(&mut c, "codex", &["b".to_string()])
+        .unwrap();
+    assert!(!env.codex_skills().join("one").exists());
+    // 保持停用：Studio 不替用户重新启用
+    let view = studio
+        .scan_skills(&c)
+        .unwrap()
+        .into_iter()
+        .find(|v| v.skill.id == two)
+        .unwrap();
+    assert!(view.agents["codex"].disabled);
+    assert_eq!(
+        untouched
+            .iter()
+            .map(|u| (u.name.as_str(), u.reason.as_str(), u.tracked))
+            .collect::<Vec<_>>(),
+        [("two", "已被手动停用", true)]
+    );
 }
 
 #[test]

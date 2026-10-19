@@ -127,6 +127,17 @@ export interface AgentInfo {
 }
 
 /** 分组不归属任何单个 agent：同一个分组可以被不同 agent 各自独立激活（见 `AppConfig.activeGroups`） */
+/** 切换分组时 Studio 没有动的副本：部署后被修改、被替换，或在 Agent 里被手动停用 */
+export interface UntouchedCopy {
+  skillId: string;
+  name: string;
+  path: string;
+  /** 「副本已被修改」「已被替换」「已被手动停用」 */
+  reason: string;
+  /** 仍在用它的分组继续管理它；false 表示分组已不再管理，留在 Agent 目录里 */
+  tracked: boolean;
+}
+
 export interface Group {
   id: string;
   name: string;

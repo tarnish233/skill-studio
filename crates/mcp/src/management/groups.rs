@@ -123,13 +123,30 @@ pub fn reorder(dir: &Path, ids: &[String]) -> Result<()> {
 ///
 /// 部署内容是这些分组成员的并集：多个分组共用的成员只写一份，只在所有用到它的分组
 /// 都停用后才撤回。
+/// 切换分组时 Studio 没有动的接入：部署后已被其他程序改写（包括被手动停用）。
+/// 不覆盖、不删除——那已经不是 Studio 写的内容——只在结果里报告。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Untouched {
+    pub agent: String,
+    pub path: PathBuf,
+    pub project: Option<String>,
+    pub key: String,
+    /// 仍在用它的分组继续记着它（卡片上会显示需要检查）；false 表示分组已不再管理它，
+    /// 之后作为原有配置出现在扫描结果里
+    pub tracked: bool,
+}
+/// 设置这个 Agent 当前叠加的全部分组（空列表表示全部停用），返回原样留下的接入。
+///
+/// 部署后被其他程序改写的接入不会拦住切换：要撤下的不再管理，要保留的不覆盖，都原样留着。
+/// 启用新成员时同名位置上已有别人的配置，仍然拒绝，不覆盖。
 pub fn activate(
     dir: &Path,
     agent_id: &str,
     ids: &[String],
     path: &Path,
     executable: &Path,
-) -> Result<()> {
+) -> Result<Vec<Untouched>> {
     crate::agents::validate(agent_id)?;
     let _lock = lock(dir)?;
     let mut catalog = read_unlocked(dir)?;
@@ -211,24 +228,25 @@ pub fn activate(
     let mut files = BTreeMap::new();
     let previous = catalog.active_groups.remove(agent_id).unwrap_or_default();
     let owned_before: Vec<Binding> = previous.iter().flat_map(|g| g.bindings.clone()).collect();
+    let mut released = Removal::default();
     for binding in &owned_before {
         if binding.path == path && wanted.contains(&binding.key) {
             continue;
         }
-        let target = Target {
-            agent: agent_id.into(),
-            path: binding.path.clone(),
-            project: binding.project.clone(),
-            key: binding.key.clone(),
-            expected: None,
-        };
-        stage(
-            &mut files,
-            &target,
-            &Some(binding.installed.clone()),
-            &binding.original,
-        )?;
+        // 与删除托管同一规则：还是 Studio 写的就还原，被其他程序改写的不碰、不再管理
+        release(&mut files, binding, &binding.original, &mut released)?;
     }
+    let mut untouched: Vec<Untouched> = released
+        .foreign
+        .into_iter()
+        .map(|f| Untouched {
+            agent: f.agent,
+            path: f.path,
+            project: f.project,
+            key: f.key,
+            tracked: false,
+        })
+        .collect();
     let mut bindings = vec![];
     let mut keys = HashSet::new();
     for entry in &entries {
@@ -243,6 +261,23 @@ pub fn activate(
         };
         native::check_activation(&text, agent_id, &key)?;
         let original = native::entry(&text, agent_id, None, &key)?;
+        // 之前由分组写入、之后被其他程序改写（或停用）的接入：不覆盖，仍记在分组名下
+        let owned = owned_before
+            .iter()
+            .find(|b| b.path == path && b.project.is_none() && b.key == key);
+        if let (Some(value), Some(owned)) = (&original, owned) {
+            if *value != owned.installed {
+                untouched.push(Untouched {
+                    agent: agent_id.into(),
+                    path: path.into(),
+                    project: None,
+                    key: key.clone(),
+                    tracked: true,
+                });
+                bindings.push(owned.clone());
+                continue;
+            }
+        }
         if let Some(value) = &original {
             if !native::enabled(value, agent_id) {
                 bail!("MCP「{key}」已被手动停用，请先恢复启用");
@@ -353,33 +388,52 @@ pub fn activate(
             .collect();
         catalog.active_groups.insert(agent_id.into(), records);
     }
-    commit(dir, files, &catalog)
+    commit(dir, files, &catalog)?;
+    Ok(untouched)
 }
 
-pub fn issues(catalog: &Catalog) -> BTreeMap<String, String> {
-    catalog
-        .active_groups
-        .iter()
-        .filter_map(|(agent, groups)| {
-            let issue = groups.iter().flat_map(|g| &g.bindings).find_map(|b| {
-                let check = read_text(&b.path).and_then(|text| {
-                    native::entry(
-                        &text.unwrap_or_default(),
-                        &b.agent,
-                        b.project.as_deref(),
-                        &b.key,
-                    )
+/// 每个 Agent 下、每个在用分组的部署问题：分组写进 Agent 配置的接入已被外部修改或移除。
+/// 共用的成员只记在第一个分组名下（见 `activate`），这里同样标到其他也包含它的在用分组上，
+/// 让界面只在受影响的分组卡片上提示「需要检查」。
+pub fn issues(catalog: &Catalog) -> BTreeMap<String, BTreeMap<String, String>> {
+    let mut texts: std::collections::HashMap<PathBuf, Option<String>> = Default::default();
+    let mut out = BTreeMap::new();
+    for (agent, records) in &catalog.active_groups {
+        let mut by_group = BTreeMap::new();
+        for record in records {
+            for b in &record.bindings {
+                let text = texts
+                    .entry(b.path.clone())
+                    .or_insert_with(|| read_text(&b.path).ok().flatten());
+                let intact = text.as_deref().is_some_and(|text| {
+                    native::entry(text, &b.agent, b.project.as_deref(), &b.key)
+                        .is_ok_and(|value| value.as_ref() == Some(&b.installed))
                 });
-                match check {
-                    Ok(value) if value == Some(b.installed.clone()) => None,
-                    _ => Some(format!(
-                        "MCP「{}」的配置已在外部修改或移除，请先核对 {}",
-                        b.key,
-                        b.path.display()
-                    )),
+                if intact {
+                    continue;
                 }
-            });
-            issue.map(|issue| (agent.clone(), issue))
-        })
-        .collect()
+                let issue = format!(
+                    "MCP「{}」的配置已在外部修改或移除，请先核对 {}",
+                    b.key,
+                    b.path.display()
+                );
+                for other in records {
+                    let member = other.group_id == record.group_id
+                        || catalog
+                            .groups
+                            .iter()
+                            .any(|g| g.id == other.group_id && g.entry_ids.contains(&b.id));
+                    if member {
+                        by_group
+                            .entry(other.group_id.clone())
+                            .or_insert_with(|| issue.clone());
+                    }
+                }
+            }
+        }
+        if !by_group.is_empty() {
+            out.insert(agent.clone(), by_group);
+        }
+    }
+    out
 }

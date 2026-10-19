@@ -58,6 +58,11 @@ export interface McpForeign {
   project: string | null;
   key: string;
 }
+/** 启停分组时 Studio 没有动的接入：部署后已被其他程序改写（包括被手动停用） */
+export interface McpUntouched extends McpForeign {
+  /** 仍在用它的分组继续管理它；false 表示分组已不再管理，作为原有配置留下 */
+  tracked: boolean;
+}
 export interface McpRemoval {
   /** Studio 撤回（或还原成原配置）的接入数 */
   removed: number;
@@ -89,7 +94,8 @@ export interface ManagementStatus {
     createdAt: number;
   }[];
   builtins?: { name: string; agent: string; path: string; scope: string }[];
-  groupIssues?: Record<string, string>;
+  /** agent → 分组 id → 这个分组在该 Agent 上的部署问题（接入被外部修改或移除） */
+  groupIssues?: Record<string, Record<string, string>>;
   groups?: McpGroup[];
   /** agent → 当前叠加的分组记录；部署内容是这些分组成员的并集 */
   activeGroups?: Record<string, ActiveMcpGroup[]>;

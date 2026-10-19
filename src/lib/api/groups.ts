@@ -1,5 +1,5 @@
 import { invoke } from "@/lib/api/transport";
-import type { Group } from "@/types";
+import type { Group, UntouchedCopy } from "@/types";
 
 export const groupsApi = {
   /** 分组不属于某个 Agent：保存名称和成员，是否对某 Agent 生效由 activate 单独决定 */
@@ -14,8 +14,11 @@ export const groupsApi = {
       skillIds,
     });
   },
-  /** 设置这个 Agent 当前叠加的全部分组；空数组表示全部停用 */
-  async activate(agentId: string, groupIds: string[]): Promise<void> {
+  /** 设置这个 Agent 当前叠加的全部分组；空数组表示全部停用。返回原样留下的副本 */
+  async activate(
+    agentId: string,
+    groupIds: string[],
+  ): Promise<UntouchedCopy[]> {
     return await invoke("activate_agent_group", { agentId, groupIds });
   },
   async list(): Promise<Group[]> {

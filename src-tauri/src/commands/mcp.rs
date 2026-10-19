@@ -211,7 +211,8 @@ pub async fn mcp_request(
         let keep = state.config().settings.backup_keep;
         let state = state.inner().clone();
         let task_dir = dir.clone();
-        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        // 启用 / 停用返回原样留下的接入（见 groups::Untouched），其余写操作返回 null
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Value> {
             use anyhow::Context;
             use management::groups;
             match method.as_str() {
@@ -279,15 +280,20 @@ pub async fn mcp_request(
                             });
                         }
                     }
-                    groups::save_group(&task_dir, group, imports)
+                    groups::save_group(&task_dir, group, imports)?;
+                    Ok(Value::Null)
                 }
                 "removeGroup" => {
-                    groups::remove_group(&task_dir, params["id"].as_str().context("缺少分组 ID")?)
+                    groups::remove_group(&task_dir, params["id"].as_str().context("缺少分组 ID")?)?;
+                    Ok(Value::Null)
                 }
-                "reorderGroups" => groups::reorder(
-                    &task_dir,
-                    &serde_json::from_value::<Vec<String>>(params["ids"].clone())?,
-                ),
+                "reorderGroups" => {
+                    groups::reorder(
+                        &task_dir,
+                        &serde_json::from_value::<Vec<String>>(params["ids"].clone())?,
+                    )?;
+                    Ok(Value::Null)
+                }
                 _ => {
                     let agent = params["agent"].as_str().context("缺少 Agent")?;
                     let ids: Vec<String> = match params.get("ids") {
@@ -295,13 +301,13 @@ pub async fn mcp_request(
                         None => Vec::new(),
                     };
                     if ids.is_empty() {
-                        return groups::activate(
+                        return Ok(json!(groups::activate(
                             &task_dir,
                             agent,
                             &[],
                             &PathBuf::new(),
                             &std::env::current_exe()?,
-                        );
+                        )?));
                     }
                     let app_agent = if agent == "claude" {
                         "claude-code"
@@ -335,7 +341,13 @@ pub async fn mcp_request(
                         &management::Catalog::default(),
                     )?;
                     let path = &targets.first().context("未找到 Agent 配置")?.path;
-                    groups::activate(&task_dir, agent, &ids, path, &std::env::current_exe()?)
+                    Ok(json!(groups::activate(
+                        &task_dir,
+                        agent,
+                        &ids,
+                        path,
+                        &std::env::current_exe()?
+                    )?))
                 }
             }
         })
@@ -344,7 +356,7 @@ pub async fn mcp_request(
         .map_err(|e| e.to_string())?;
         prune_backups(dir.clone(), keep).await;
         notify_gateway(&dir).await;
-        return Ok(Value::Null);
+        return Ok(result);
     }
     if method == "saveEntry" || method == "removeEntry" || method == "removeSources" {
         state.ensure_writable().map_err(|e| e.to_string())?;

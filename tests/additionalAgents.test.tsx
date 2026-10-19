@@ -92,8 +92,9 @@ it("offers Pi's native MCP help in Pi's MCP group view", async () => {
   localStorage.setItem("skill-studio-view", "groups");
   localStorage.setItem("skill-studio-resource", "mcp");
   renderWithProviders(<App />);
+  // 两个分组页文案相同，用空状态说明确认停在 MCP 分组页
   expect(
-    await screen.findByRole("button", { name: "新建 MCP 分组" }),
+    await screen.findByText(/从 MCP Hub 选择需要的 MCP/),
   ).toBeInTheDocument();
   fireEvent.click(viewChip(/^Pi/));
   expect(

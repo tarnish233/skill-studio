@@ -19,14 +19,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { PageTools } from "@/components/common/PageTools";
 import { useEffect, useMemo, useState } from "react";
-import {
-  Bot,
-  FolderOpen,
-  PackagePlus,
-  PackageMinus,
-  Link2,
-} from "lucide-react";
+import { FolderOpen, PackagePlus, PackageMinus, Link2 } from "lucide-react";
 import { AgentIcon } from "@/components/common/AgentIcon";
+import {
+  SOURCE_LABELS,
+  SOURCE_TITLES,
+  SourceMark,
+  sourceIcon,
+} from "@/components/common/SourceMark";
 import {
   hubCatalog,
   isSkillVisible,
@@ -287,22 +287,14 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
                         )
                         .map((s) => s.sourcePath)
                         .join("\n")}`;
-                      const icon = sourceIcon(id);
                       // 与顶部筛选同一规则：认得出的用图标，其余写出名称
-                      return icon ? (
-                        <span
+                      return (
+                        <SourceMark
                           key={id}
-                          role="img"
-                          aria-label={`来源：${sourceLabel(id)}`}
+                          id={id}
+                          label={sourceLabel(id)}
                           title={title}
-                        >
-                          {icon}
-                        </span>
-                      ) : (
-                        <Badge key={id} variant="outline" title={title}>
-                          <span className="sr-only">来源：</span>
-                          {sourceLabel(id)}
-                        </Badge>
+                        />
                       );
                     })}
                     <Badge
@@ -723,35 +715,6 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
       />
     </div>
   );
-}
-
-/** 不是 Agent 的来源：Skill Studio、共享 Agent 目录、无法确认的来源 */
-const SOURCE_LABELS: Record<string, string> = {
-  studio: "Skill Studio",
-  agent: "Agent",
-  unknown: "来源待确认",
-  external: "外部来源",
-};
-/** 筛选胶囊的悬停提示：先报名称再解释（有图标的胶囊只显示图标） */
-const SOURCE_TITLES = {
-  studio: "Skill Studio：通过 Skill Studio 安装的 skill",
-  agent:
-    "Agent：共享 Agent 目录（~/.agents/skills）里的 skill。Codex、OpenCode、Pi、Grok Build 都会直接加载这里的 skill，分组管不住；Skill Studio 不会往里部署，纳入托管会把它移出共享目录。",
-  unknown: "来源待确认：缺少托管记录，无法确认原始来源",
-  external: "外部来源：不在任何 Agent 的 skill 目录里",
-} as const;
-
-/**
- * 来源图标，筛选胶囊和卡片上的来源标记共用。只给一眼认得出的：Agent 的品牌
- * 图标、Skill Studio，以及共享 Agent 目录的小机器人；待确认、外部来源没有，
- * 直接写名称。
- */
-function sourceIcon(id: string) {
-  if (id === "studio") return <SkillStudioIcon className="h-4 w-4" />;
-  if (id === "agent")
-    return <Bot className="h-4 w-4 text-violet-500 dark:text-violet-400" />;
-  if (id in SOURCE_LABELS) return undefined;
-  return <AgentIcon agentId={id} size="sm" />;
 }
 
 function agentName(

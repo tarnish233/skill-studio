@@ -53,7 +53,7 @@ pub async fn activate_agent_group(
     state: State<'_, AppState>,
     agent_id: String,
     group_ids: Vec<String>,
-) -> Result<(), String> {
+) -> Result<Vec<skill_studio_core::models::group::UntouchedCopy>, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         skill_studio_service::groups::activate_agent_groups(&state, agent_id, group_ids)

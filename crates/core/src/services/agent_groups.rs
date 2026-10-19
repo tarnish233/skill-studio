@@ -5,12 +5,12 @@ use crate::{
     models::{
         agent::{in_shared_root, require_agent},
         config::{AppConfig, Registration},
-        group::{ActiveGroup, Group, GroupEntry},
+        group::{ActiveGroup, Group, GroupEntry, UntouchedCopy},
         skill::LinkMode,
     },
     Error, Result,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 impl Studio {
     /// Create or edit a shared group's name and members. Groups are not owned by
@@ -79,16 +79,19 @@ impl Studio {
         Ok(())
     }
 
-    /// 设置这个 agent 当前叠加的全部分组（`&[]` 表示全部停用）。
+    /// 设置这个 agent 当前叠加的全部分组（`&[]` 表示全部停用），返回原样留下的副本。
     ///
     /// 文件操作与启用记录在同一个回滚日志里：部署内容是这些分组成员加手动安装 skill 的
     /// 并集，多个分组共用的成员只部署一份，只在所有用到它的分组都停用后才撤下。
+    ///
+    /// 部署后被修改、替换或被手动停用的副本不会拦住切换：要撤下的不删、不再管理，
+    /// 要保留的不覆盖，都原样留着并报告出来。退出应用管理仍然先要求处理好这些副本。
     pub fn activate_agent_groups(
         &self,
         config: &mut AppConfig,
         agent_id: &str,
         group_ids: &[String],
-    ) -> Result<()> {
+    ) -> Result<Vec<UntouchedCopy>> {
         if !group_ids.is_empty()
             && config
                 .settings
@@ -131,25 +134,52 @@ impl Studio {
             .collect();
         let (suspended_manual, manual_toggles) =
             super::manual_policy::plan(config, agent_id, &ids, &views)?;
-        // Validate ownership/content even for retained members. Never silently discard local edits.
+        let leaving = groups.is_empty()
+            && config
+                .settings
+                .disabled_agents
+                .iter()
+                .any(|id| id == agent_id);
+        // Never silently discard local edits: a copy that no longer matches what Studio
+        // deployed is left in place. Leaving management still asks the user to sort it out.
+        let mut changed: HashMap<std::path::PathBuf, &'static str> = HashMap::new();
         for entry in &owned {
             if entry.target_path.symlink_metadata().is_err() {
                 continue;
             }
-            let valid = !scanner::is_symlink_or_junction(&entry.target_path)
-                && scanner::read_copy_sidecar(&entry.target_path).is_some_and(|m| {
+            let sidecar = (!scanner::is_symlink_or_junction(&entry.target_path))
+                .then(|| scanner::read_copy_sidecar(&entry.target_path))
+                .flatten()
+                .filter(|m| {
                     m.skill_id == entry.skill_id
                         && paths::paths_alias(&m.source_path, &entry.source_path)
-                        && scanner::dir_content_hash(&entry.target_path)
-                            .is_ok_and(|hash| hash == m.source_hash)
                 });
-            if !valid {
+            let reason = match sidecar {
+                Some(m)
+                    if scanner::dir_content_hash(&entry.target_path)
+                        .is_ok_and(|hash| hash == m.source_hash) =>
+                {
+                    continue
+                }
+                Some(_) => "副本已被修改",
+                None => "已被替换",
+            };
+            if leaving {
                 return Err(Error::invalid(format!(
                     "分组副本已被修改或替换，请先处理后再切换：{}",
                     entry.target_path.display()
                 )));
             }
+            changed.insert(entry.target_path.clone(), reason);
         }
+        let name_of = |skill_id: &str| {
+            views
+                .iter()
+                .find(|v| v.skill.id == skill_id)
+                .map(|v| v.skill.name.clone())
+                .unwrap_or_else(|| skill_id.to_string())
+        };
+        let mut untouched = Vec::new();
         let mut additions = Vec::new();
         let mut targets = HashSet::new();
         for id in &ids {
@@ -161,15 +191,30 @@ impl Studio {
             view.skill = super::variants::for_agent(config, &view.skill, agent_id)?;
             scanner::validate_sync_source(&view.skill.source_path)?;
             let state = &view.agents[agent_id];
-            let retained = owned
+            // 继续保留的成员：部署后被改过的副本不覆盖；用户在 Agent 里停用了它就保持停用，
+            // 不替用户重新启用。两种都继续由分组管理（卡片上显示需要检查）
+            let deployed = owned
                 .iter()
-                .any(|e| e.skill_id == *id && e.target_path.is_dir());
-            if retained && state.disabled {
-                return Err(Error::invalid(format!(
-                    "{} 已被手动停用，请先恢复启用",
-                    view.skill.name
-                )));
+                .find(|e| e.skill_id == *id && e.target_path.symlink_metadata().is_ok());
+            let kept = deployed.and_then(|entry| {
+                let reason = changed.get(&entry.target_path).copied().or((entry
+                    .target_path
+                    .is_dir()
+                    && state.disabled)
+                    .then_some("已被手动停用"))?;
+                Some(UntouchedCopy {
+                    skill_id: id.clone(),
+                    name: view.skill.name.clone(),
+                    path: entry.target_path.clone(),
+                    reason: reason.into(),
+                    tracked: true,
+                })
+            });
+            if let Some(kept) = kept {
+                untouched.push(kept);
+                continue;
             }
+            let retained = deployed.is_some_and(|e| e.target_path.is_dir());
             if retained && state.status == crate::models::skill::LinkStatus::Copied {
                 continue;
             }
@@ -213,12 +258,6 @@ impl Studio {
             }
             additions.push((view.skill.clone(), dest));
         }
-        let leaving = groups.is_empty()
-            && config
-                .settings
-                .disabled_agents
-                .iter()
-                .any(|id| id == agent_id);
         let overrides = &config.settings.agent_dir_overrides;
         let roots = agent.resolved_global_roots(overrides);
         let mut restores = Vec::new();
@@ -353,6 +392,22 @@ impl Studio {
         let mut tx = Transaction::begin(self.store().dir().join("group-switch.json"))?;
         let operation = (|| -> Result<()> {
             for entry in &owned {
+                if let Some(reason) = changed.get(&entry.target_path) {
+                    if ids.contains(&entry.skill_id) {
+                        entries.push(entry.clone());
+                    } else {
+                        // 不再需要它的分组都停用了：不删，交还给用户
+                        untouched.push(UntouchedCopy {
+                            skill_id: entry.skill_id.clone(),
+                            name: name_of(&entry.skill_id),
+                            path: entry.target_path.clone(),
+                            reason: (*reason).into(),
+                            tracked: false,
+                        });
+                        next.remove_registration(&entry.skill_id, agent_id);
+                    }
+                    continue;
+                }
                 if ids.contains(&entry.skill_id)
                     && entry.target_path.is_dir()
                     && !additions.iter().any(|(_, dest)| dest == &entry.target_path)
@@ -507,6 +562,6 @@ impl Studio {
         }
         tx.commit()?;
         *config = next;
-        Ok(())
+        Ok(untouched)
     }
 }

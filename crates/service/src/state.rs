@@ -260,8 +260,12 @@ impl AppState {
         Ok(())
     }
 
-    /// 设置这个 agent 当前叠加的全部分组；空列表表示全部停用
-    pub fn activate_agent_groups(&self, agent_id: &str, group_ids: &[String]) -> Result<()> {
+    /// 设置这个 agent 当前叠加的全部分组；空列表表示全部停用。返回原样留下的副本
+    pub fn activate_agent_groups(
+        &self,
+        agent_id: &str,
+        group_ids: &[String],
+    ) -> Result<Vec<skill_studio_core::models::group::UntouchedCopy>> {
         self.ensure_writable()?;
         let mut guard = self.config_mut();
         self.studio

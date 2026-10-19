@@ -267,16 +267,22 @@ it("uses the header resource toggle to scope the Groups and project pages", asyn
   const header = within(screen.getByRole("banner"));
   await user.click(await header.findByRole("button", { name: "MCP" }));
   await user.click(nav.getByRole("button", { name: "分组" }));
+  // 两个分组页文案相同，用空状态说明确认停在 MCP 分组页
   expect(
-    await screen.findByRole("button", { name: "新建 MCP 分组" }),
+    await screen.findByText(/从 MCP Hub 选择需要的 MCP/),
   ).toBeInTheDocument();
   expect(header.getByRole("button", { name: "MCP" })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
-  await user.click(screen.getByRole("button", { name: "新建 MCP 分组" }));
+  await user.click(screen.getAllByRole("button", { name: "新建分组" })[0]);
+  expect(
+    within(screen.getByRole("dialog")).getByRole("textbox", {
+      name: "搜索 Hub MCP",
+    }),
+  ).toBeInTheDocument();
   await user.type(
-    screen.getByRole("textbox", { name: "MCP 分组名称" }),
+    screen.getByRole("textbox", { name: "分组名称" }),
     "取消的草稿",
   );
   await user.click(
@@ -303,8 +309,9 @@ it("uses the header resource toggle to scope the Groups and project pages", asyn
   expect(screen.getByText("托管接入 0")).toBeInTheDocument();
   await user.click(header.getByRole("button", { name: "Skill" }));
   await user.click(nav.getByRole("button", { name: "分组" }));
+  // 回到 Skill 分组页：空状态说明换成 Skill Hub
   expect(
-    await screen.findByRole("button", { name: "新建分组" }),
+    await screen.findByText(/从 Skill Hub 选择需要的 skill/),
   ).toBeInTheDocument();
   expect(
     screen.queryByRole("tab", { name: /^已配置 MCP/ }),
@@ -322,7 +329,7 @@ it("restores the saved Groups page together with its MCP mode", async () => {
   localStorage.setItem("skill-studio-resource", "mcp");
   renderWithProviders(<App />);
   expect(
-    await screen.findByRole("button", { name: "新建 MCP 分组" }),
+    await screen.findByText(/从 MCP Hub 选择需要的 MCP/),
   ).toBeInTheDocument();
 });
 

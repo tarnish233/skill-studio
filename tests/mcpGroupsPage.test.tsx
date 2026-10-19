@@ -255,8 +255,8 @@ it("records discovered MCP references without adopting or activating on save", a
     },
   ];
   await open();
-  fireEvent.click(screen.getByRole("button", { name: "新建 MCP 分组" }));
-  fireEvent.change(screen.getByRole("textbox", { name: "MCP 分组名称" }), {
+  fireEvent.click(screen.getByRole("button", { name: "新建分组" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "分组名称" }), {
     target: { value: "浏览器" },
   });
   fireEvent.click(screen.getByRole("checkbox", { name: "选择 Scan" }));
@@ -318,10 +318,10 @@ it("shows only group cards: no tabs and no Agent picker, single MCPs are added f
   expect(screen.queryByRole("tab")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("选择 Agent")).not.toBeInTheDocument();
   expect(
-    screen.getByRole("textbox", { name: "搜索 MCP 分组…" }),
+    screen.getByRole("textbox", { name: "搜索分组…" }),
   ).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "新建 MCP 分组" }));
-  expect(await screen.findByRole("dialog")).toHaveTextContent("新建 MCP 分组");
+  fireEvent.click(screen.getByRole("button", { name: "新建分组" }));
+  expect(await screen.findByRole("dialog")).toHaveTextContent("新建分组");
   expect(methods()).not.toContain("saveEntry");
   expect(methods()).not.toContain("activateGroup");
 });
@@ -493,7 +493,7 @@ it("整张 MCP 分组卡片可点：点卡片打开编辑分组，不再有铅�
   await open();
   fireEvent.click(screen.getByRole("button", { name: "编辑 开发" }));
   const dialog = await screen.findByRole("dialog");
-  expect(within(dialog).getByLabelText("MCP 分组名称")).toHaveValue("开发");
+  expect(within(dialog).getByLabelText("分组名称")).toHaveValue("开发");
   fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });

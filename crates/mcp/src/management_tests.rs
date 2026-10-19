@@ -825,7 +825,7 @@ fn groups_switch_restore_and_isolate_agents_and_provider_settings() {
     assert_eq!(doc["mcp_servers"], json!({"manual":{"command":"manual"}}));
 }
 #[test]
-fn group_edits_are_pending_and_external_drift_prevents_partial_switch() {
+fn group_edits_are_pending_and_external_drift_is_left_alone_on_switch() {
     let root = tempfile::tempdir().unwrap();
     let dir = root.path().join("studio");
     let path = root.path().join("config.toml");
@@ -874,21 +874,172 @@ fn group_edits_are_pending_and_external_drift_prevents_partial_switch() {
     )
     .unwrap();
     let changed = std::fs::read(&path).unwrap();
-    let catalog_before = std::fs::read(dir.join("catalog.json")).unwrap();
-    assert!(groups::activate(
+    // 被外部改过的接入不再拦住切换：两个分组都要 Sample，原样留着、仍归分组管，并报告出来
+    let untouched = groups::activate(
         &dir,
         "codex",
         &["two".to_string()],
         &path,
-        Path::new("/app")
+        Path::new("/app"),
     )
-    .is_err());
+    .unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), changed);
     assert_eq!(
-        std::fs::read(dir.join("catalog.json")).unwrap(),
-        catalog_before
+        untouched
+            .iter()
+            .map(|u| (u.key.as_str(), u.tracked))
+            .collect::<Vec<_>>(),
+        [("Sample", true)]
     );
-    assert!(groups::issues(&read(&dir).unwrap()).contains_key("codex"));
+    let catalog = read(&dir).unwrap();
+    assert_eq!(catalog.active_groups["codex"][0].group_id, "two");
+    assert!(groups::issues(&catalog)["codex"].contains_key("two"));
+}
+#[test]
+fn stopping_a_group_leaves_a_connection_another_tool_rewrote() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("studio");
+    let path = root.path().join("config.toml");
+    save(
+        &dir,
+        entry(json!({"type":"stdio","command":"a"}), "direct"),
+        vec![],
+        Path::new("/app"),
+        None,
+    )
+    .unwrap();
+    groups::save_group(&dir, group("one", &["sample"]), vec![]).unwrap();
+    groups::activate(
+        &dir,
+        "codex",
+        &["one".to_string()],
+        &path,
+        Path::new("/app"),
+    )
+    .unwrap();
+    std::fs::write(
+        &path,
+        "[mcp_servers.Sample]\ncommand='rewritten-by-another-tool'\n",
+    )
+    .unwrap();
+    let rewritten = std::fs::read(&path).unwrap();
+    let untouched =
+        groups::activate(&dir, "codex", &[], &PathBuf::new(), Path::new("/app")).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), rewritten);
+    assert_eq!(
+        untouched
+            .iter()
+            .map(|u| (u.agent.as_str(), u.key.as_str(), u.tracked))
+            .collect::<Vec<_>>(),
+        [("codex", "Sample", false)]
+    );
+    let catalog = read(&dir).unwrap();
+    assert!(!catalog.active_groups.contains_key("codex"));
+    assert!(groups::issues(&catalog).is_empty());
+}
+#[test]
+fn stopping_one_group_is_not_blocked_by_a_rewritten_connection_in_another() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("studio");
+    let path = root.path().join("config.toml");
+    for (id, command) in [("alpha", "a"), ("beta", "b"), ("gamma", "g")] {
+        let mut e = entry(json!({"type":"stdio","command":command}), "direct");
+        e.id = id.into();
+        e.name = id.into();
+        save(&dir, e, vec![], Path::new("/app"), None).unwrap();
+    }
+    groups::save_group(&dir, group("a", &["alpha"]), vec![]).unwrap();
+    groups::save_group(&dir, group("b", &["beta"]), vec![]).unwrap();
+    groups::save_group(&dir, group("c", &["gamma"]), vec![]).unwrap();
+    groups::activate(
+        &dir,
+        "codex",
+        &["a".to_string(), "b".to_string()],
+        &path,
+        Path::new("/app"),
+    )
+    .unwrap();
+    let mut doc: toml_edit::DocumentMut = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+    doc["mcp_servers"]["beta"]["command"] = toml_edit::value("rewritten");
+    // 新成员的同名位置上已有别人的配置
+    doc["mcp_servers"]["gamma"]["command"] = toml_edit::value("someone-else");
+    std::fs::write(&path, doc.to_string()).unwrap();
+    let untouched =
+        groups::activate(&dir, "codex", &["b".to_string()], &path, Path::new("/app")).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(native::entry(&text, "codex", None, "alpha").unwrap(), None);
+    assert_eq!(
+        native::entry(&text, "codex", None, "beta")
+            .unwrap()
+            .unwrap()["command"],
+        "rewritten"
+    );
+    assert_eq!(
+        untouched
+            .iter()
+            .map(|u| (u.key.as_str(), u.tracked))
+            .collect::<Vec<_>>(),
+        [("beta", true)]
+    );
+    assert_eq!(
+        groups::issues(&read(&dir).unwrap())["codex"]
+            .keys()
+            .collect::<Vec<_>>(),
+        ["b"]
+    );
+    // 启用新成员时仍然不覆盖别人的同名配置
+    let before = std::fs::read(&path).unwrap();
+    assert!(groups::activate(
+        &dir,
+        "codex",
+        &["b".to_string(), "c".to_string()],
+        &path,
+        Path::new("/app"),
+    )
+    .is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+#[test]
+fn deployment_issues_name_the_groups_whose_connections_were_changed() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("studio");
+    let path = root.path().join("config.toml");
+    for (id, command) in [("alpha", "a"), ("beta", "b"), ("shared", "s")] {
+        let mut e = entry(json!({"type":"stdio","command":command}), "direct");
+        e.id = id.into();
+        e.name = id.into();
+        save(&dir, e, vec![], Path::new("/app"), None).unwrap();
+    }
+    groups::save_group(&dir, group("a", &["alpha", "shared"]), vec![]).unwrap();
+    groups::save_group(&dir, group("b", &["beta", "shared"]), vec![]).unwrap();
+    groups::activate(
+        &dir,
+        "codex",
+        &["a".to_string(), "b".to_string()],
+        &path,
+        Path::new("/app"),
+    )
+    .unwrap();
+    assert!(groups::issues(&read(&dir).unwrap()).is_empty());
+    let rewrite = |key: &str, command: &str| {
+        let mut doc: toml_edit::DocumentMut =
+            std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        doc["mcp_servers"][key]["command"] = toml_edit::value(command);
+        std::fs::write(&path, doc.to_string()).unwrap();
+    };
+    // 另一个程序只改了 b 自己的成员：只有 b 需要检查，同一 Agent 上的 a 不受牵连
+    rewrite("beta", "rewritten");
+    let issues = groups::issues(&read(&dir).unwrap());
+    assert_eq!(issues["codex"].keys().collect::<Vec<_>>(), ["b"]);
+    assert!(issues["codex"]["b"].contains("beta"));
+    rewrite("beta", "b");
+    assert!(groups::issues(&read(&dir).unwrap()).is_empty());
+    // 共用的成员只记在第一个分组（a）名下，但 b 也包含它：两个都要标出
+    rewrite("shared", "rewritten");
+    let issues = groups::issues(&read(&dir).unwrap());
+    assert_eq!(issues["codex"].keys().collect::<Vec<_>>(), ["a", "b"]);
+    assert!(issues["codex"]["a"].contains("shared"));
+    assert!(issues["codex"]["b"].contains("shared"));
 }
 #[test]
 fn group_references_do_not_adopt_or_overwrite_manual_entries() {

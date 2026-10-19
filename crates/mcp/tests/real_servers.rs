@@ -299,13 +299,11 @@ async fn official_servers_full_lifecycle() -> Result<()> {
         &Some(json!({"command":"external-change"})),
     )?;
     std::fs::write(&codex, &altered)?;
-    let catalog_before = std::fs::read(dir.join("catalog.json"))?;
-    assert!(groups::activate(&dir, "codex", &[], &codex, &executable).is_err());
+    // 停用时原样留下、不再管理，并报告出来
+    let untouched = groups::activate(&dir, "codex", &[], &codex, &executable)?;
+    assert!(untouched.iter().any(|u| u.key == memory.name && !u.tracked));
     assert_eq!(std::fs::read_to_string(&codex)?, altered);
-    assert_eq!(std::fs::read(dir.join("catalog.json"))?, catalog_before);
-    std::fs::write(&codex, original)?;
     groups::activate(&dir, "claude", &[], &claude, &executable)?;
-    groups::activate(&dir, "codex", &[], &codex, &executable)?;
     for id in ["files", "memory", "codex"] {
         groups::remove_group(&dir, id)?;
     }

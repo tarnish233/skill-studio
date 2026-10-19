@@ -132,7 +132,7 @@ it("cancel discards unsaved selection and failed saves preserve the editable dra
   expect(screen.getByLabelText("分组名称")).toHaveValue("Dev");
   expect(screen.getByRole("checkbox", { name: "选择 Alpha" })).toBeChecked();
   fireEvent.click(screen.getByRole("button", { name: "取消" }));
-  fireEvent.click(screen.getByRole("button", { name: "新建分组" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "新建分组" })[0]);
   expect(screen.getByLabelText("分组名称")).toHaveValue("");
   expect(
     screen.getByRole("checkbox", { name: "选择 Alpha" }),
