@@ -17,6 +17,8 @@ export interface AgentToggleState {
   dimmed?: boolean;
   /** 不能启用的原因（空分组、成员缺失、已关闭管理）；已启用时忽略 —— 停用始终可以 */
   blocked?: string;
+  /** 只在提示里说明写到哪里，如项目里的 .claude/skills */
+  where?: string;
 }
 
 /** 为卡片上需要重新应用的 Agent 依次重新应用分组 */
@@ -68,12 +70,13 @@ export function GroupAgentToggles({
         const action = agent.active ? "停用" : "启用";
         const name = `${agent.label}${agent.note ? `（${agent.note}）` : ""}`;
         const blocked = agent.active ? undefined : agent.blocked;
+        const where = agent.where ? `；写到 ${agent.where}` : "";
         return {
           agentId: agent.agentId,
           label: `为 ${agent.label} ${action}「${groupName}」${agent.note ? `（${agent.note}）` : ""}`,
           hint: blocked
-            ? `${name}：${blocked}`
-            : `${name}：${agent.attention ?? (agent.active ? "已启用" : "未启用")}，点击${action}`,
+            ? `${name}：${blocked}${where}`
+            : `${name}：${agent.attention ?? (agent.active ? "已启用" : "未启用")}，点击${action}${where}`,
           tone: agent.active ? "on" : "off",
           attention: !!agent.attention,
           dimmed: agent.dimmed,

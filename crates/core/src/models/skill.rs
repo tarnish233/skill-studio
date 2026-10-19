@@ -171,6 +171,9 @@ pub struct LinkResult {
 pub struct LinkReport {
     pub success: Vec<LinkResult>,
     pub failed: Vec<LinkResult>,
+    /// 写入项目时原样留下的副本：部署后被修改或替换，Studio 不覆盖、不删除
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub untouched: Vec<super::group::UntouchedCopy>,
 }
 
 impl LinkReport {

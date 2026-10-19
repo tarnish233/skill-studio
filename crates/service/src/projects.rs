@@ -15,6 +15,8 @@ pub struct ProjectView {
     enabled_skill_ids: Vec<String>,
     enabled_group_ids: Vec<String>,
     uncollected_skill_count: usize,
+    /// 按 Agent 的部署明细：卡片上的 Agent 图标、有待应用修改与需要检查都来自这里
+    deployments: Vec<skill_studio_core::models::project::ProjectDeployment>,
 }
 
 pub fn list_project_skills(
@@ -105,6 +107,9 @@ pub fn list_projects(state: &AppState) -> Result<Vec<ProjectView>, String> {
                 enabled_skill_ids,
                 enabled_group_ids,
                 uncollected_skill_count,
+                deployments: skill_studio_core::services::project_write::project_deployments(
+                    project,
+                ),
             })
         })
         .collect()

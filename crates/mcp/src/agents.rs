@@ -17,6 +17,17 @@ pub const PROJECT_FILES: &[&str] = &[
     ".pi/mcp.json",
     ".grok/config.toml",
 ];
+/// 提示里用的 Agent 名称
+pub fn name(agent: &str) -> &str {
+    match agent {
+        "claude" => "Claude Code",
+        "codex" => "Codex",
+        "opencode" => "OpenCode",
+        "pi" => "Pi",
+        "grok" => "Grok Build",
+        other => other,
+    }
+}
 pub fn validate(agent: &str) -> Result<()> {
     if !IDS.contains(&agent) {
         bail!("不支持的 MCP Agent");

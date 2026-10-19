@@ -9,7 +9,8 @@ use crate::{
     models::{
         agent::{require_agent, AGENTS},
         config::AppConfig,
-        project::{ProjectEntry, ProjectSelection},
+        group::UntouchedCopy,
+        project::{ProjectBinding, ProjectDeployment, ProjectEntry, ProjectSelection},
         skill::{LinkMode, LinkReport, LinkResult, LinkStatus},
     },
     Error, Result,
@@ -74,6 +75,10 @@ impl Studio {
         let views = self.scan_skills(config)?;
         let mut plan = Vec::new();
         let mut targets = HashSet::new();
+        // 部署后被修改或替换的副本：仍要保留的不覆盖、继续记为项目的部署；不再需要的不删、
+        // 交还给用户。规则与分组一致，见 activate_agent_groups
+        let mut kept: Vec<ProjectEntry> = Vec::new();
+        let mut untouched = Vec::new();
         for agent_id in project.agent_ids.iter().filter(|_| enabled) {
             let agent = require_agent(agent_id)?;
             let root = agent
@@ -120,11 +125,27 @@ impl Studio {
                     | LinkStatus::Linked
                     | LinkStatus::Copied
                     | LinkStatus::CopyStale => {}
-                    _ => {
-                        return Err(Error::invalid(format!(
-                            "目标存在冲突或本地修改：{}",
-                            dest.display()
-                        )))
+                    status => {
+                        // Studio 写过的副本被改了：原样保留；别人放在这里的内容仍然不覆盖
+                        let Some(entry) = project
+                            .managed_entries
+                            .iter()
+                            .find(|e| e.target_path == dest)
+                        else {
+                            return Err(Error::invalid(format!(
+                                "目标存在冲突或本地修改：{}",
+                                dest.display()
+                            )));
+                        };
+                        untouched.push(UntouchedCopy {
+                            skill_id: skill.id.clone(),
+                            name: skill.name.clone(),
+                            path: dest.clone(),
+                            reason: changed_reason(status).into(),
+                            tracked: true,
+                        });
+                        kept.push(entry.clone());
+                        continue;
                     }
                 }
                 plan.push((skill.clone(), source, dest, agent_id.clone()));
@@ -135,6 +156,7 @@ impl Studio {
             if plan
                 .iter()
                 .any(|(_, _, dest, _)| *dest == entry.target_path)
+                || kept.iter().any(|k| k.target_path == entry.target_path)
             {
                 continue;
             }
@@ -167,10 +189,27 @@ impl Studio {
                 && scanner::link_destination(&entry.target_path)
                     .is_ok_and(|p| paths::paths_alias(&p, &entry.source_path));
             if !own_copy && !own_link {
-                return Err(Error::invalid(format!(
-                    "已写入的 skill 被修改或替换，不能移除：{}",
-                    entry.target_path.display()
-                )));
+                // 不删：交还给用户，不再记为项目的部署
+                let modified = !scanner::is_symlink_or_junction(&entry.target_path)
+                    && scanner::read_copy_sidecar(&entry.target_path)
+                        .is_some_and(|m| m.skill_id == entry.skill_id);
+                untouched.push(UntouchedCopy {
+                    skill_id: entry.skill_id.clone(),
+                    name: entry
+                        .target_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| entry.skill_id.clone()),
+                    path: entry.target_path.clone(),
+                    reason: if modified {
+                        "副本已被修改"
+                    } else {
+                        "已被替换"
+                    }
+                    .into(),
+                    tracked: false,
+                });
+                continue;
             }
             removals.push(entry.target_path.clone());
         }
@@ -179,8 +218,11 @@ impl Studio {
             for dest in &removals {
                 tx.reserve(dest)?;
             }
-            let mut entries = Vec::new();
-            let mut report = LinkReport::default();
+            let mut entries = kept.clone();
+            let mut report = LinkReport {
+                untouched: untouched.clone(),
+                ..LinkReport::default()
+            };
             for (skill, source, dest, agent_id) in &plan {
                 // Recheck just before replacement, preserving external edits.
                 match linker::link_status(source, dest) {
@@ -269,4 +311,63 @@ impl Studio {
             }
         }
     }
+}
+
+/// 写入时发现 Studio 写过的副本变了：提示里的原因
+fn changed_reason(status: LinkStatus) -> &'static str {
+    match status {
+        LinkStatus::CopyModified | LinkStatus::CopyConflict => "副本已被修改",
+        LinkStatus::CopyDamaged => "副本已损坏",
+        _ => "已被替换",
+    }
+}
+
+/// 按 Agent 汇总项目的部署：只列出有部署记录的 Agent。按记录逐个核对磁盘上的副本——
+/// 过期的只需重新写入（`stale`），被修改、被替换或已不存在的需要用户处理（`issue`）。
+pub fn project_deployments(project: &ProjectBinding) -> Vec<ProjectDeployment> {
+    AGENTS
+        .iter()
+        .filter_map(|agent| {
+            let root = agent.project_root(&project.root)?;
+            let entries: Vec<_> = project
+                .managed_entries
+                .iter()
+                .filter(|e| e.target_path.parent() == Some(root.as_path()))
+                .collect();
+            if entries.is_empty() {
+                return None;
+            }
+            let mut skill_ids: Vec<String> = Vec::new();
+            let mut stale = false;
+            let mut problems = Vec::new();
+            for entry in entries {
+                if !skill_ids.contains(&entry.skill_id) {
+                    skill_ids.push(entry.skill_id.clone());
+                }
+                let name = entry
+                    .target_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| entry.skill_id.clone());
+                if entry.target_path.symlink_metadata().is_err() {
+                    problems.push(format!("{name} 已不存在"));
+                    continue;
+                }
+                match linker::link_status(&entry.source_path, &entry.target_path) {
+                    LinkStatus::Linked | LinkStatus::Copied => {}
+                    LinkStatus::CopyStale => stale = true,
+                    status => problems.push(match changed_reason(status) {
+                        "已被替换" => format!("{name} 已被替换"),
+                        reason => format!("{name} 的{reason}"),
+                    }),
+                }
+            }
+            Some(ProjectDeployment {
+                agent_id: agent.id.to_string(),
+                skill_ids,
+                stale,
+                issue: (!problems.is_empty()).then(|| problems.join("；")),
+            })
+        })
+        .collect()
 }

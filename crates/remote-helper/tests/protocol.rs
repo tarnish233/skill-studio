@@ -201,6 +201,9 @@ fn mcp_inventory_is_metadata_only_and_never_recovers_or_executes_in_either_sessi
             "saveEntry",
             "removeEntry",
             "activateGroup",
+            "saveProject",
+            "activateProject",
+            "removeProject",
             "login",
         ] {
             assert!(

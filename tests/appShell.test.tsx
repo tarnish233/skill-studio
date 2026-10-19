@@ -292,19 +292,15 @@ it("uses the header resource toggle to scope the Groups and project pages", asyn
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
   await user.click(nav.getByRole("button", { name: "项目" }));
-  await user.click(
-    await screen.findByRole("button", { name: "查看 Demo 的 MCP" }),
-  );
-  expect(await screen.findByText("项目 MCP")).toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "写入项目" }),
-  ).not.toBeInTheDocument();
+  // 与 Skill 项目同一个入口：点卡片进项目详情
+  await user.click(await screen.findByRole("button", { name: "编辑 Demo" }));
+  expect(await screen.findByText("项目已有 MCP")).toBeInTheDocument();
   expect(screen.queryByText("项目已有 skill")).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "设置" }));
   await user.click(screen.getByRole("button", { name: "返回" }));
-  // MCP 项目页与 Skill 侧一致：左侧是 Agent 筛选胶囊，右侧是接入统计
+  // MCP 项目页与 Skill 侧、分组页一致：左侧是「按 Agent 查看」，右侧是接入统计
   expect(
-    await screen.findByRole("group", { name: "按项目 Agent 筛选" }),
+    await screen.findByRole("group", { name: "按 Agent 查看" }),
   ).toBeInTheDocument();
   expect(screen.getByText("托管接入 0")).toBeInTheDocument();
   await user.click(header.getByRole("button", { name: "Skill" }));
@@ -320,7 +316,7 @@ it("uses the header resource toggle to scope the Groups and project pages", asyn
   // 整张项目卡片可点：点卡片进项目详情，不再需要铅笔按钮
   await user.click(await screen.findByRole("button", { name: "编辑 Demo" }));
   expect(await screen.findByText("项目已有 skill")).toBeInTheDocument();
-  expect(screen.queryByText("项目 MCP")).not.toBeInTheDocument();
+  expect(screen.queryByText("项目已有 MCP")).not.toBeInTheDocument();
 });
 
 it("restores the saved Groups page together with its MCP mode", async () => {

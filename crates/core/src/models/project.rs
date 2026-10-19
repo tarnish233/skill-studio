@@ -49,6 +49,19 @@ fn default_project_link_mode() -> LinkMode {
     LinkMode::Copy
 }
 
+/// 项目在某个 Agent 的项目目录里的部署：卡片上按 Agent 显示是否启用、是否需要应用修改或检查
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDeployment {
+    pub agent_id: String,
+    /// Studio 记录的、写进这个 Agent 项目目录的 skill
+    pub skill_ids: Vec<String>,
+    /// 有副本落后于 Hub 里的源：重新写入即可
+    pub stale: bool,
+    /// 部署出了问题（副本被修改、被替换或已不存在），需要用户处理；Studio 不会覆盖
+    pub issue: Option<String>,
+}
+
 impl ProjectBinding {
     pub fn new(id: String, name: String, root: PathBuf) -> Self {
         Self {

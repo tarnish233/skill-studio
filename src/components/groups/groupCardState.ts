@@ -16,6 +16,8 @@ export interface AgentGroupStatus {
   changed: boolean;
   /** 部署出了问题，需要人工处理：写明原因，与「需要检查」同义 */
   issue?: string;
+  /** 写到哪里，只出现在图标提示里 */
+  where?: string;
 }
 
 /** 卡片上一枚状态徽标 */
@@ -48,6 +50,21 @@ export interface GroupCardState {
   };
 }
 
+/** 卡片提示里的说法：分组页和项目页各一套 */
+export interface CardLabels {
+  /** 「分组」或「项目」 */
+  subject: string;
+  /** 没有成员时不能启用的原因 */
+  empty: string;
+  /** 「有待应用修改」悬停提示的开头，后面接 Agent 名 */
+  changed: string;
+}
+export const GROUP_CARD_LABELS: CardLabels = {
+  subject: "分组",
+  empty: "分组还没有成员",
+  changed: "分组在启用后改过，还没应用到：",
+};
+
 const reapplyLabel = (changed: boolean) => (changed ? "应用修改" : "重新应用");
 const describe = (statuses: AgentGroupStatus[]) =>
   statuses.map((s) => s.label).join("、");
@@ -62,6 +79,7 @@ export function groupCardState({
   memberCount,
   missingMembers,
   viewAgentId,
+  labels = GROUP_CARD_LABELS,
 }: {
   statuses: AgentGroupStatus[];
   /** 以配置里的全部启用记录为准（见 `groupsInUse`），不只看显示出来的 Agent */
@@ -70,12 +88,13 @@ export function groupCardState({
   missingMembers: boolean;
   /** 单个 Agent 视角时选中的 Agent */
   viewAgentId?: string;
+  labels?: CardLabels;
 }): GroupCardState {
   const blocked = missingMembers
-    ? "成员已缺失，请先编辑分组"
+    ? `成员已缺失，请先编辑${labels.subject}`
     : memberCount
       ? undefined
-      : "分组还没有成员";
+      : labels.empty;
   const active = statuses.filter((s) => s.active);
   const view = viewAgentId
     ? statuses.find((s) => s.agentId === viewAgentId)
@@ -100,13 +119,13 @@ export function groupCardState({
     badges.push({
       label: "有待应用修改",
       tone: "warning",
-      title: `分组在启用后改过，还没应用到：${describe(changed)}`,
+      title: `${labels.changed}${describe(changed)}`,
     });
   if (missingMembers)
     badges.push({
       label: "成员已缺失",
       tone: "warning",
-      title: "有成员已不在 Hub 里，请编辑分组移除或重新添加",
+      title: `有成员已不在 Hub 里，请编辑${labels.subject}移除或重新添加`,
     });
   const targets = active.filter((s) => s.managed && (s.changed || s.issue));
   return {
@@ -128,6 +147,7 @@ export function groupCardState({
       note: s.managed ? s.note : "已关闭管理",
       dimmed: s.managed && s.dimmed,
       blocked: s.managed ? blocked : "已关闭管理",
+      where: s.where,
     })),
     reapply: targets.length
       ? {

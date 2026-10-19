@@ -34,7 +34,7 @@ import {
   MCP_STATUS_STALE_TIME,
   MCP_STATUS_POLL_INTERVAL,
   rows,
-  type ManagedMcp,
+  entrySnapshot,
   type ManagementStatus,
   type McpGroup,
   type McpUntouched,
@@ -67,17 +67,6 @@ export function McpGroupsPage() {
       </p>
     );
   return <LocalGroups />;
-}
-function snapshot(entry: ManagedMcp) {
-  return JSON.stringify([
-    entry.id,
-    entry.name,
-    entry.mode,
-    entry.definition,
-    entry.oauth,
-    entry.clientId,
-    entry.scopes,
-  ]);
 }
 function LocalGroups() {
   const { data: allAgents = [], isDetecting, detectionFailed } = useAgents();
@@ -154,7 +143,7 @@ function LocalGroups() {
       ) ||
       current.entries.some((e) => {
         const found = catalog.find((r) => r.entry.id === e.id)?.entry;
-        return !found || snapshot(found) !== snapshot(e);
+        return !found || entrySnapshot(found) !== entrySnapshot(e);
       });
     return {
       active: true,

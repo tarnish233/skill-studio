@@ -15,8 +15,9 @@ import { Button } from "@/components/ui/button";
 export function useGroupAgentView(
   resource: "skills" | "mcp",
   available: readonly string[],
+  page: "groups" | "projects" = "groups",
 ) {
-  const key = `skill-studio-groups-agent-${resource}`;
+  const key = `skill-studio-${page}-agent-${resource}`;
   const [picked, setPicked] = useState<string | null>(() =>
     localStorage.getItem(key),
   );
@@ -55,8 +56,11 @@ export function GroupAgentFilter({
   current,
   selected,
   onSelect,
+  noun = "分组",
   children,
 }: {
+  /** 卡片是什么：「分组」或「项目」 */
+  noun?: string;
   total: number;
   agents: { id: string; displayName: string }[];
   /** 该 Agent 当前叠加了几个分组 */
@@ -71,7 +75,7 @@ export function GroupAgentFilter({
       <SummaryFilter
         label="按 Agent 查看"
         total={total}
-        allTitle="每张分组卡片列出所有 Agent 的启停"
+        allTitle={`每张${noun}卡片列出所有 Agent 的启停`}
         options={agents.map((agent) => {
           // 数字是这个 Agent 叠加的分组数
           const count = current(agent.id);
@@ -80,8 +84,8 @@ export function GroupAgentFilter({
             label: agent.displayName,
             count,
             title: count
-              ? `${agent.displayName} 正在使用 ${count} 个分组`
-              : `${agent.displayName} 没有启用分组`,
+              ? `${agent.displayName} 正在使用 ${count} 个${noun}`
+              : `${agent.displayName} 没有启用${noun}`,
           });
         })}
         selected={selected}

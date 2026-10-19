@@ -38,17 +38,15 @@ export function sumTokens(
 }
 
 /**
- * 一个项目实际会写进去的 skill，口径必须与后端 `Studio::write_project` 一致：
- * 分组不归属任何单个 agent，后端对 project.agentIds 里每个 agent 都取同一份
- * “直接绑定的 skillIds + 所有已选分组成员”并集，不按 agent 过滤。
- * agentIds 为空时后端什么都不写，这里也就是 0。
+ * 项目的成员：直接绑定的 skill 在前，再展开绑定的分组，去重。口径与后端
+ * `Studio::write_project` 一致：分组不归属任何单个 agent，每个启用的 Agent 写进去的都是
+ * 同一份成员，不按 agent 过滤。与分组卡片一样，没有 Agent 启用时也按成员计算体量。
  * 同一个 skill 既单独绑定又在组里，只占一份文件，也只该算一次 token。
  */
 export function projectSkillIds(
-  project: ProjectBinding,
+  project: Pick<ProjectBinding, "skillIds" | "groupIds">,
   groups: Group[],
 ): string[] {
-  if (project.agentIds.length === 0) return [];
   const ids = new Set<string>(project.skillIds);
   for (const groupId of project.groupIds) {
     const group = groups.find((g) => g.id === groupId);

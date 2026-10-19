@@ -78,14 +78,14 @@ describe("token 体量汇总", () => {
     expect(sumTokens(index, projectSkillIds(project, groups)).total).toBe(1700);
   });
 
-  it("还没勾 agent 的项目算 0 —— 后端此时一个文件都不写", () => {
+  it("还没有 Agent 启用的项目也按成员计算，与分组卡片一致", () => {
     const groups = [makeGroup({ id: "g1", skillIds: ["b"] })];
     const project = makeProject({
       agentIds: [],
       skillIds: ["a"],
       groupIds: ["g1"],
     });
-    expect(projectSkillIds(project, groups)).toEqual([]);
+    expect(projectSkillIds(project, groups)).toEqual(["a", "b"]);
   });
 
   it.each([

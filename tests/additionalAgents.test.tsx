@@ -106,30 +106,37 @@ it("offers Pi's native MCP help in Pi's MCP group view", async () => {
   ).toHaveAttribute("aria-expanded", "false");
 });
 
-it("writes all selected Skill Agents to a project using each backend-provided directory", async () => {
-  setup();
-  handlers.set("list_projects", () => [makeProject()]);
-  handlers.set("scan_skills", () => [makeSkill({ id: "demo", name: "Demo" })]);
-  renderWithProviders(<ProjectsPage />);
-  fireEvent.click(await screen.findByText("webapp"));
-  for (const agent of skillOnlyAgents) {
-    expect(await screen.findByText(agent.projectSkillDir!)).toBeVisible();
-    fireEvent.click(screen.getByRole("checkbox", { name: agent.displayName }));
-  }
-  fireEvent.click(screen.getByRole("checkbox", { name: "Demo" }));
-  fireEvent.click(screen.getByRole("button", { name: "写入项目" }));
-  await waitFor(() =>
-    expect(calls.find((c) => c.command === "apply_project")?.args).toEqual({
-      projectId: "p1",
-      selection: {
-        agentIds: ["opencode", "pi", "grok"],
-        skillIds: ["demo"],
-        groupIds: [],
-        linkMode: "copy",
-      },
-    }),
-  );
-});
+it.each(skillOnlyAgents)(
+  "writes a project to $displayName alone, into the directory the backend provides",
+  async (agent) => {
+    setup();
+    handlers.set("list_projects", () => [makeProject({ skillIds: ["demo"] })]);
+    handlers.set("scan_skills", () => [
+      makeSkill({ id: "demo", name: "Demo" }),
+    ]);
+    renderWithProviders(<ProjectsPage />);
+    const icon = await screen.findByRole("button", {
+      name: `为 ${agent.displayName} 启用「webapp」`,
+    });
+    // 写到哪个目录由后端提供的 projectSkillDir 决定，写在图标提示里
+    fireEvent.focus(icon);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      `写到 ${agent.projectSkillDir}`,
+    );
+    fireEvent.click(icon);
+    await waitFor(() =>
+      expect(calls.find((c) => c.command === "apply_project")?.args).toEqual({
+        projectId: "p1",
+        selection: {
+          agentIds: [agent.id],
+          skillIds: ["demo"],
+          groupIds: [],
+          linkMode: "copy",
+        },
+      }),
+    );
+  },
+);
 
 it.each(skillOnlyAgents)(
   "lets a shared group include a skill that lives in $displayName",

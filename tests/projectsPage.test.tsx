@@ -2,6 +2,7 @@ import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { expect, it } from "vitest";
 import { ProjectsPage } from "@/pages/ProjectsPage";
 import {
+  calls,
   claudeAgent,
   codexAgent,
   handlers,
@@ -68,7 +69,7 @@ it("绑定的所有分组都计入 —— 分组不区分当年用哪个 Agent �
   expect(await screen.findByText("≈ 2.6k tokens")).toBeInTheDocument();
 });
 
-it("还没勾 agent 的项目不显示 token 徽标 —— 此时后端一个文件都不写", async () => {
+it("还没有 Agent 启用的项目也按成员显示 token 体量，与分组卡片一致", async () => {
   setupSkills();
   handlers.set("list_groups", () => [
     makeGroup({ id: "g1", name: "Dev", skillIds: ["a", "b"] }),
@@ -81,60 +82,63 @@ it("还没勾 agent 的项目不显示 token 徽标 —— 此时后端一个文
       skillIds: ["a"],
       groupIds: ["g1"],
     }),
+    makeProject({ id: "p2", name: "docs" }),
   ]);
   renderWithProviders(<ProjectsPage />);
-  expect(await screen.findByText("webapp")).toBeInTheDocument();
-  expect(screen.queryByText(/tokens$/)).toBeNull();
+  expect(await screen.findByText("≈ 1.7k tokens")).toBeInTheDocument();
+  // 没有成员的项目不显示这个徽标
+  expect(screen.getAllByText(/tokens$/)).toHaveLength(1);
 });
 
-it("counts deployed projects per agent once, filters cards, and toggles through the card action", async () => {
+it("选过 Agent 但还没写入的项目显示为未启用；为另一个 Agent 启用时不会顺带写入它", async () => {
   setupSkills();
-  let enabled = true;
-  const entry = {
-    skillId: "a",
-    sourcePath: "/hub/a",
-    targetPath: "/project/.agents/skills/a",
-  };
+  const deployed = (agentId: string) => ({
+    agentId,
+    skillIds: ["a"],
+    stale: false,
+    issue: null,
+  });
   handlers.set("list_projects", () => [
     makeProject({
-      id: "p",
+      id: "both",
       name: "Both",
       agentIds: ["codex", "claude-code"],
       skillIds: ["a"],
-      enabledAgentIds: enabled ? ["codex", "claude-code"] : [],
-      managedEntries: enabled ? [entry] : [],
+      deployments: [deployed("codex"), deployed("claude-code")],
     }),
+    // 真实数据里的 note 就是这样：给 Codex 选了 skill，但停用了（没有部署）
     makeProject({
       id: "draft",
       name: "Draft",
       agentIds: ["codex"],
       skillIds: ["a"],
-      enabledAgentIds: [],
     }),
   ]);
-  handlers.set("set_project_enabled", (args) => {
-    enabled = args.enabled;
-    return { succeeded: [], failed: [] };
-  });
+  handlers.set("apply_project", () => ({ success: [], failed: [] }));
   renderWithProviders(<ProjectsPage />);
-  // 总数在「全部」上，右侧不再重复一枚「项目 N 个」
+  // 胶囊上的数字是启用了这个 Agent 的项目数
+  expect(await screen.findByRole("button", { name: "Codex 1" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Claude Code 1" })).toBeVisible();
+  expect(screen.getByText("已启用 1")).toBeVisible();
   expect(
-    await screen.findByRole("button", { name: "全部 2" }),
-  ).toBeInTheDocument();
-  expect(screen.getByText("已启用 1")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Codex 1" })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Claude Code 1" }));
-  expect(
-    screen.queryByRole("button", { name: "Draft" }),
-  ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Claude Code 1" }));
-  fireEvent.click(screen.getByRole("button", { name: "停用" }));
-  await waitFor(() => expect(screen.getByText("已启用 0")).toBeInTheDocument());
-  expect(
-    screen.getByRole("button", { name: "拖拽排序 Both" }),
-  ).toBeInTheDocument();
-  expect(screen.getAllByRole("button", { name: "启用" })).toHaveLength(2);
+    screen.getByRole("button", { name: "为 Codex 启用「Draft」" }),
+  ).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: "为 Claude Code 启用「Draft」" }),
+  );
+  await waitFor(() =>
+    expect(calls.find((c) => c.command === "apply_project")?.args).toEqual({
+      projectId: "draft",
+      selection: {
+        agentIds: ["claude-code"],
+        skillIds: ["a"],
+        groupIds: [],
+        linkMode: "copy",
+      },
+    }),
+  );
 });
+
 it("整张项目卡片可点：点卡片进项目详情，原来的铅笔按钮已去掉", async () => {
   setupSkills();
   handlers.set("list_projects", () => [

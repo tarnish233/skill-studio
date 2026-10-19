@@ -82,8 +82,8 @@ it("counts uncollected project skills and refreshes collection and confirmed del
     return "/backup/release";
   });
   renderWithProviders(<ProjectsPage />);
-  expect(await screen.findByText("1 skill未托管")).toBeVisible();
-  expect(screen.getByText("未托管 1")).toBeVisible();
+  // 卡片上一枚、统计栏一枚
+  expect(await screen.findAllByText("未托管 1")).toHaveLength(2);
   fireEvent.click(screen.getByText("webapp"));
   fireEvent.click(
     await screen.findByRole("button", { name: "托管 release 到 Hub" }),
@@ -107,8 +107,16 @@ it("counts uncollected project skills and refreshes collection and confirmed del
   expect(updates()).toHaveLength(0);
 });
 
-it("keeps selections local and saves once before applying on explicit write", async () => {
-  let project = makeProject();
+it("keeps selections local and saves once, writing the Agents already enabled", async () => {
+  const deployed = (agentId: string) => ({
+    agentId,
+    skillIds: [],
+    stale: false,
+    issue: null,
+  });
+  let project = makeProject({
+    deployments: [deployed("claude-code"), deployed("codex")],
+  });
   handlers.set("list_projects", () => [project]);
   handlers.set("list_agents", () => [claudeAgent, codexAgent]);
   handlers.set("list_groups", () => [
@@ -132,13 +140,11 @@ it("keeps selections local and saves once before applying on explicit write", as
   fireEvent.click(await screen.findByRole("checkbox", { name: "Alpha" }));
   expect(updates()).toHaveLength(0);
   fireEvent.click(screen.getByRole("checkbox", { name: "Beta" }));
-  fireEvent.click(screen.getByRole("checkbox", { name: "Claude Code" }));
-  fireEvent.click(screen.getByRole("checkbox", { name: "Codex" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Group A" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Group B" }));
   expect(screen.getByRole("checkbox", { name: "Alpha" })).toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Beta" })).toBeChecked();
-  fireEvent.click(screen.getByRole("button", { name: "写入项目" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
   await waitFor(() => expect(updates()).toHaveLength(1));
   await act(async () => first.resolve({}));
@@ -172,7 +178,7 @@ it("preserves the draft after a failed save, blocks apply, and retries the lates
   fireEvent.click(await screen.findByRole("checkbox", { name: "Alpha" }));
   expect(updates()).toHaveLength(0);
   fireEvent.click(screen.getByRole("checkbox", { name: "Beta" }));
-  fireEvent.click(screen.getByRole("button", { name: "写入项目" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await act(async () => first.reject(new Error("disk unavailable")));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "disk unavailable",
@@ -180,7 +186,7 @@ it("preserves the draft after a failed save, blocks apply, and retries the lates
   expect(screen.getByRole("checkbox", { name: "Alpha" })).toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Beta" })).toBeChecked();
 
-  fireEvent.click(screen.getByRole("button", { name: "写入项目" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await waitFor(() => expect(updates()).toHaveLength(2));
   expect(
     (updates()[1].args as { selection: typeof project }).selection.skillIds,
@@ -224,9 +230,10 @@ it("does not prompt after successful write", async () => {
   renderWithProviders(<ProjectsPage />);
   fireEvent.click(await screen.findByText("webapp"));
   fireEvent.click(await screen.findByRole("checkbox", { name: "Alpha" }));
-  fireEvent.click(screen.getByRole("button", { name: "写入项目" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  // 保存完成：没有未保存的修改，按钮回到「保存」并禁用
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "写入项目" })).toBeEnabled(),
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled(),
   );
   fireEvent.click(screen.getByTitle("返回"));
   expect(screen.queryByRole("dialog")).toBeNull();

@@ -205,7 +205,13 @@ pub async fn mcp_request(
     }
     if matches!(
         method.as_str(),
-        "saveGroup" | "removeGroup" | "activateGroup" | "reorderGroups"
+        "saveGroup"
+            | "removeGroup"
+            | "activateGroup"
+            | "reorderGroups"
+            | "saveProject"
+            | "activateProject"
+            | "removeProject"
     ) {
         state.ensure_writable().map_err(|e| e.to_string())?;
         let keep = state.config().settings.backup_keep;
@@ -218,70 +224,67 @@ pub async fn mcp_request(
             match method.as_str() {
                 "saveGroup" => {
                     let group: groups::Group = serde_json::from_value(params["group"].clone())?;
-                    let mut imports = vec![];
-                    if let Some(requested) = params["imports"].as_array().filter(|v| !v.is_empty())
-                    {
-                        let (files, _) = scan_files(&state);
-                        let scanned = discovery::scan(&files, &[], &task_dir);
-                        for requested in requested {
-                            let found = scanned
-                                .discovered
-                                .iter()
-                                .find(|d| {
-                                    Some(d.id.as_str()) == requested["id"].as_str()
-                                        || requested["sourceIds"].as_array().is_some_and(|ids| {
-                                            d.sources.iter().any(|source| {
-                                                ids.iter().any(|id| {
-                                                    id.as_str() == Some(source.id.as_str())
-                                                })
-                                            })
-                                        })
-                                })
-                                .context("MCP 来源已变化，请刷新后重试")?;
-                            let source = found
-                                .sources
-                                .iter()
-                                .find(|source| {
-                                    native::canonical(&source.definition, &source.agent)
-                                        == requested["definition"]
-                                })
-                                .context("MCP 来源已变化，请刷新后重试")?;
-                            anyhow::ensure!(
-                                !found.sources.iter().any(|s| s.gateway),
-                                "请先在 Hub 管理此网关入口"
-                            );
-                            let definition = native::canonical(&source.definition, &source.agent);
-                            anyhow::ensure!(
-                                definition == requested["definition"],
-                                "MCP 来源已变化，请刷新后重试"
-                            );
-                            let bindings = found
-                                .sources
-                                .iter()
-                                .map(|s| management::Binding {
-                                    id: s.id.clone(),
-                                    agent: s.agent.clone(),
-                                    path: s.path.clone(),
-                                    project: s.project.clone(),
-                                    key: s.key.clone(),
-                                    original: Some(s.definition.clone()),
-                                    installed: s.definition.clone(),
-                                })
-                                .collect();
-                            imports.push(management::Entry {
-                                id: requested["id"].as_str().context("缺少成员 ID")?.into(),
-                                name: found.name.clone(),
-                                mode: "direct".into(),
-                                definition,
-                                oauth: false,
-                                client_id: None,
-                                scopes: vec![],
-                                bindings,
-                            });
-                        }
-                    }
+                    let imports = scanned_imports(&state, &task_dir, &params)?;
                     groups::save_group(&task_dir, group, imports)?;
                     Ok(Value::Null)
+                }
+                "saveProject" | "activateProject" | "removeProject" => {
+                    use management::projects;
+                    let id = params["projectId"].as_str().context("缺少项目")?;
+                    if method == "removeProject" {
+                        projects::remove(&task_dir, id)?;
+                        return Ok(Value::Null);
+                    }
+                    let config = state.config().clone();
+                    let root = config
+                        .projects
+                        .iter()
+                        .find(|p| p.id == id)
+                        .context("项目不存在")?
+                        .root
+                        .clone();
+                    let overrides = &config.settings.agent_dir_overrides;
+                    let executable = std::env::current_exe()?;
+                    let untouched = if method == "saveProject" {
+                        let ids = |key: &str| -> anyhow::Result<Vec<String>> {
+                            Ok(match params.get(key) {
+                                Some(value) => serde_json::from_value(value.clone())?,
+                                None => vec![],
+                            })
+                        };
+                        projects::save(
+                            &task_dir,
+                            id,
+                            projects::Input {
+                                root,
+                                entry_ids: ids("entryIds")?,
+                                group_ids: ids("groupIds")?,
+                                claude_local: params["claudeLocal"].as_bool().unwrap_or(false),
+                            },
+                            scanned_imports(&state, &task_dir, &params)?,
+                            overrides,
+                            &executable,
+                        )?
+                    } else {
+                        let agent = params["agent"].as_str().context("缺少 Agent")?;
+                        let enabled = params["enabled"].as_bool().context("缺少启停")?;
+                        let app_agent = if agent == "claude" {
+                            "claude-code"
+                        } else {
+                            agent
+                        };
+                        anyhow::ensure!(
+                            !enabled
+                                || !config
+                                    .settings
+                                    .disabled_agents
+                                    .iter()
+                                    .any(|a| a == app_agent),
+                            "请先开启此 Agent 的管理"
+                        );
+                        projects::activate(&task_dir, id, agent, enabled, overrides, &executable)?
+                    };
+                    Ok(json!(untouched))
                 }
                 "removeGroup" => {
                     groups::remove_group(&task_dir, params["id"].as_str().context("缺少分组 ID")?)?;
@@ -432,6 +435,8 @@ pub async fn mcp_request(
                 && value["configurationVersion"].as_u64() != Some(3)
         );
         value["groupIssues"] = json!(management::groups::issues(&catalog));
+        value["projects"] = json!(catalog.projects);
+        value["projectIssues"] = json!(management::projects::issues(&catalog));
         value["entries"] = json!(catalog.entries);
         value["groups"] = json!(catalog.groups);
         value["backups"] = json!(catalog
@@ -496,6 +501,74 @@ pub async fn mcp_request(
         let _ = app.opener().open_url(url, None::<&str>);
     }
     Ok(result)
+}
+
+/// 分组 / 项目选中的原有配置：只按请求里的 id 和定义从重新扫描的结果里取，不信任前端提交的位置
+fn scanned_imports(
+    state: &AppState,
+    dir: &std::path::Path,
+    params: &Value,
+) -> anyhow::Result<Vec<management::Entry>> {
+    use anyhow::Context;
+    let mut imports = vec![];
+    if let Some(requested) = params["imports"].as_array().filter(|v| !v.is_empty()) {
+        let (files, _) = scan_files(state);
+        let scanned = discovery::scan(&files, &[], dir);
+        for requested in requested {
+            let found = scanned
+                .discovered
+                .iter()
+                .find(|d| {
+                    Some(d.id.as_str()) == requested["id"].as_str()
+                        || requested["sourceIds"].as_array().is_some_and(|ids| {
+                            d.sources.iter().any(|source| {
+                                ids.iter().any(|id| id.as_str() == Some(source.id.as_str()))
+                            })
+                        })
+                })
+                .context("MCP 来源已变化，请刷新后重试")?;
+            let source = found
+                .sources
+                .iter()
+                .find(|source| {
+                    native::canonical(&source.definition, &source.agent) == requested["definition"]
+                })
+                .context("MCP 来源已变化，请刷新后重试")?;
+            anyhow::ensure!(
+                !found.sources.iter().any(|s| s.gateway),
+                "请先在 Hub 管理此网关入口"
+            );
+            let definition = native::canonical(&source.definition, &source.agent);
+            anyhow::ensure!(
+                definition == requested["definition"],
+                "MCP 来源已变化，请刷新后重试"
+            );
+            let bindings = found
+                .sources
+                .iter()
+                .map(|s| management::Binding {
+                    id: s.id.clone(),
+                    agent: s.agent.clone(),
+                    path: s.path.clone(),
+                    project: s.project.clone(),
+                    key: s.key.clone(),
+                    original: Some(s.definition.clone()),
+                    installed: s.definition.clone(),
+                })
+                .collect();
+            imports.push(management::Entry {
+                id: requested["id"].as_str().context("缺少成员 ID")?.into(),
+                name: found.name.clone(),
+                mode: "direct".into(),
+                definition,
+                oauth: false,
+                client_id: None,
+                scopes: vec![],
+                bindings,
+            });
+        }
+    }
+    Ok(imports)
 }
 
 fn scan_files(state: &AppState) -> (Vec<ScanFile>, Vec<String>) {

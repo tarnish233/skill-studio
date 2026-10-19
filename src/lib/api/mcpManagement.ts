@@ -46,6 +46,18 @@ export interface McpGroup {
   entryIds: string[];
   sortOrder: number;
 }
+/** 一个项目的 MCP：成员只保存一次，每个 Agent 独立决定是否写进这个项目 */
+export interface McpProject {
+  root: string;
+  entryIds: string[];
+  groupIds: string[];
+  /** 选中的原有配置引用（不托管、不改动） */
+  references?: ManagedMcp[];
+  /** Claude Code 写到项目本地（~/.claude.json 里这个项目的配置），而不是项目里的 .mcp.json */
+  claudeLocal: boolean;
+  /** MCP agent id → 写进这个项目的成员快照与接入 */
+  active: Record<string, { entries: ManagedMcp[]; bindings: ManagedBinding[] }>;
+}
 export interface ActiveMcpGroup {
   groupId: string;
   entries: ManagedMcp[];
@@ -99,6 +111,10 @@ export interface ManagementStatus {
   groups?: McpGroup[];
   /** agent → 当前叠加的分组记录；部署内容是这些分组成员的并集 */
   activeGroups?: Record<string, ActiveMcpGroup[]>;
+  /** 项目 id → 项目的 MCP 成员与各 Agent 的部署 */
+  projects?: Record<string, McpProject>;
+  /** 项目 id → MCP agent id → 写进去的接入已被外部修改或移除 */
+  projectIssues?: Record<string, Record<string, string>>;
   gatewayOutdated?: boolean;
   running: boolean;
   entries: ManagedMcp[];
@@ -152,8 +168,34 @@ function stable(value: unknown): string {
       .join(",")}}`;
   return JSON.stringify(value);
 }
+/** 部署记录里的成员快照与 Hub 里现在的定义比较：变了就是「有待应用修改」 */
+export function entrySnapshot(entry: ManagedMcp) {
+  return JSON.stringify([
+    entry.id,
+    entry.name,
+    entry.mode,
+    entry.definition,
+    entry.oauth,
+    entry.clientId,
+    entry.scopes,
+  ]);
+}
+
+/** 分组和项目写进 Agent 配置的接入：它们不属于 Hub 条目，由启用它们的分组 / 项目管理 */
+export function ownedBindings(status?: ManagementStatus): ManagedBinding[] {
+  return [
+    ...Object.values(status?.activeGroups ?? {})
+      .flat()
+      .flatMap((g) => g.bindings),
+    ...Object.values(status?.projects ?? {})
+      .flatMap((p) => Object.values(p.active ?? {}))
+      .flatMap((d) => d.bindings),
+  ];
+}
+
 export function rows(status?: ManagementStatus): McpRow[] {
   if (!status) return [];
+  const owned = ownedBindings(status);
   const entries = status.entries ?? [];
   const result: McpRow[] = entries.map((entry) => ({
     entry,
@@ -163,12 +205,26 @@ export function rows(status?: ManagementStatus): McpRow[] {
     authRequired: status.servers?.find((s) => s.id === entry.id)?.authRequired,
   }));
   for (const discovered of status.discovered ?? []) {
-    const reference = (status.groups ?? [])
-      .flatMap((g) => g.references ?? [])
-      .find(
-        (entry) =>
-          entry.id === discovered.id ||
-          entry.bindings.some((b) =>
+    const reference = [
+      ...(status.groups ?? []).flatMap((g) => g.references ?? []),
+      ...Object.values(status.projects ?? {}).flatMap(
+        (p) => p.references ?? [],
+      ),
+    ].find(
+      (entry) =>
+        entry.id === discovered.id ||
+        entry.bindings.some((b) =>
+          discovered.sources.some(
+            (source) =>
+              b.agent === source.agent &&
+              b.path === source.path &&
+              b.key === source.key &&
+              b.project === (source.project ?? null),
+          ),
+        ) ||
+        owned.some(
+          (b) =>
+            b.id === entry.id &&
             discovered.sources.some(
               (source) =>
                 b.agent === source.agent &&
@@ -176,23 +232,8 @@ export function rows(status?: ManagementStatus): McpRow[] {
                 b.key === source.key &&
                 b.project === (source.project ?? null),
             ),
-          ) ||
-          Object.values(status.activeGroups ?? {}).some((groups) =>
-            groups.some((group) =>
-              group.bindings.some(
-                (b) =>
-                  b.id === entry.id &&
-                  discovered.sources.some(
-                    (source) =>
-                      b.agent === source.agent &&
-                      b.path === source.path &&
-                      b.key === source.key &&
-                      b.project === (source.project ?? null),
-                  ),
-              ),
-            ),
-          ),
-      );
+        ),
+    );
     const source =
       discovered.sources.find((source) =>
         reference?.bindings.some(
@@ -209,9 +250,7 @@ export function rows(status?: ManagementStatus): McpRow[] {
         row.entry.id === discovered.managedId ||
         [
           ...row.entry.bindings,
-          ...Object.values(status.activeGroups ?? {})
-            .flat()
-            .flatMap((g) => g.bindings.filter((b) => b.id === row.entry.id)),
+          ...owned.filter((b) => b.id === row.entry.id),
         ].some((b) =>
           discovered.sources.some(
             (s) =>

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import {
   DndContext,
   KeyboardSensor,
@@ -20,8 +20,19 @@ import { EmptyState } from "@/components/common/EmptyState";
 import { ListContainer } from "@/components/common/ListItemRow";
 import { PageTools } from "@/components/common/PageTools";
 
+/** 页面上的说法：分组页按成员叫法生成，项目页传自己的 */
+export interface BoardLabels {
+  /** 「分组」或「项目」 */
+  item: string;
+  search: string;
+  create: string;
+  emptyTitle: string;
+  emptyDescription: string;
+  emptyIcon?: ComponentType<{ className?: string }>;
+}
+
 /**
- * Skill 与 MCP 分组页共用的骨架：工具栏、统计栏、读取中 / 读取失败 / 没有分组的状态，
+ * Skill 与 MCP 分组页（以及项目页）共用的骨架：工具栏、统计栏、读取中 / 读取失败 / 没有分组的状态，
  * 以及可拖拽排序的卡片列表。卡片由页面按各自的数据渲染（见 `GroupCard`）。
  */
 export function GroupBoard({
@@ -37,6 +48,8 @@ export function GroupBoard({
   onReorder,
   noun,
   hub,
+  labels: custom,
+  showTools = true,
   children,
 }: {
   query: string;
@@ -55,8 +68,18 @@ export function GroupBoard({
   /** 成员的叫法与所在 Hub：「skill」/「Skill Hub」，「MCP」/「MCP Hub」 */
   noun: string;
   hub: string;
+  labels?: BoardLabels;
+  /** 项目页把工具栏放在页面上，详情页里也要用 */
+  showTools?: boolean;
   children: ReactNode;
 }) {
+  const labels: BoardLabels = custom ?? {
+    item: "分组",
+    search: "搜索分组…",
+    create: "新建分组",
+    emptyTitle: "还没有分组",
+    emptyDescription: `新建一个分组，从 ${hub} 选择需要的 ${noun}，再在卡片上为需要的 Agent 启用。`,
+  };
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, {
@@ -72,37 +95,41 @@ export function GroupBoard({
   };
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <PageTools
-        query={query}
-        onQueryChange={onQueryChange}
-        placeholder="搜索分组…"
-        createLabel="新建分组"
-        onCreate={onCreate}
-      />
+      {showTools && (
+        <PageTools
+          query={query}
+          onQueryChange={onQueryChange}
+          placeholder={labels.search}
+          createLabel={labels.create}
+          onCreate={onCreate}
+        />
+      )}
       {summary}
       <div className="min-h-0 flex-1 overflow-y-auto pb-6">
         {error ? (
           <p role="alert" className="mb-3 text-sm text-red-600">
-            读取分组失败：{String(error)}
+            读取{labels.item}失败：{String(error)}
           </p>
         ) : loading ? (
-          <p className="p-8 text-sm text-muted-foreground">正在读取分组…</p>
+          <p className="p-8 text-sm text-muted-foreground">
+            正在读取{labels.item}…
+          </p>
         ) : !ids.length ? (
           <EmptyState
-            icon={LayoutGrid}
-            title="还没有分组"
-            description={`新建一个分组，从 ${hub} 选择需要的 ${noun}，再在卡片上为需要的 Agent 启用。`}
+            icon={labels.emptyIcon ?? LayoutGrid}
+            title={labels.emptyTitle}
+            description={labels.emptyDescription}
             action={
               <Button onClick={onCreate}>
                 <Plus className="h-4 w-4" />
-                新建分组
+                {labels.create}
               </Button>
             }
           />
         ) : (
           !visible && (
             <p className="p-8 text-center text-sm text-muted-foreground">
-              没有匹配的分组
+              没有匹配的{labels.item}
             </p>
           )
         )}

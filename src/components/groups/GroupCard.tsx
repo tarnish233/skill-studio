@@ -11,6 +11,12 @@ import { AgentGroupAction } from "@/components/common/GroupAgentView";
 import { cn } from "@/lib/utils";
 import type { GroupCardState } from "./groupCardState";
 
+const GROUP_REMOVAL = {
+  verb: "删除",
+  title: "删除分组",
+  blocked: "请先停用分组",
+};
+
 /** 有 Agent 在用的分组：绿色描边与渐变，悬停加深 */
 const HIGHLIGHT =
   "border-emerald-500/40 bg-card bg-gradient-to-r from-emerald-500/10 to-transparent shadow-sm shadow-emerald-500/5 hover:border-emerald-500/60 hover:bg-card dark:from-emerald-500/15";
@@ -25,8 +31,11 @@ export function GroupCard({
   name,
   noun,
   memberCount,
-  members,
+  members = [],
+  subtitle,
   extraBadges,
+  actions,
+  removal = GROUP_REMOVAL,
   state,
   viewAgent,
   dragDisabled,
@@ -44,9 +53,15 @@ export function GroupCard({
   noun: string;
   memberCount: number;
   /** 成员名，已不在 Hub 里的写成「已缺失：<id>」 */
-  members: string[];
+  members?: string[];
+  /** 第二行：默认是成员名，项目卡片换成项目路径 */
+  subtitle?: ReactNode;
   /** 放在数量徽标后面的额外徽标，如 Skill 的 token 体量 */
   extraBadges?: ReactNode;
+  /** 悬停时出现在删除按钮前的操作，如打开项目目录 */
+  actions?: ReactNode;
+  /** 删除按钮的说法 */
+  removal?: { verb: string; title: string; blocked: string };
   state: GroupCardState;
   /** 单个 Agent 视角时选中的 Agent */
   viewAgent?: { id: string; label: string };
@@ -117,16 +132,19 @@ export function GroupCard({
               </Badge>
             ))}
           </div>
-          <p className="mt-1 truncate text-xs text-muted-foreground">
-            {members.join(" · ") || `尚未选择 ${noun}`}
-          </p>
+          {subtitle ?? (
+            <p className="mt-1 truncate text-xs text-muted-foreground">
+              {members.join(" · ") || `尚未选择 ${noun}`}
+            </p>
+          )}
         </div>
         <RowActions busy={deleting}>
+          {actions}
           <Button
             variant="ghost"
             size="icon"
-            title={state.used ? "请先停用分组" : "删除分组"}
-            aria-label={`删除 ${name}`}
+            title={state.used ? removal.blocked : removal.title}
+            aria-label={`${removal.verb} ${name}`}
             disabled={state.used || busy}
             onClick={onDelete}
           >

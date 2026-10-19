@@ -147,8 +147,21 @@ export interface Group {
   skillIds: string[];
 }
 
+/** 项目在某个 Agent 项目目录里的部署：卡片上按 Agent 显示启用、有待应用修改与需要检查 */
+export interface ProjectDeployment {
+  agentId: string;
+  /** Studio 记录的、写进这个 Agent 项目目录的 skill */
+  skillIds: string[];
+  /** 有副本落后于 Hub 里的源：重新写入即可 */
+  stale: boolean;
+  /** 部署出了问题（副本被修改、被替换或已不存在），需要用户处理 */
+  issue?: string | null;
+}
+
 export interface ProjectBinding {
   uncollectedSkillCount?: number;
+  /** 有部署记录的 Agent，见 ProjectDeployment */
+  deployments?: ProjectDeployment[];
   enabledAgentIds?: string[];
   enabledSkillIds?: string[];
   enabledGroupIds?: string[];
@@ -238,6 +251,8 @@ export interface LinkResult {
 export interface LinkReport {
   success: LinkResult[];
   failed: LinkResult[];
+  /** 写入项目时原样留下的副本：部署后被修改或替换，Studio 不覆盖、不删除 */
+  untouched?: UntouchedCopy[];
 }
 
 export interface SettingsPatch {

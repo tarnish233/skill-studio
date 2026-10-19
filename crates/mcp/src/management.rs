@@ -64,8 +64,26 @@ pub struct Catalog {
         deserialize_with = "de_active_groups"
     )]
     pub active_groups: BTreeMap<String, Vec<groups::ActiveGroup>>,
+    /// 项目 id → 这个项目的 MCP 成员和各 Agent 的部署（见 [`projects`]）
+    #[serde(default)]
+    pub projects: BTreeMap<String, projects::Project>,
     #[serde(default)]
     pub backups: Vec<Backup>,
+}
+impl Catalog {
+    /// 分组和项目写进 Agent 配置的接入。它们不属于 Hub 条目，由启用它们的分组 / 项目管理
+    pub fn owned_bindings(&self) -> impl Iterator<Item = &Binding> {
+        self.active_groups
+            .values()
+            .flatten()
+            .flat_map(|g| &g.bindings)
+            .chain(
+                self.projects
+                    .values()
+                    .flat_map(|p| p.active.values())
+                    .flat_map(|d| &d.bindings),
+            )
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -118,6 +136,7 @@ pub fn restore_backup(dir: &Path, id: &str) -> Result<()> {
     catalog.entries = old_catalog.entries;
     catalog.groups = old_catalog.groups;
     catalog.active_groups = old_catalog.active_groups;
+    catalog.projects = old_catalog.projects;
     let mut files = BTreeMap::new();
     for file in backup.files {
         let current = read_text(&file.path)?;
@@ -253,12 +272,7 @@ pub fn set_enabled(dir: &Path, enabled: bool) -> Result<()> {
                 )?;
             }
         }
-        for binding in catalog
-            .active_groups
-            .values()
-            .flatten()
-            .flat_map(|g| &g.bindings)
-        {
+        for binding in catalog.owned_bindings() {
             stage_binding(
                 &mut files,
                 binding,
@@ -267,12 +281,7 @@ pub fn set_enabled(dir: &Path, enabled: bool) -> Result<()> {
             )?;
         }
     } else {
-        for binding in catalog
-            .active_groups
-            .values()
-            .flatten()
-            .flat_map(|g| &g.bindings)
-        {
+        for binding in catalog.owned_bindings() {
             stage_binding(
                 &mut files,
                 binding,
@@ -463,13 +472,10 @@ pub fn save(
             })
         });
         if let Some(binding) = catalog
-            .active_groups
-            .values()
-            .flatten()
-            .flat_map(|g| &g.bindings)
+            .owned_bindings()
             .find(|b| b.path == target.path && b.project == target.project && b.key == target.key)
         {
-            let prior = prior.context("目标正由分组使用，请先停用分组再改变接入")?;
+            let prior = prior.context("目标正由分组或项目使用，请先停用再改变接入")?;
             stage(
                 &mut files,
                 &target,
@@ -516,16 +522,10 @@ pub fn save(
             .iter()
             .filter(|b| !installed.iter().any(|next| next.id == b.id))
         {
-            if catalog
-                .active_groups
-                .values()
-                .flatten()
-                .flat_map(|g| &g.bindings)
-                .any(|b| {
-                    b.path == binding.path && b.project == binding.project && b.key == binding.key
-                })
-            {
-                bail!("接入正由分组使用，请先停用分组再移除接入");
+            if catalog.owned_bindings().any(|b| {
+                b.path == binding.path && b.project == binding.project && b.key == binding.key
+            }) {
+                bail!("接入正由分组或项目使用，请先停用再移除接入");
             }
             let target = Target {
                 agent: binding.agent.clone(),
@@ -620,6 +620,14 @@ pub fn remove(dir: &Path, id: &str, restore: bool) -> Result<Removal> {
     {
         bail!("请先停用引用此 MCP 的分组");
     }
+    if catalog
+        .projects
+        .values()
+        .flat_map(|p| p.active.values())
+        .any(|d| d.entries.iter().any(|e| e.id == id))
+    {
+        bail!("请先在项目里停用引用此 MCP 的 Agent");
+    }
     let mut files = BTreeMap::new();
     let mut removal = Removal::default();
     for b in &entry.bindings {
@@ -654,16 +662,11 @@ pub fn remove_project_bindings(dir: &Path, root: &Path) -> Result<Removal> {
         return Ok(Removal::default());
     }
     if bindings.iter().any(|b| {
-        catalog
-            .active_groups
-            .values()
-            .flatten()
-            .flat_map(|g| &g.bindings)
-            .any(|active| {
-                active.path == b.path && active.project == b.project && active.key == b.key
-            })
+        catalog.owned_bindings().any(|active| {
+            active.path == b.path && active.project == b.project && active.key == b.key
+        })
     }) {
-        bail!("项目接入正由分组使用，请先停用对应分组");
+        bail!("项目接入正由分组或项目使用，请先停用");
     }
     let mut files = BTreeMap::new();
     let mut removal = Removal::default();
@@ -699,16 +702,10 @@ pub fn remove_sources(dir: &Path, targets: Vec<Target>) -> Result<()> {
             .entries
             .iter()
             .flat_map(|e| &e.bindings)
-            .chain(
-                catalog
-                    .active_groups
-                    .values()
-                    .flatten()
-                    .flat_map(|g| &g.bindings),
-            )
+            .chain(catalog.owned_bindings())
             .any(|b| b.path == target.path && b.project == target.project && b.key == target.key)
         {
-            bail!("此来源已被托管或由分组使用，请刷新后从对应入口管理");
+            bail!("此来源已被托管或由分组、项目使用，请刷新后从对应入口管理");
         }
         stage(&mut files, &target, &target.expected, &None)?;
     }
@@ -915,4 +912,6 @@ fn recover(dir: &Path) -> Result<()> {
 mod tests;
 
 pub mod backups;
+mod deploy;
 pub mod groups;
+pub mod projects;

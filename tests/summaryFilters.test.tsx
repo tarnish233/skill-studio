@@ -550,60 +550,86 @@ it("MCP 分组：同一套筛选，「全部」视角右侧是在用的分组数
   expect(screen.queryByText(/^共 \d+ 个分组$/)).toBeNull();
 });
 
-it("Skill 项目：补上「全部」，右侧不再重复「项目 N 个」", async () => {
+it("Skill 项目：与分组同一套「按 Agent 查看」，右侧不再重复「项目 N 个」", async () => {
   handlers.set("list_agents", () => [claudeAgent, codexAgent]);
   handlers.set("list_projects", () => [
     makeProject({
       id: "web",
       name: "webapp",
       agentIds: ["claude-code"],
-      enabledAgentIds: ["claude-code"],
+      deployments: [
+        { agentId: "claude-code", skillIds: [], stale: false, issue: null },
+      ],
     }),
     makeProject({ id: "note", name: "note", root: "/work/note" }),
   ]);
   renderWithProviders(<ProjectsPage />);
   await checkFilter({
-    group: "按项目 Agent 筛选",
+    group: "按 Agent 查看",
     total: 2,
     option: "Claude Code 1",
-    narrowed: () => expect(screen.queryByText("note")).toBeNull(),
-    restored: () => screen.findByText("note"),
+    // 单个 Agent 视角：卡片不过滤，只剩这个 Agent 的启停
+    narrowed: () => {
+      expect(screen.getByText("note")).toBeVisible();
+      expect(screen.queryByRole("button", { name: /为 Codex/ })).toBeNull();
+    },
+    restored: () =>
+      expect(
+        screen.getAllByRole("button", { name: /为 Codex/ }).length,
+      ).toBeGreaterThan(0),
   });
   expect(screen.queryByText(/^项目 \d+ 个$/)).toBeNull();
-  expectStats("按项目 Agent 筛选", ["已备份 0", "未托管 0", "已启用 1"]);
+  expectStats("按 Agent 查看", ["已备份 0", "未托管 0", "已启用 1"]);
 });
 
-it("MCP 项目：补上「全部」，右侧不再重复「项目 N 个」", async () => {
+it("MCP 项目：与分组同一套「按 Agent 查看」，右侧不再重复「项目 N 个」", async () => {
   handlers.set("list_agents", () => [claudeAgent, codexAgent]);
   handlers.set("list_projects", () => [
     makeProject({ id: "web", name: "webapp", root: "/work/webapp" }),
     makeProject({ id: "note", name: "note", root: "/work/note" }),
   ]);
+  const work = managed("work", []);
   handlers.set("mcp_request", ({ method }) =>
     method === "list"
       ? mcpStatus({
-          entries: [
-            managed("work", [
-              binding(
-                "codex",
-                "/work/webapp/.codex/config.toml",
-                "/work/webapp",
-              ),
-            ]),
-          ],
+          entries: [work],
+          projects: {
+            web: {
+              root: "/work/webapp",
+              entryIds: ["work"],
+              groupIds: [],
+              claudeLocal: false,
+              active: {
+                codex: {
+                  entries: [work],
+                  bindings: [
+                    binding("codex", "/work/webapp/.codex/config.toml", null),
+                  ],
+                },
+              },
+            },
+          },
         })
       : null,
   );
   renderWithProviders(<McpProjectsPage />);
   await checkFilter({
-    group: "按项目 Agent 筛选",
+    group: "按 Agent 查看",
     total: 2,
     option: "Codex 1",
-    narrowed: () => expect(screen.queryByText("note")).toBeNull(),
-    restored: () => screen.findByText("note"),
+    narrowed: () => {
+      expect(screen.getByText("note")).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: /为 Claude Code/ }),
+      ).toBeNull();
+    },
+    restored: () =>
+      expect(
+        screen.getAllByRole("button", { name: /为 Claude Code/ }).length,
+      ).toBeGreaterThan(0),
   });
   expect(screen.queryByText(/^项目 \d+ 个$/)).toBeNull();
-  expectStats("按项目 Agent 筛选", ["托管接入 1", "未托管 0", "已启用 1"]);
+  expectStats("按 Agent 查看", ["托管接入 1", "未托管 0", "已启用 1"]);
 });
 
 it("远程 MCP：只读页面也有同一套「全部」筛选", async () => {

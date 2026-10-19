@@ -1,49 +1,9 @@
-import {
-  SummaryBar,
-  SummaryEnd,
-  SummaryFilter,
-  SummaryStat,
-  agentOption,
-} from "@/components/common/SummaryBar";
-import { projectSkillDirectory } from "@/lib/agents";
-import { useSkillPreview } from "@/components/common/SkillPreview";
-import { SkillBackups } from "@/components/common/SkillBackups";
-import { PageTools } from "@/components/common/PageTools";
-import { NameAvatar } from "@/components/common/NameAvatar";
-import {
-  DetailTransition,
-  useDetailAppear,
-} from "@/components/common/DetailTransition";
-import {
-  NavigationGuard,
-  useNavigationGuard,
-  useUnsavedProject,
-} from "@/components/common/NavigationGuard";
-import { useMemo, useState, type ReactNode } from "react";
-import {
-  ArrowLeft,
-  FolderGit2,
-  FolderOpen,
-  Trash2,
-  Upload,
-  Play,
-  Square,
-  GripVertical,
-  PackagePlus,
-} from "lucide-react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { FolderOpen, PackagePlus, Play, Square, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -53,24 +13,65 @@ import {
 } from "@/components/ui/select";
 import { AgentIcon } from "@/components/common/AgentIcon";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
-import { EmptyState } from "@/components/common/EmptyState";
 import {
-  ListContainer,
-  ListItemRow,
-  RowActions,
-} from "@/components/common/ListItemRow";
-import { projectsApi, systemApi } from "@/lib/api";
-import type { ProjectLocalSkill } from "@/lib/api/projects";
+  DetailTransition,
+  useDetailAppear,
+} from "@/components/common/DetailTransition";
+import { GroupAgentToggles } from "@/components/common/GroupAgentToggles";
+import {
+  GroupAgentFilter,
+  useGroupAgentView,
+} from "@/components/common/GroupAgentView";
+import { ListItemRow, RowActions } from "@/components/common/ListItemRow";
+import {
+  NavigationGuard,
+  useNavigationGuard,
+  useUnsavedProject,
+} from "@/components/common/NavigationGuard";
+import { PageTools } from "@/components/common/PageTools";
+import { SkillBackups } from "@/components/common/SkillBackups";
+import { useSkillPreview } from "@/components/common/SkillPreview";
+import { SOURCE_LABELS, SourceMark } from "@/components/common/SourceMark";
+import { SummaryStat } from "@/components/common/SummaryBar";
+import { GroupBoard } from "@/components/groups/GroupBoard";
+import { GroupCard } from "@/components/groups/GroupCard";
+import {
+  groupCardState,
+  type AgentGroupStatus,
+  type GroupCardState,
+} from "@/components/groups/groupCardState";
+import { untouchedSkillNote } from "@/components/groups/untouched";
+import {
+  useGroupReorder,
+  useGroupRunner,
+} from "@/components/groups/useGroupActions";
+import { MemberChecklist } from "@/components/projects/MemberChecklist";
+import {
+  PROJECT_BOARD_LABELS,
+  PROJECT_CARD_LABELS,
+  PROJECT_REMOVAL,
+} from "@/components/projects/projectLabels";
+import { ProjectCreateDialog } from "@/components/projects/ProjectCreateDialog";
+import { ProjectDetailHeader } from "@/components/projects/ProjectDetailHeader";
 import {
   useAgents,
-  useApplyProject,
-  useCreateProject,
-  useDeleteProject,
   useGroups,
   useProjects,
+  useSettings,
   useSkills,
   useWriteProjectGitignore,
 } from "@/hooks/useData";
+import { agentDetection, projectSkillDirectory } from "@/lib/agents";
+import { projectsApi, systemApi } from "@/lib/api";
+import { mcpRequest } from "@/lib/api/mcp";
+import {
+  managementApi,
+  MCP_STATUS_POLL_INTERVAL,
+  MCP_STATUS_STALE_TIME,
+} from "@/lib/api/mcpManagement";
+import type { ProjectLocalSkill } from "@/lib/api/projects";
+import { hubSourceIds } from "@/lib/hubCatalog";
+import { queryKeys } from "@/lib/queryKeys";
 import {
   formatTokens,
   projectSkillIds,
@@ -78,33 +79,21 @@ import {
   tokenIndex,
   tokenTitle,
 } from "@/lib/tokens";
-import type { LinkMode, ProjectBinding } from "@/types";
+import { sameMembers } from "@/lib/utils";
+import type { LinkMode, LinkReport, ProjectBinding } from "@/types";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { queryKeys } from "@/lib/queryKeys";
-import {
-  DndContext,
-  PointerSensor,
-  KeyboardSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  SortableContext,
-  useSortable,
-  arrayMove,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-
-function projectAgentIds(project: ProjectBinding): string[] {
-  return project.enabledAgentIds ?? [];
-}
-
+/** 启停后的提示：skill 要在 Agent 里重新加载或新开会话才生效 */
+const RELOAD = "请在 Agent 中重新加载 skill 或新开会话";
+/** 项目里这些目录不止一个 Agent 读：卡片提示里说明，按 Agent 启用做不到完全隔离 */
+const SHARED_DIRS: Record<string, string> = {
+  ".agents/skills": "共享目录，Pi、OpenCode、Grok Build 也会读取",
+  ".claude/skills": "OpenCode、Grok Build 也会读取（Claude 兼容）",
+};
+const LINK_MODES: Record<LinkMode, string> = {
+  copy: "复制",
+  symlink: "软链",
+  auto: "自动",
+};
 export function ProjectsPage() {
   return (
     <NavigationGuard>
@@ -112,385 +101,169 @@ export function ProjectsPage() {
     </NavigationGuard>
   );
 }
+
+/**
+ * 项目与分组同构：成员（单独绑定的 skill + 绑定的分组）只保存一次，每个 Agent 独立决定
+ * 是否写进这个项目的目录。卡片、Agent 图标、需要检查 / 有待应用修改都和分组共用
+ * （见 `components/groups`），只是写到项目目录而不是 Agent 的全局目录。
+ */
 function ProjectsContent() {
   const requestNavigation = useNavigationGuard();
-  const { data: projects = [] } = useProjects();
+  const projectsQuery = useProjects();
+  const projects = useMemo(
+    () => projectsQuery.data ?? [],
+    [projectsQuery.data],
+  );
   const { data: skills = [] } = useSkills();
   const { data: groups = [] } = useGroups();
-  const { data: agents = [] } = useAgents();
+  const { data: allAgents = [], isDetecting, detectionFailed } = useAgents();
+  const { data: settings } = useSettings();
+  // 同一份项目列表也在 MCP 项目页：移除项目前两边都要停用
+  const mcpStatus = useQuery({
+    queryKey: ["mcp", "local"],
+    queryFn: managementApi.list,
+    enabled: settings?.manageMcp ?? false,
+    staleTime: MCP_STATUS_STALE_TIME,
+    refetchInterval: MCP_STATUS_POLL_INTERVAL,
+  });
   const client = useQueryClient();
-  const [sourceFilter, setSourceFilter] = useState<string | null>(null);
-  const toggleProject = useMutation({
-    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      projectsApi.setEnabled(id, enabled),
-    onSuccess: (_, { enabled }) =>
-      toast.success(enabled ? "项目已启用" : "项目已停用"),
-    onError: (e) => toast.error(String(e)),
-    onSettled: () => client.invalidateQueries({ queryKey: queryKeys.projects }),
-  });
-  const reorder = useMutation({
-    mutationFn: (next: ProjectBinding[]) =>
-      projectsApi.reorder(next.map((p) => p.id)),
-    onMutate: async (next) => {
-      await client.cancelQueries({ queryKey: queryKeys.projects });
-      const previous = client.getQueryData<ProjectBinding[]>(
-        queryKeys.projects,
-      );
-      client.setQueryData(queryKeys.projects, next);
-      return { previous };
-    },
-    // The command returns stored bindings; keep computed deployment status until refetch.
-
-    onError: (e, _, context) => {
-      if (context?.previous)
-        client.setQueryData(queryKeys.projects, context.previous);
-      toast.error(String(e));
-    },
-    onSettled: () => client.invalidateQueries({ queryKey: queryKeys.projects }),
-  });
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
+  const projectAgents = useMemo(
+    () => allAgents.filter((a) => a.supportsProjectSkills),
+    [allAgents],
   );
-  const onDragEnd = ({ active, over }: DragEndEvent) => {
-    if (!over || active.id === over.id || reorder.isPending) return;
-    const from = projects.findIndex((p) => p.id === active.id);
-    const to = projects.findIndex((p) => p.id === over.id);
-    if (from >= 0 && to >= 0) reorder.mutate(arrayMove(projects, from, to));
-  };
-  const createProject = useCreateProject();
-  const deleteProject = useDeleteProject();
-
-  // token 口径与后端写入口径必须是同一个，见 projectSkillIds：
-  // 勾了哪些 agent 决定了哪些绑定分组会被展开，没勾 agent 就一个文件都不写
-  const tokens = useMemo(() => tokenIndex(skills), [skills]);
-  const projectTokens = (p: ProjectBinding) =>
-    sumTokens(tokens, projectSkillIds(p, groups));
-
+  const managedIds = new Set(
+    projectAgents
+      .filter((a) => !settings?.disabledAgents?.includes(a.id))
+      .map((a) => a.id),
+  );
+  const [viewAgentId, setViewAgentId] = useGroupAgentView(
+    "skills",
+    [...managedIds],
+    "projects",
+  );
+  const viewAgent = projectAgents.find((a) => a.id === viewAgentId);
   const [query, setQuery] = useState("");
-  const filtered = projects.filter(
-    (p) =>
-      `${p.name} ${p.root}`
-        .toLowerCase()
-        .includes(query.trim().toLowerCase()) &&
-      (!sourceFilter || projectAgentIds(p).includes(sourceFilter)),
-  );
   const [detail, setDetail] = useState<string | null>(null);
   const appear = useDetailAppear();
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<ProjectBinding | null>(null);
-  const [form, setForm] = useState({ name: "", root: "" });
+  const { busy, run } = useGroupRunner(() => client.invalidateQueries());
+  const reorder = useGroupReorder<ProjectBinding[]>({
+    queryKey: queryKeys.projects,
+    reorder: (data, ids) =>
+      ids.flatMap((id) => data.filter((p) => p.id === id)),
+    save: projectsApi.reorder,
+  });
+  const tokens = useMemo(() => tokenIndex(skills), [skills]);
+  const skillName = (id: string) => skills.find((s) => s.id === id)?.name;
+  const activeIds = (p: ProjectBinding) =>
+    (p.deployments ?? []).map((d) => d.agentId);
+  const mcpActive = (p: ProjectBinding) =>
+    Object.keys(mcpStatus.data?.projects?.[p.id]?.active ?? {}).length > 0;
+
+  /** 各 Agent 对这个项目的状态，由部署明细算出；卡片和详情标题栏共用 */
+  function cardState(p: ProjectBinding): GroupCardState {
+    const members = projectSkillIds(p, groups);
+    const existing = members.filter((id) => skillName(id));
+    const statuses: AgentGroupStatus[] = projectAgents
+      .filter(
+        (a) =>
+          managedIds.has(a.id) ||
+          (p.deployments ?? []).some((d) => d.agentId === a.id),
+      )
+      .map((a) => {
+        const deployed = (p.deployments ?? []).find((d) => d.agentId === a.id);
+        const detection = agentDetection(a, { isDetecting, detectionFailed });
+        const dir = projectSkillDirectory(a);
+        return {
+          where: dir
+            ? `${dir}${SHARED_DIRS[dir] ? `（${SHARED_DIRS[dir]}）` : ""}`
+            : undefined,
+          agentId: a.id,
+          label: a.displayName,
+          managed: managedIds.has(a.id),
+          note: detection.note,
+          dimmed: detection.notInstalled,
+          active: !!deployed,
+          changed:
+            !!deployed &&
+            (deployed.stale || !sameMembers(deployed.skillIds, existing)),
+          issue: deployed?.issue ?? undefined,
+        };
+      });
+    return groupCardState({
+      statuses,
+      used: statuses.some((s) => s.active),
+      memberCount: members.length,
+      missingMembers:
+        existing.length < members.length ||
+        p.groupIds.some((id) => !groups.some((g) => g.id === id)),
+      viewAgentId: viewAgent?.id,
+      labels: PROJECT_CARD_LABELS("skill"),
+    });
+  }
+  /** 只改这个项目写进哪些 Agent：成员用已保存的 */
+  const write = (p: ProjectBinding, agentIds: string[]) =>
+    projectsApi
+      .apply(p.id, {
+        agentIds,
+        skillIds: p.skillIds,
+        groupIds: p.groupIds,
+        linkMode: p.linkMode,
+      })
+      .then(checked);
+  const toggle = (p: ProjectBinding, agentId: string, on: boolean) =>
+    void run(
+      () =>
+        write(
+          p,
+          on
+            ? [...activeIds(p), agentId]
+            : activeIds(p).filter((id) => id !== agentId),
+        ),
+      {
+        success: `${on ? "项目已启用" : "项目已停用"}，${RELOAD}`,
+        notice: (report) => untouchedSkillNote(report.untouched),
+      },
+    );
+  const reapply = (p: ProjectBinding) =>
+    void run(() => write(p, activeIds(p)), {
+      success: `修改已写入，${RELOAD}`,
+      notice: (report) => untouchedSkillNote(report.untouched),
+    });
 
   const tools = (
     <PageTools
       query={query}
-      onQueryChange={(v) => {
+      onQueryChange={(v) =>
         requestNavigation(() => {
           setQuery(v);
           setDetail(null);
-        });
-      }}
+        })
+      }
       placeholder="搜索项目…"
       createLabel="添加项目"
-      onCreate={() => {
+      onCreate={() =>
         requestNavigation(() => {
           setDetail(null);
-          setForm({ name: "", root: "" });
           setCreating(true);
-        });
-      }}
+        })
+      }
     />
   );
-  const active = projects.find((p) => p.id === detail) ?? null;
-  if (active) {
-    return (
-      <>
-        {tools}
-        <DetailTransition key={active.id} appear={appear}>
-          <ProjectDetail
-            project={active}
-            onBack={() => requestNavigation(() => setDetail(null))}
-          />
-        </DetailTransition>
-      </>
-    );
-  }
-
-  /** 胶囊上的数字：该 Agent 已启用的项目数（同一项目只计一次） */
-  const countFor = (agentId: string) =>
-    projects.filter((p) => projectAgentIds(p).includes(agentId)).length;
-  const uncollected = projects.reduce(
-    (sum, p) => sum + (p.uncollectedSkillCount ?? 0),
-    0,
-  );
-  const enabledProjects = projects.filter(
-    (p) => projectAgentIds(p).length > 0,
-  ).length;
-  const pick = async () => {
-    const picked = await projectsApi.pickDirectory();
-    if (!picked) return;
-    const base = picked.split(/[/\\]/).filter(Boolean).pop() ?? picked;
-    setForm({ root: picked, name: form.name || base });
-  };
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {tools}
-      <DetailTransition appear={appear}>
-        <SummaryBar>
-          <SummaryFilter
-            label="按项目 Agent 筛选"
-            total={projects.length}
-            options={agents
-              .filter((a) => a.supportsProjectSkills)
-              .map((a) =>
-                agentOption({
-                  id: a.id,
-                  label: a.displayName,
-                  count: countFor(a.id),
-                  title: `筛选 ${a.displayName} 已启用的项目`,
-                }),
-              )}
-            selected={sourceFilter}
-            onSelect={setSourceFilter}
-          />
-          <SummaryEnd title="按 Skill Studio 已写入的项目部署统计，同一项目只计一次">
-            <SkillBackups scope="projects" />
-            <SummaryStat
-              title={`未托管：各项目目录中未托管、未部署的 skill，共 ${uncollected} 个`}
-            >
-              未托管 {uncollected}
-            </SummaryStat>
-            <SummaryStat
-              title={`已启用：至少有一个 Agent 已启用的项目，共 ${enabledProjects} 个`}
-            >
-              已启用 {enabledProjects}
-            </SummaryStat>
-          </SummaryEnd>
-        </SummaryBar>
-
-        <div className="min-h-0 flex-1 overflow-y-auto pb-6">
-          {projects.length === 0 ? (
-            <EmptyState
-              icon={FolderGit2}
-              title="还没有项目"
-              description="绑定一个项目目录，就能让某些 skill 只对这个项目生效。项目级默认用文件复制而不是软链——软链进 git 是一个指向本机绝对路径的死链。"
-            />
-          ) : (
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={onDragEnd}
-            >
-              <SortableContext
-                items={filtered.map((p) => p.id)}
-                strategy={verticalListSortingStrategy}
-              >
-                <ListContainer cards>
-                  {filtered.map((p) => {
-                    // 一行只遍历一次 id 集合：下面的判断、数字、tooltip 共用
-                    const rowTokens = projectTokens(p);
-                    return (
-                      <SortableProjectCard
-                        key={p.id}
-                        project={p}
-                        disabled={reorder.isPending || toggleProject.isPending}
-                        onOpen={() => setDetail(p.id)}
-                      >
-                        <NameAvatar name={p.name} />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="truncate text-sm font-medium">
-                              {p.name}
-                            </span>
-                            {projectAgentIds(p).length > 0 && (
-                              <Badge variant="success">使用中</Badge>
-                            )}
-                            <Badge
-                              variant="outline"
-                              className="h-4 px-1.5 text-[10px]"
-                            >
-                              {p.enabledGroupIds?.length ?? 0} 分组启动
-                            </Badge>
-                            <Badge
-                              variant="outline"
-                              className="h-4 px-1.5 text-[10px]"
-                            >
-                              {p.enabledSkillIds?.length ?? 0} skill启用
-                            </Badge>
-                            <Badge
-                              variant="outline"
-                              className="h-4 px-1.5 text-[10px]"
-                            >
-                              {p.uncollectedSkillCount ?? 0} skill未托管
-                            </Badge>
-                            {rowTokens.total > 0 && (
-                              <Badge
-                                variant="outline"
-                                className="h-4 px-1.5 text-[10px]"
-                                title={tokenTitle(
-                                  rowTokens,
-                                  "这个项目会用到的 skill（勾选的 agent × 直接绑定 + 归属匹配的分组，去重后）",
-                                )}
-                              >
-                                ≈ {formatTokens(rowTokens.total)} tokens
-                              </Badge>
-                            )}
-                            <Badge
-                              variant="outline"
-                              className="h-4 px-1.5 text-[10px]"
-                            >
-                              {p.linkMode === "copy"
-                                ? "复制"
-                                : p.linkMode === "symlink"
-                                  ? "软链"
-                                  : "自动"}
-                            </Badge>
-                          </div>
-                          <p className="truncate pt-0.5 font-mono text-[11px] text-muted-foreground">
-                            {p.root}
-                          </p>
-                        </div>
-                        <div onClick={(e) => e.stopPropagation()}>
-                          <RowActions
-                            busy={
-                              toggleProject.isPending &&
-                              toggleProject.variables?.id === p.id
-                            }
-                          >
-                            <Button
-                              size="sm"
-                              variant={
-                                p.managedEntries?.length ? "outline" : "default"
-                              }
-                              disabled={
-                                toggleProject.isPending ||
-                                (!p.managedEntries?.length &&
-                                  projectSkillIds(p, groups).length === 0)
-                              }
-                              onClick={() =>
-                                toggleProject.mutate({
-                                  id: p.id,
-                                  enabled: !p.managedEntries?.length,
-                                })
-                              }
-                            >
-                              {p.managedEntries?.length ? (
-                                <Square className="h-4 w-4" />
-                              ) : (
-                                <Play className="h-4 w-4" />
-                              )}
-                              {p.managedEntries?.length ? "停用" : "启用"}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              title="打开项目目录"
-                              onClick={() => void systemApi.revealPath(p.root)}
-                            >
-                              <FolderOpen className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 hover:text-red-500"
-                              title={
-                                p.managedEntries?.length
-                                  ? "请先停用项目"
-                                  : "移除项目"
-                              }
-                              disabled={
-                                !!p.managedEntries?.length ||
-                                toggleProject.isPending
-                              }
-                              onClick={() => setDeleting(p)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </RowActions>
-                        </div>
-                      </SortableProjectCard>
-                    );
-                  })}
-                  {filtered.length === 0 && (
-                    <p className="py-8 text-center text-sm text-muted-foreground">
-                      没有匹配的项目
-                    </p>
-                  )}
-                </ListContainer>
-              </SortableContext>
-            </DndContext>
-          )}
-        </div>
-      </DetailTransition>
-
-      <Dialog open={creating} onOpenChange={setCreating}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>添加项目</DialogTitle>
-            <DialogDescription>
-              选一个项目根目录，之后绑定的 skill 只会写进这个项目里。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 px-6 py-5">
-            <div className="space-y-1.5">
-              <Label>项目目录</Label>
-              <div className="flex gap-2">
-                <Input
-                  value={form.root}
-                  placeholder="点右侧按钮选择"
-                  onChange={(e) => setForm({ ...form, root: e.target.value })}
-                />
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => void pick()}
-                >
-                  <FolderOpen className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="proj-name">项目名</Label>
-              <Input
-                id="proj-name"
-                value={form.name}
-                placeholder="用于在列表里识别"
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCreating(false)}
-            >
-              取消
-            </Button>
-            <Button
-              size="sm"
-              disabled={!form.name.trim() || !form.root.trim()}
-              onClick={() => {
-                createProject.mutate({ name: form.name, root: form.root });
-                setCreating(false);
-              }}
-            >
-              添加
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
+  const dialogs = (
+    <>
+      <ProjectCreateDialog
+        open={creating}
+        onOpenChange={setCreating}
+        description="选一个项目根目录，之后选择只在这个项目里用的 skill，再在卡片上为需要的 Agent 启用。"
+      />
       <ConfirmDialog
-        open={deleting !== null}
-        onOpenChange={(o) => !o && setDeleting(null)}
-        title={`移除项目「${deleting?.name}」`}
+        open={!!deleting}
+        onOpenChange={(open) => !open && !busy && setDeleting(null)}
+        title={`移除项目「${deleting?.name ?? ""}」`}
         confirmText="移除"
-        pending={deleteProject.isPending}
+        pending={busy}
         description={
           <>
             只解除绑定，
@@ -500,20 +273,217 @@ function ProjectsContent() {
             —— 它们可能已经提交进 git 了。
           </>
         }
-        onConfirm={() => {
-          if (deleting) deleteProject.mutate(deleting.id);
-          setDeleting(null);
-        }}
+        onConfirm={() =>
+          deleting &&
+          void run(
+            async () => {
+              await projectsApi.remove(deleting.id);
+              // 同一个项目在 MCP 项目页的记录（成员）一并删掉
+              if (mcpStatus.data?.projects?.[deleting.id])
+                await mcpRequest("removeProject", { projectId: deleting.id });
+            },
+            {
+              success: "项目已移除（项目目录里的文件未变动）",
+              onDone: () => setDeleting(null),
+            },
+          )
+        }
       />
+    </>
+  );
+
+  const active = projects.find((p) => p.id === detail) ?? null;
+  if (active)
+    return (
+      <>
+        {tools}
+        <DetailTransition key={active.id} appear={appear}>
+          <ProjectDetail
+            project={active}
+            state={cardState(active)}
+            busy={busy}
+            onToggle={(agentId, on) => toggle(active, agentId, on)}
+            onReapply={() => reapply(active)}
+            onBack={() => requestNavigation(() => setDetail(null))}
+          />
+        </DetailTransition>
+        {dialogs}
+      </>
+    );
+
+  const keyword = query.trim().toLowerCase();
+  const visible = projects.filter((p) =>
+    `${p.name} ${p.root}`.toLowerCase().includes(keyword),
+  );
+  const uncollected = projects.reduce(
+    (sum, p) => sum + (p.uncollectedSkillCount ?? 0),
+    0,
+  );
+  const enabledProjects = projects.filter((p) => activeIds(p).length).length;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {tools}
+      <DetailTransition appear={appear}>
+        <GroupBoard
+          showTools={false}
+          query={query}
+          onQueryChange={setQuery}
+          onCreate={() => setCreating(true)}
+          loading={projectsQuery.isPending}
+          error={projectsQuery.error}
+          ids={projects.map((p) => p.id)}
+          visible={visible.length}
+          reorderDisabled={busy || reorder.isPending || !!keyword}
+          onReorder={(ids) => reorder.mutate(ids)}
+          noun="skill"
+          hub="Skill Hub"
+          labels={{
+            ...PROJECT_BOARD_LABELS("skill"),
+            emptyDescription:
+              "绑定一个项目目录，就能让某些 skill 只对这个项目生效。项目级默认用文件复制而不是软链——软链进 git 是一个指向本机绝对路径的死链。",
+          }}
+          summary={
+            <GroupAgentFilter
+              noun="项目"
+              total={projects.length}
+              agents={projectAgents.filter((a) => managedIds.has(a.id))}
+              current={(agentId) =>
+                projects.filter((p) => activeIds(p).includes(agentId)).length
+              }
+              selected={viewAgent?.id ?? null}
+              onSelect={setViewAgentId}
+            >
+              <SkillBackups scope="projects" />
+              <SummaryStat
+                title={`未托管：各项目目录中未托管、未部署的 skill，共 ${uncollected} 个`}
+              >
+                未托管 {uncollected}
+              </SummaryStat>
+              <SummaryStat
+                title={`已启用：至少有一个 Agent 已启用的项目，共 ${enabledProjects} 个`}
+              >
+                已启用 {enabledProjects}
+              </SummaryStat>
+            </GroupAgentFilter>
+          }
+        >
+          {visible.map((p) => {
+            const members = projectSkillIds(p, groups);
+            const rowTokens = sumTokens(tokens, members);
+            const state = cardState(p);
+            const locked = state.used || mcpActive(p);
+            return (
+              <GroupCard
+                key={p.id}
+                id={p.id}
+                name={p.name}
+                noun="skill"
+                memberCount={members.length}
+                subtitle={
+                  <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
+                    {p.root}
+                  </p>
+                }
+                extraBadges={
+                  <>
+                    {rowTokens.total > 0 && (
+                      <Badge
+                        variant="outline"
+                        title={tokenTitle(
+                          rowTokens,
+                          "项目成员（直接绑定 + 绑定分组，去重后）",
+                        )}
+                      >
+                        ≈ {formatTokens(rowTokens.total)} tokens
+                      </Badge>
+                    )}
+                    <Badge variant="outline" title="链接方式">
+                      {LINK_MODES[p.linkMode]}
+                    </Badge>
+                    {!!p.uncollectedSkillCount && (
+                      <Badge
+                        variant="outline"
+                        title={`未托管：项目目录里未托管、未部署的 skill，共 ${p.uncollectedSkillCount} 个`}
+                      >
+                        未托管 {p.uncollectedSkillCount}
+                      </Badge>
+                    )}
+                  </>
+                }
+                actions={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title="打开项目目录"
+                    aria-label={`打开 ${p.name} 目录`}
+                    onClick={() => void systemApi.revealPath(p.root)}
+                  >
+                    <FolderOpen className="h-4 w-4" />
+                  </Button>
+                }
+                removal={
+                  locked && !state.used
+                    ? {
+                        ...PROJECT_REMOVAL,
+                        blocked: "请先在 MCP 项目里停用所有 Agent",
+                      }
+                    : PROJECT_REMOVAL
+                }
+                state={{ ...state, used: locked }}
+                viewAgent={
+                  viewAgent && {
+                    id: viewAgent.id,
+                    label: viewAgent.displayName,
+                  }
+                }
+                dragDisabled={
+                  busy || reorder.isPending || !!viewAgent || !!keyword
+                }
+                dragHint={
+                  viewAgent
+                    ? "在「全部」视角下拖动排序"
+                    : keyword
+                      ? "清除搜索后拖动排序"
+                      : undefined
+                }
+                busy={busy}
+                deleting={busy && deleting?.id === p.id}
+                onOpen={() => setDetail(p.id)}
+                onDelete={() => setDeleting(p)}
+                onToggle={(agentId, on) => toggle(p, agentId, on)}
+                onReapply={() => reapply(p)}
+              />
+            );
+          })}
+        </GroupBoard>
+      </DetailTransition>
+      {dialogs}
     </div>
   );
 }
 
+/** 写入报告里有失败的 skill 时当作失败：修改已保留，用户检查后重试 */
+function checked(report: LinkReport): LinkReport {
+  if (report.failed.length)
+    throw new Error(
+      `部分 skill 写入失败：${report.failed.map((f) => f.skillName).join("、")}`,
+    );
+  return report;
+}
+
 function ProjectDetail({
   project,
+  state,
+  busy,
+  onToggle,
+  onReapply,
   onBack,
 }: {
   project: ProjectBinding;
+  state: GroupCardState;
+  busy: boolean;
+  onToggle: (agentId: string, on: boolean) => void;
+  onReapply: () => void;
   onBack: () => void;
 }) {
   const qc = useQueryClient();
@@ -521,37 +491,6 @@ function ProjectDetail({
   const [deletingLocal, setDeletingLocal] = useState<ProjectLocalSkill | null>(
     null,
   );
-  const refreshLocal = async () => {
-    await Promise.all([
-      qc.invalidateQueries({ queryKey: queryKeys.projects }),
-      qc.invalidateQueries({ queryKey: queryKeys.skills }),
-      qc.invalidateQueries({ queryKey: queryKeys.skillBackups }),
-    ]);
-  };
-  const collectLocal = useMutation({
-    mutationFn: (path: string) => projectsApi.collectLocal(project.id, path),
-    onSuccess: async () => {
-      await refreshLocal();
-      toast.success("已托管到 Hub，项目原文件已保留");
-    },
-    onError: (e) => toast.error(String(e)),
-  });
-  const deleteLocal = useMutation({
-    mutationFn: (path: string) =>
-      projectsApi.deleteLocalSkill(project.id, path),
-    onSuccess: async () => {
-      setDeletingLocal(null);
-      await refreshLocal();
-      toast.success("已删除；非软链接文件可从已备份列表恢复");
-    },
-    onError: (e) => toast.error(String(e)),
-  });
-  const toggleLocal = useMutation({
-    mutationFn: ({ path, enabled }: { path: string; enabled: boolean }) =>
-      projectsApi.setLocalEnabled(project.id, path, enabled),
-    onSuccess: refreshLocal,
-    onError: (e) => toast.error(String(e)),
-  });
   const localSkills = useQuery({
     queryKey: [...queryKeys.projects, project.id, "localSkills"],
     queryFn: () => projectsApi.localSkills(project.id),
@@ -559,113 +498,139 @@ function ProjectDetail({
   const { data: agents = [] } = useAgents();
   const { data: skills = [] } = useSkills();
   const { data: groups = [] } = useGroups();
-  const apply = useApplyProject();
   const gitignore = useWriteProjectGitignore();
-  const [query, setQuery] = useState("");
+  const [pending, setPending] = useState<string | null>(null);
   const [writing, setWriting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const remote = useMemo(
     () => ({
-      agentIds: project.agentIds,
       skillIds: project.skillIds,
       groupIds: project.groupIds,
       linkMode: project.linkMode,
     }),
-    [project.agentIds, project.skillIds, project.groupIds, project.linkMode],
+    [project.skillIds, project.groupIds, project.linkMode],
   );
   const [value, setValue] = useState(remote);
   const [saved, setSaved] = useState(remote);
-  const [error, setError] = useState<string | null>(null);
+  // 打开详情时已选的排在最前，勾选过程中不跳动
+  const [pinned] = useState(remote);
   const fingerprint = (v: typeof value) =>
     JSON.stringify({
       ...v,
-      agentIds: [...v.agentIds].sort(),
       skillIds: [...v.skillIds].sort(),
       groupIds: [...v.groupIds].sort(),
     });
   const dirty = fingerprint(value) !== fingerprint(saved);
-  useUnsavedProject(dirty, writing);
-  const draft = { value, edit: setValue };
+  const locked = writing || busy || !!pending;
+  useUnsavedProject(dirty, locked);
+  const activeAgents = (project.deployments ?? []).map((d) => d.agentId);
+  const agentName = (id: string) =>
+    agents.find((a) => a.id === id)?.displayName ?? id;
 
-  const projectAgents = useMemo(
-    () => agents.filter((a) => a.supportsProjectSkills),
-    [agents],
-  );
-
-  const filteredSkills = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return skills;
-    return skills.filter((s) => s.name.toLowerCase().includes(q));
-  }, [skills, query]);
-
-  const toggle = (key: "agentIds" | "skillIds" | "groupIds", id: string) =>
-    !writing &&
-    draft.edit((previous) => ({
-      ...previous,
-      [key]: previous[key].includes(id)
-        ? previous[key].filter((x) => x !== id)
-        : [...previous[key], id],
+  const refreshLocal = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: queryKeys.projects }),
+      qc.invalidateQueries({ queryKey: queryKeys.skills }),
+      qc.invalidateQueries({ queryKey: queryKeys.skillBackups }),
+    ]);
+  /** 项目里已有 skill 的就地操作：同一时间只做一件 */
+  async function local(
+    key: string,
+    action: () => Promise<unknown>,
+    done?: string,
+  ) {
+    setPending(key);
+    try {
+      await action();
+      await refreshLocal();
+      if (done) toast.success(done);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setPending(null);
+    }
+  }
+  const toggleMember = (key: "skillIds" | "groupIds", id: string) =>
+    setValue((prev) => ({
+      ...prev,
+      [key]: prev[key].includes(id)
+        ? prev[key].filter((x) => x !== id)
+        : [...prev[key], id],
     }));
-  const toggleAgent = (id: string) => toggle("agentIds", id);
+  // 已启用 Agent 上没有可用版本的 skill 不能新选
   const variantIssue = (skill: (typeof skills)[number]) =>
-    draft.value.agentIds
+    activeAgents
       .map((id) => skill.agents[id]?.unavailableReason)
       .filter(Boolean)
       .join("；");
-  const toggleSkill = (id: string) => {
-    const skill = skills.find((s) => s.id === id);
-    if (draft.value.skillIds.includes(id) || !skill || !variantIssue(skill))
-      toggle("skillIds", id);
-  };
-  const toggleGroup = (id: string) => toggle("groupIds", id);
+  async function save() {
+    setWriting(true);
+    setError(null);
+    try {
+      const report = checked(
+        await projectsApi.apply(project.id, {
+          ...value,
+          agentIds: activeAgents,
+        }),
+      );
+      setSaved(value);
+      await qc.invalidateQueries();
+      const done = activeAgents.length
+        ? `已保存并写入 ${activeAgents.map(agentName).join("、")}，${RELOAD}`
+        : "已保存，可在卡片上为需要的 Agent 启用";
+      const note = untouchedSkillNote(report.untouched);
+      if (note) toast.warning(`${done}。${note}。`, { duration: 8000 });
+      else toast.success(done);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setWriting(false);
+    }
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-3 py-4">
-        <Button variant="outline" size="icon" onClick={onBack} title="返回">
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-base font-semibold">{project.name}</p>
-          <p className="truncate font-mono text-[11px] text-muted-foreground">
-            {project.root}
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => gitignore.mutate(project.id)}
-        >
-          写入 .gitignore
-        </Button>
-        <Button
-          size="sm"
-          disabled={
-            writing ||
-            apply.isPending ||
-            collectLocal.isPending ||
-            toggleLocal.isPending ||
-            deleteLocal.isPending
-          }
-          onClick={() => {
-            setWriting(true);
-            setError(null);
-            void apply
-              .mutateAsync({ projectId: project.id, selection: value })
-              .then((report) => {
-                if (report.failed.length)
-                  throw new Error("部分 skill 写入失败，请检查后重试");
-                setSaved(value);
-              })
-              .catch((e) => setError(String(e)))
-              .finally(() => setWriting(false));
-          }}
-        >
-          <Upload className="h-4 w-4" />
-          写入项目
-        </Button>
-      </div>
-
+      <ProjectDetailHeader
+        name={project.name}
+        root={project.root}
+        onBack={onBack}
+        agents={
+          <div title={dirty ? "先保存修改，再为 Agent 启停" : undefined}>
+            <GroupAgentToggles
+              groupName={project.name}
+              busy={locked || dirty}
+              agents={state.toggles}
+              onToggle={onToggle}
+              reapply={
+                state.reapply && {
+                  label: state.reapply.label,
+                  targets: state.reapply.targets,
+                  disabled: state.reapply.disabled,
+                  onClick: onReapply,
+                }
+              }
+            />
+          </div>
+        }
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => gitignore.mutate(project.id)}
+          >
+            写入 .gitignore
+          </Button>
+        }
+        save={{
+          onClick: () => void save(),
+          pending: writing,
+          disabled: locked || !dirty,
+          title: activeAgents.length
+            ? `保存并写入 ${activeAgents.map(agentName).join("、")}`
+            : "保存成员；还没有 Agent 启用，不写入项目",
+        }}
+      />
       {error && (
         <p role="alert" className="text-sm text-destructive">
           写入失败，修改已保留：{error}
@@ -679,7 +644,8 @@ function ProjectDetail({
             <SkillBackups scope={`project:${project.id}`} />
           </div>
           <p className="text-xs text-muted-foreground">
-            项目已有 skill 可单独启停；项目卡片的启停仍只作用于绑定项。
+            项目目录里已有的 skill 可单独启停、托管到 Hub；卡片上的 Agent
+            启停只作用于下面选择的成员。
           </p>
           {localSkills.isPending && (
             <p className="text-sm text-muted-foreground">扫描中…</p>
@@ -713,13 +679,7 @@ function ProjectDetail({
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <p className="truncate text-sm font-medium">{skill.name}</p>
-                  <span
-                    className="shrink-0"
-                    title={
-                      agents.find((a) => a.id === skill.agentId)?.displayName ??
-                      skill.agentId
-                    }
-                  >
+                  <span className="shrink-0" title={agentName(skill.agentId)}>
                     <AgentIcon agentId={skill.agentId} size="sm" />
                   </span>
                   {skill.tokens && (
@@ -763,7 +723,7 @@ function ProjectDetail({
                   </p>
                 )}
               </div>
-              <RowActions>
+              <RowActions busy={pending === skill.path}>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -777,34 +737,29 @@ function ProjectDetail({
                 >
                   <FolderOpen className="h-4 w-4" />
                 </Button>
-
-                {!skill.managed && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      writing ||
-                      toggleLocal.isPending ||
-                      collectLocal.isPending ||
-                      deleteLocal.isPending
-                    }
-                    onClick={() =>
-                      toggleLocal.mutate({
-                        path: skill.path,
-                        enabled: !!skill.disabled,
-                      })
-                    }
-                  >
-                    {skill.disabled ? (
-                      <Play className="h-4 w-4" />
-                    ) : (
-                      <Square className="h-4 w-4" />
-                    )}
-                    {skill.disabled ? "启用" : "停用"}
-                  </Button>
-                )}
                 {!skill.managed && (
                   <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={locked}
+                      onClick={() =>
+                        void local(skill.path, () =>
+                          projectsApi.setLocalEnabled(
+                            project.id,
+                            skill.path,
+                            !!skill.disabled,
+                          ),
+                        )
+                      }
+                    >
+                      {skill.disabled ? (
+                        <Play className="h-4 w-4" />
+                      ) : (
+                        <Square className="h-4 w-4" />
+                      )}
+                      {skill.disabled ? "启用" : "停用"}
+                    </Button>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -818,12 +773,16 @@ function ProjectDetail({
                         skill.collected ||
                         !skill.frontmatter ||
                         skill.frontmatter.malformed ||
-                        writing ||
-                        collectLocal.isPending ||
-                        toggleLocal.isPending ||
-                        deleteLocal.isPending
+                        locked
                       }
-                      onClick={() => collectLocal.mutate(skill.path)}
+                      onClick={() =>
+                        void local(
+                          skill.path,
+                          () =>
+                            projectsApi.collectLocal(project.id, skill.path),
+                          "已托管到 Hub，项目原文件已保留",
+                        )
+                      }
                     >
                       <PackagePlus className="h-4 w-4" />
                     </Button>
@@ -833,12 +792,7 @@ function ProjectDetail({
                       title="删除项目 skill"
                       aria-label={`删除 ${skill.name}`}
                       className="hover:text-destructive"
-                      disabled={
-                        writing ||
-                        collectLocal.isPending ||
-                        toggleLocal.isPending ||
-                        deleteLocal.isPending
-                      }
+                      disabled={locked}
                       onClick={() => setDeletingLocal(skill)}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -849,45 +803,18 @@ function ProjectDetail({
             </ListItemRow>
           ))}
         </section>
-        <section className="space-y-2">
-          <h3 className="text-sm font-semibold">agent</h3>
-          <ListContainer>
-            {projectAgents.map((a, i) => (
-              <ListItemRow
-                key={a.id}
-                isLast={i === projectAgents.length - 1}
-                onClick={() => toggleAgent(a.id)}
-              >
-                <Checkbox
-                  checked={draft.value.agentIds.includes(a.id)}
-                  aria-label={a.displayName}
-                />
-                <AgentIcon agentId={a.id} size="sm" />
-                <span className="flex-1 text-sm font-medium">
-                  {a.displayName}
-                </span>
-                <span className="font-mono text-[11px] text-muted-foreground">
-                  {projectSkillDirectory(a) ?? "由 Agent 提供"}
-                </span>
-              </ListItemRow>
-            ))}
-          </ListContainer>
-        </section>
 
         <section className="space-y-2">
           <h3 className="text-sm font-semibold">链接方式</h3>
           <div className="flex items-center gap-3">
             <Select
-              value={draft.value.linkMode}
-              disabled={writing}
+              value={value.linkMode}
+              disabled={locked}
               onValueChange={(v) =>
-                draft.edit((previous) => ({
-                  ...previous,
-                  linkMode: v as LinkMode,
-                }))
+                setValue((prev) => ({ ...prev, linkMode: v as LinkMode }))
               }
             >
-              <SelectTrigger className="w-48">
+              <SelectTrigger className="w-48" aria-label="链接方式">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -904,79 +831,67 @@ function ProjectDetail({
         </section>
 
         {groups.length > 0 && (
-          <section className="space-y-2">
-            <h3 className="text-sm font-semibold">绑定分组</h3>
-            <ListContainer>
-              {groups.map((g, i) => (
-                <ListItemRow
-                  key={g.id}
-                  isLast={i === groups.length - 1}
-                  onClick={() => toggleGroup(g.id)}
-                >
-                  <Checkbox
-                    checked={draft.value.groupIds.includes(g.id)}
-                    aria-label={g.name}
-                  />
-                  <span className="flex-1 text-sm font-medium">{g.name}</span>
-                  <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
-                    {g.skillIds.length} 个
-                  </Badge>
-                </ListItemRow>
-              ))}
-            </ListContainer>
-          </section>
+          <MemberChecklist
+            title="绑定分组"
+            items={groups.map((g) => ({
+              id: g.id,
+              name: g.name,
+              detail:
+                g.skillIds
+                  .map(
+                    (id) =>
+                      skills.find((s) => s.id === id)?.name ?? `已缺失：${id}`,
+                  )
+                  .join(" · ") || "尚未选择 skill",
+              badge: `${g.skillIds.length} 个`,
+            }))}
+            selected={value.groupIds}
+            pinned={pinned.groupIds}
+            onToggle={(id) => toggleMember("groupIds", id)}
+            disabled={locked}
+            emptyText="还没有分组"
+          />
         )}
 
-        <section className="space-y-2">
-          <h3 className="text-sm font-semibold">单独绑定 skill</h3>
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索 skill…"
-          />
-          {filteredSkills.length === 0 ? (
-            <p className="py-4 text-sm text-muted-foreground">
-              没有匹配的 skill
-            </p>
-          ) : (
-            <ListContainer>
-              {filteredSkills.map((s, i) => (
-                <ListItemRow
-                  key={s.id}
-                  isLast={i === filteredSkills.length - 1}
-                  onClick={() => toggleSkill(s.id)}
-                >
-                  <Checkbox
-                    checked={draft.value.skillIds.includes(s.id)}
-                    disabled={
-                      !draft.value.skillIds.includes(s.id) && !!variantIssue(s)
-                    }
-                    aria-label={s.name}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{s.name}</p>
-                    {variantIssue(s) && (
-                      <p className="text-xs text-amber-600">
-                        {variantIssue(s)}
-                      </p>
-                    )}
-                    {s.description && (
-                      <p className="truncate text-xs text-muted-foreground">
-                        {s.description}
-                      </p>
-                    )}
-                  </div>
-                </ListItemRow>
-              ))}
-            </ListContainer>
-          )}
-        </section>
+        <MemberChecklist
+          title="单独绑定 skill"
+          items={[
+            ...skills.map((s) => ({
+              id: s.id,
+              name: s.name,
+              detail: s.description ?? undefined,
+              title: s.sourcePath,
+              marks: hubSourceIds({
+                key: s.id,
+                skill: s,
+                sources: [s],
+                unavailable: false,
+              }).map((id) => (
+                <SourceMark
+                  key={id}
+                  id={id}
+                  label={SOURCE_LABELS[id] ?? agentName(id)}
+                />
+              )),
+              disabledReason: variantIssue(s) || undefined,
+            })),
+            ...value.skillIds
+              .filter((id) => !skills.some((s) => s.id === id))
+              .map((id) => ({ id, name: `已缺失：${id}` })),
+          ]}
+          selected={value.skillIds}
+          pinned={pinned.skillIds}
+          onToggle={(id) => toggleMember("skillIds", id)}
+          disabled={locked}
+          searchPlaceholder="搜索 skill…"
+          emptyText="Skill Hub 暂无 skill，请先安装或导入。"
+        />
       </div>
       {previewDialog}
       <ConfirmDialog
         open={!!deletingLocal}
         onOpenChange={(open) => {
-          if (!open && !deleteLocal.isPending) setDeletingLocal(null);
+          if (!open && !pending) setDeletingLocal(null);
         }}
         title={`删除 ${deletingLocal?.name ?? "skill"}？`}
         description={
@@ -990,70 +905,22 @@ function ProjectDetail({
           </>
         }
         confirmText="删除"
-        pending={deleteLocal.isPending}
-        onConfirm={() => {
-          if (deletingLocal) deleteLocal.mutate(deletingLocal.path);
-        }}
-      />
-    </div>
-  );
-}
-
-function SortableProjectCard({
-  project,
-  disabled,
-  onOpen,
-  children,
-}: {
-  project: ProjectBinding;
-  disabled: boolean;
-  /** 点整张卡片时打开的管理界面（项目详情） */
-  onOpen?: () => void;
-  children: ReactNode;
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    setActivatorNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: project.id, disabled });
-  return (
-    <div
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-        position: "relative",
-        zIndex: isDragging ? 1 : undefined,
-      }}
-    >
-      <ListItemRow
-        card
-        className={
-          projectAgentIds(project).length
-            ? "border-emerald-500/40 bg-card bg-gradient-to-r from-emerald-500/10 to-transparent shadow-sm shadow-emerald-500/5 hover:border-emerald-500/60 hover:bg-card dark:from-emerald-500/15"
-            : undefined
+        pending={!!pending}
+        onConfirm={() =>
+          deletingLocal &&
+          void local(
+            deletingLocal.path,
+            async () => {
+              await projectsApi.deleteLocalSkill(
+                project.id,
+                deletingLocal.path,
+              );
+              setDeletingLocal(null);
+            },
+            "已删除；非软链接文件可从已备份列表恢复",
+          )
         }
-        onPreview={onOpen}
-        previewLabel={onOpen ? `编辑 ${project.name}` : undefined}
-      >
-        <button
-          ref={setActivatorNodeRef}
-          type="button"
-          {...attributes}
-          {...listeners}
-          aria-label={`拖拽排序 ${project.name}`}
-          title="拖拽排序（也可按空格后用方向键移动）"
-          disabled={disabled}
-          className="touch-none shrink-0 cursor-grab rounded p-1 text-muted-foreground/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing disabled:cursor-wait"
-        >
-          <GripVertical className="h-4 w-4" />
-        </button>
-        {children}
-      </ListItemRow>
+      />
     </div>
   );
 }

@@ -276,13 +276,7 @@ fn find_legacy(catalog: &Catalog, configs: &[PathBuf]) -> Vec<LegacyBackup> {
         .entries
         .iter()
         .flat_map(|e| &e.bindings)
-        .chain(
-            catalog
-                .active_groups
-                .values()
-                .flatten()
-                .flat_map(|g| &g.bindings),
-        )
+        .chain(catalog.owned_bindings())
         .map(|b| &b.path)
         .chain(
             catalog

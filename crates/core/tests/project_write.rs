@@ -78,7 +78,7 @@ fn conflict_does_not_save_selection_or_touch_existing_files() {
 
 #[test]
 #[serial]
-fn modified_owned_copy_blocks_deselection_and_source_refresh() {
+fn a_modified_owned_copy_is_left_in_place_on_deselection_and_refresh() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
@@ -87,20 +87,59 @@ fn modified_owned_copy_blocks_deselection_and_source_refresh() {
     c.projects
         .push(ProjectBinding::new("p".into(), "P".into(), root.clone()));
     let source = env.write_simple_skill(&env.hub(), "demo");
-    let id = studio.scan_skills(&c).unwrap()[0].skill.id.clone();
+    env.write_simple_skill(&env.hub(), "other");
+    let views = studio.scan_skills(&c).unwrap();
+    let id = |name: &str| {
+        views
+            .iter()
+            .find(|v| v.skill.name == name)
+            .unwrap()
+            .skill
+            .id
+            .clone()
+    };
     studio
-        .write_project(&mut c, "p", Some(selection(vec![id.clone()])))
+        .write_project(&mut c, "p", Some(selection(vec![id("demo")])))
         .unwrap();
     let dest = root.join(".agents/skills/demo/SKILL.md");
     fs::write(&dest, "local edits").unwrap();
-    assert!(studio
-        .write_project(&mut c, "p", Some(selection(vec![])))
-        .is_err());
+    // 源也变了、又加了新成员：被改过的副本不覆盖，仍归项目管理；其余照常写入
     fs::write(source.join("SKILL.md"), "source edits").unwrap();
-    assert!(studio
-        .write_project(&mut c, "p", Some(selection(vec![id])))
-        .is_err());
-    assert_eq!(fs::read_to_string(dest).unwrap(), "local edits");
+    let report = studio
+        .write_project(&mut c, "p", Some(selection(vec![id("demo"), id("other")])))
+        .unwrap();
+    assert_eq!(fs::read_to_string(&dest).unwrap(), "local edits");
+    assert!(root.join(".agents/skills/other/SKILL.md").is_file());
+    assert_eq!(
+        report
+            .untouched
+            .iter()
+            .map(|u| (u.name.as_str(), u.reason.as_str(), u.tracked))
+            .collect::<Vec<_>>(),
+        [("demo", "副本已被修改", true)]
+    );
+    assert_eq!(c.projects[0].managed_entries.len(), 2);
+    // 取消选择：不删，交还给用户，不再记为项目的部署
+    let report = studio
+        .write_project(&mut c, "p", Some(selection(vec![id("other")])))
+        .unwrap();
+    assert_eq!(fs::read_to_string(&dest).unwrap(), "local edits");
+    assert_eq!(
+        report
+            .untouched
+            .iter()
+            .map(|u| (u.name.as_str(), u.tracked))
+            .collect::<Vec<_>>(),
+        [("demo", false)]
+    );
+    assert_eq!(
+        c.projects[0]
+            .managed_entries
+            .iter()
+            .map(|e| e.skill_id.clone())
+            .collect::<Vec<_>>(),
+        [id("other")]
+    );
 }
 
 #[test]
@@ -142,7 +181,7 @@ fn interrupted_project_write_restores_configuration_and_deployments() {
 
 #[test]
 #[serial]
-fn project_toggle_preserves_selection_and_manual_files_and_rejects_modified_deployments() {
+fn project_toggle_preserves_selection_and_manual_files_and_leaves_modified_deployments() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
@@ -171,12 +210,63 @@ fn project_toggle_preserves_selection_and_manual_files_and_rejects_modified_depl
     }
     let modified = root.join(".claude/skills/demo/SKILL.md");
     fs::write(&modified, "user changes").unwrap();
-    let config_before = fs::read(studio.store().config_path()).unwrap();
-    assert!(studio.set_project_enabled(&mut c, "p", false).is_err());
-    assert_eq!(
-        fs::read(studio.store().config_path()).unwrap(),
-        config_before
-    );
+    // 被改过的副本不再拦住停用：原样留下并报告，其余照常撤回
+    let report = studio.set_project_enabled(&mut c, "p", false).unwrap();
     assert_eq!(fs::read_to_string(modified).unwrap(), "user changes");
-    assert!(root.join(".agents/skills/demo/SKILL.md").exists());
+    assert!(!root.join(".agents/skills/demo").exists());
+    assert!(c.projects[0].managed_entries.is_empty());
+    assert_eq!(
+        report
+            .untouched
+            .iter()
+            .map(|u| (u.reason.as_str(), u.tracked))
+            .collect::<Vec<_>>(),
+        [("副本已被修改", false)]
+    );
+}
+
+#[test]
+#[serial]
+fn deployments_per_agent_separate_stale_copies_from_ones_that_need_checking() {
+    use skill_studio_core::services::project_write::project_deployments;
+    let env = Env::new();
+    let studio = env.studio();
+    let mut c = studio.load_config().unwrap();
+    let root = env.path().join("project");
+    fs::create_dir(&root).unwrap();
+    c.projects
+        .push(ProjectBinding::new("p".into(), "P".into(), root.clone()));
+    let source = env.write_simple_skill(&env.hub(), "demo");
+    let id = studio.scan_skills(&c).unwrap()[0].skill.id.clone();
+    let mut selected = selection(vec![id.clone()]);
+    selected.agent_ids.push("claude-code".into());
+    studio.write_project(&mut c, "p", Some(selected)).unwrap();
+    let view = |c: &skill_studio_core::models::config::AppConfig| {
+        let mut list = project_deployments(&c.projects[0]);
+        list.sort_by(|a, b| a.agent_id.cmp(&b.agent_id));
+        list.into_iter()
+            .map(|d| (d.agent_id, d.skill_ids, d.stale, d.issue))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        view(&c),
+        [
+            ("claude-code".into(), vec![id.clone()], false, None),
+            ("codex".into(), vec![id.clone()], false, None),
+        ]
+    );
+    // 源更新了：两边的副本都过期，需要重新写入
+    fs::write(source.join("SKILL.md"), "---\nname: demo\n---\nnewer").unwrap();
+    assert!(view(&c).iter().all(|d| d.2 && d.3.is_none()));
+    // Claude 的副本被本地改过：需要检查，不算过期
+    fs::write(root.join(".claude/skills/demo/SKILL.md"), "local").unwrap();
+    let list = view(&c);
+    assert_eq!(list[0].3.as_deref(), Some("demo 的副本已被修改"));
+    assert!(list[1].2 && list[1].3.is_none());
+    // 副本被删掉
+    fs::remove_dir_all(root.join(".agents/skills/demo")).unwrap();
+    assert_eq!(view(&c)[1].3.as_deref(), Some("demo 已不存在"));
+    // 没有部署的 Agent 不出现
+    studio.set_project_enabled(&mut c, "p", false).unwrap();
+    assert!(project_deployments(&c.projects[0]).is_empty());
 }

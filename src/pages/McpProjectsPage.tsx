@@ -1,62 +1,72 @@
-import {
-  SummaryBar,
-  SummaryEnd,
-  SummaryFilter,
-  SummaryStat,
-  agentOption,
-} from "@/components/common/SummaryBar";
-import {
-  MCP_PROJECT_SUFFIXES,
-  foreignNote,
-  inProject,
-  mcpAgentId,
-  supportsMcp,
-} from "@/lib/mcpAgents";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, FolderGit2, FolderOpen, Trash2 } from "lucide-react";
-import { toast } from "sonner";
-import { McpAssignments } from "@/components/mcp/McpAssignments";
-import { PageTools } from "@/components/common/PageTools";
-import { NameAvatar } from "@/components/common/NameAvatar";
+import { FolderOpen } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import {
   DetailTransition,
   useDetailAppear,
 } from "@/components/common/DetailTransition";
 import {
-  ListContainer,
-  ListItemRow,
-  RowActions,
-} from "@/components/common/ListItemRow";
-import { EmptyState } from "@/components/common/EmptyState";
-import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+  GroupAgentFilter,
+  useGroupAgentView,
+} from "@/components/common/GroupAgentView";
 import {
   NavigationGuard,
   useNavigationGuard,
 } from "@/components/common/NavigationGuard";
+import { PageTools } from "@/components/common/PageTools";
+import { SummaryStat } from "@/components/common/SummaryBar";
+import { GroupBoard } from "@/components/groups/GroupBoard";
+import { GroupCard } from "@/components/groups/GroupCard";
+import {
+  groupCardState,
+  type AgentGroupStatus,
+  type GroupCardState,
+} from "@/components/groups/groupCardState";
+import { untouchedMcpNote } from "@/components/groups/untouched";
+import {
+  useGroupReorder,
+  useGroupRunner,
+} from "@/components/groups/useGroupActions";
+import { McpProjectDetail } from "@/components/mcp/McpProjectDetail";
+import { ProjectCreateDialog } from "@/components/projects/ProjectCreateDialog";
 import { useTarget } from "@/components/targets/TargetProvider";
-import { useAgents } from "@/hooks/useData";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import { useProjects, useCreateProject } from "@/hooks/useData";
+import { useAgents, useProjects, useSettings } from "@/hooks/useData";
+import { agentDetection } from "@/lib/agents";
 import { projectsApi, systemApi } from "@/lib/api";
-import {
-  managementApi,
-  rows,
-  MCP_STATUS_STALE_TIME,
-  MCP_STATUS_POLL_INTERVAL,
-  type McpRemoval,
-} from "@/lib/api/mcpManagement";
 import { mcpRequest } from "@/lib/api/mcp";
+import {
+  entrySnapshot,
+  managementApi,
+  MCP_STATUS_POLL_INTERVAL,
+  MCP_STATUS_STALE_TIME,
+  ownedBindings,
+  rows,
+  type McpProject,
+  type McpUntouched,
+} from "@/lib/api/mcpManagement";
+import { inProject, mcpAgentId, supportsMcp } from "@/lib/mcpAgents";
+import { queryKeys } from "@/lib/queryKeys";
+import { sameMembers } from "@/lib/utils";
+import {
+  PROJECT_BOARD_LABELS,
+  PROJECT_CARD_LABELS,
+  PROJECT_REMOVAL,
+} from "@/components/projects/projectLabels";
+import type { ProjectBinding } from "@/types";
+
+/** 启停后的提示：MCP 要在 Agent 里重新加载才生效 */
+const RELOAD = "请在 Agent 中重新加载 MCP";
+/** 各 Agent 的项目 MCP 配置（与后端 agents::project_files 一致） */
+const PROJECT_FILES: Record<string, string> = {
+  claude: ".mcp.json",
+  codex: ".codex/config.toml",
+  opencode: "opencode.json",
+  pi: ".pi/mcp.json",
+  grok: ".grok/config.toml",
+};
 
 export function McpProjectsPage() {
   const target = useTarget();
@@ -72,9 +82,19 @@ export function McpProjectsPage() {
     </NavigationGuard>
   );
 }
+
+/**
+ * MCP 项目与 Skill 项目、分组同构：成员（绑定的 MCP 分组 + 单独选择的 MCP）只保存一次，
+ * 每个 Agent 独立决定是否写进这个项目的配置。卡片、Agent 图标、需要检查 / 有待应用修改
+ * 与分组共用（见 `components/groups`）。
+ */
 function McpProjectsContent() {
   const requestNavigation = useNavigationGuard();
-  const projects = useProjects();
+  const projectsQuery = useProjects();
+  const projects = useMemo(
+    () => projectsQuery.data ?? [],
+    [projectsQuery.data],
+  );
   const status = useQuery({
     queryKey: ["mcp", "local"],
     queryFn: managementApi.list,
@@ -82,362 +102,359 @@ function McpProjectsContent() {
     staleTime: MCP_STATUS_STALE_TIME,
     refetchInterval: MCP_STATUS_POLL_INTERVAL,
   });
-  const create = useCreateProject();
-  const { data: allAgents = [] } = useAgents();
+  const { data: allAgents = [], isDetecting, detectionFailed } = useAgents();
+  const { data: settings } = useSettings();
   // Skill 侧的 Agent 列表（含品牌图标），过滤到真正支持 MCP 的
   const mcpAgents = useMemo(
     () => allAgents.filter((a) => supportsMcp(a.id)),
     [allAgents],
   );
-  const [agentFilter, setAgentFilter] = useState<string | null>(null);
+  const managedIds = new Set(
+    mcpAgents
+      .filter((a) => !settings?.disabledAgents?.includes(a.id))
+      .map((a) => a.id),
+  );
+  const [viewAgentId, setViewAgentId] = useGroupAgentView(
+    "mcp",
+    [...managedIds],
+    "projects",
+  );
+  const viewAgent = mcpAgents.find((a) => a.id === viewAgentId);
   const [query, setQuery] = useState("");
   const [detail, setDetail] = useState<string | null>(null);
   const appear = useDetailAppear();
   const [creating, setCreating] = useState(false);
-  const [removingProject, setRemovingProject] = useState(false);
-  const [removeBusy, setRemoveBusy] = useState(false);
-  const [form, setForm] = useState({ name: "", root: "" });
-  const active = projects.data?.find((project) => project.id === detail);
+  const [deleting, setDeleting] = useState<ProjectBinding | null>(null);
+  const { busy, run } = useGroupRunner(() =>
+    Promise.all([status.refetch(), projectsQuery.refetch()]),
+  );
+  const reorder = useGroupReorder<ProjectBinding[]>({
+    queryKey: queryKeys.projects,
+    reorder: (data, ids) =>
+      ids.flatMap((id) => data.filter((p) => p.id === id)),
+    save: projectsApi.reorder,
+  });
   const catalog = rows(status.data);
-  const managedProjectCount = active
-    ? catalog.reduce(
-        (sum, row) =>
-          sum +
-          row.entry.bindings.filter(
-            (binding) =>
-              binding.project === active.root ||
-              MCP_PROJECT_SUFFIXES.some(
-                (suffix) =>
-                  binding.path === active.root.replace(/\/+$/, "") + suffix,
-              ),
-          ).length,
-        0,
-      )
-    : 0;
-  async function removeAll() {
-    if (!active || removeBusy) return;
-    setRemoveBusy(true);
-    try {
-      const result = await mcpRequest<McpRemoval>("removeProjectBindings", {
-        projectId: active.id,
+  const groups = status.data?.groups ?? [];
+  const record = (p: ProjectBinding): McpProject | undefined =>
+    status.data?.projects?.[p.id];
+  const entryName = (id: string) =>
+    catalog.find((r) => r.entry.id === id)?.entry.name;
+  /** 项目成员：单独选择的在前，再展开绑定的分组，去重 */
+  const members = (p: ProjectBinding) => {
+    const rec = record(p);
+    return [
+      ...new Set([
+        ...(rec?.entryIds ?? []),
+        ...(rec?.groupIds ?? []).flatMap(
+          (id) => groups.find((g) => g.id === id)?.entryIds ?? [],
+        ),
+      ]),
+    ];
+  };
+  const activeIds = (p: ProjectBinding) => Object.keys(record(p)?.active ?? {});
+
+  /** 各 Agent 对这个项目的状态：卡片和详情标题栏共用 */
+  function cardState(p: ProjectBinding): GroupCardState {
+    const rec = record(p);
+    const ids = members(p);
+    const existing = ids.filter((id) => entryName(id));
+    const statuses: AgentGroupStatus[] = mcpAgents
+      .filter((a) => managedIds.has(a.id) || !!rec?.active?.[mcpAgentId(a.id)])
+      .map((a) => {
+        const mcpId = mcpAgentId(a.id);
+        const deployed = rec?.active?.[mcpId];
+        const detection = agentDetection(a, { isDetecting, detectionFailed });
+        return {
+          where:
+            mcpId === "claude" && rec?.claudeLocal
+              ? "~/.claude.json 里这个项目的配置（项目本地）"
+              : PROJECT_FILES[mcpId],
+          agentId: a.id,
+          label: a.displayName,
+          managed: managedIds.has(a.id),
+          note: detection.note,
+          dimmed: detection.notInstalled,
+          active: !!deployed,
+          changed:
+            !!deployed &&
+            (!sameMembers(
+              deployed.entries.map((e) => e.id),
+              existing,
+            ) ||
+              deployed.entries.some((e) => {
+                const found = catalog.find((r) => r.entry.id === e.id)?.entry;
+                return !found || entrySnapshot(found) !== entrySnapshot(e);
+              })),
+          issue: status.data?.projectIssues?.[p.id]?.[mcpId],
+        };
       });
-      await status.refetch();
-      setRemovingProject(false);
-      const done = result.removed
-        ? `已移除 ${result.removed} 处托管接入，请在 Agent 中重新加载 MCP。`
-        : "";
-      if (result.foreign.length)
-        toast.warning(`${done}${foreignNote(result.foreign)}。`, {
-          duration: 8000,
-        });
-      else toast.success(done || "已移除托管记录");
-    } catch (error) {
-      toast.error(String(error));
-    } finally {
-      setRemoveBusy(false);
-    }
+    return groupCardState({
+      statuses,
+      used: statuses.some((s) => s.active),
+      memberCount: ids.length,
+      missingMembers:
+        existing.length < ids.length ||
+        (rec?.groupIds ?? []).some((id) => !groups.some((g) => g.id === id)),
+      viewAgentId: viewAgent?.id,
+      labels: PROJECT_CARD_LABELS("MCP"),
+    });
   }
-  const count = (root: string) =>
-    catalog.filter((row) =>
-      [...row.sources, ...row.entry.bindings].some(
+  const activate = (p: ProjectBinding, agentId: string, enabled: boolean) =>
+    mcpRequest<McpUntouched[] | null>("activateProject", {
+      projectId: p.id,
+      agent: mcpAgentId(agentId),
+      enabled,
+    });
+  const toggle = (p: ProjectBinding, agentId: string, on: boolean) =>
+    void run(() => activate(p, agentId, on), {
+      success: `${on ? "项目已启用" : "项目已停用"}，${RELOAD}`,
+      notice: untouchedMcpNote,
+    });
+  const reapply = (p: ProjectBinding, agentIds: string[]) =>
+    void run(
+      async () => {
+        // 依次重新应用：遇到第一个失败就停下报错
+        const untouched: McpUntouched[] = [];
+        for (const agentId of agentIds)
+          untouched.push(...((await activate(p, agentId, true)) ?? []));
+        return untouched;
+      },
+      { success: `修改已应用，${RELOAD}`, notice: untouchedMcpNote },
+    );
+
+  const tools = (
+    <PageTools
+      query={query}
+      onQueryChange={(v) =>
+        requestNavigation(() => {
+          setQuery(v);
+          setDetail(null);
+        })
+      }
+      placeholder="搜索项目…"
+      createLabel="添加项目"
+      onCreate={() =>
+        requestNavigation(() => {
+          setDetail(null);
+          setCreating(true);
+        })
+      }
+    />
+  );
+  const dialogs = (
+    <>
+      <ProjectCreateDialog
+        open={creating}
+        onOpenChange={setCreating}
+        description="选一个项目根目录，之后选择只在这个项目里用的 MCP，再在卡片上为需要的 Agent 启用。"
+      />
+      <ConfirmDialog
+        open={!!deleting}
+        onOpenChange={(open) => !open && !busy && setDeleting(null)}
+        title={`移除项目「${deleting?.name ?? ""}」`}
+        confirmText="移除"
+        pending={busy}
+        description={
+          <>
+            只解除绑定，
+            <span className="font-medium">项目里已有的配置文件不会被删除</span>
+            —— 它们可能已经提交进 git 了。
+          </>
+        }
+        onConfirm={() =>
+          deleting &&
+          void run(
+            async () => {
+              if (record(deleting))
+                await mcpRequest("removeProject", { projectId: deleting.id });
+              await projectsApi.remove(deleting.id);
+            },
+            {
+              success: "项目已移除（项目目录里的文件未变动）",
+              onDone: () => setDeleting(null),
+            },
+          )
+        }
+      />
+    </>
+  );
+
+  const active = projects.find((p) => p.id === detail);
+  if (active && status.data)
+    return (
+      <>
+        {tools}
+        {/* 标题栏和内容一起过渡，与 Skill 项目详情一致 */}
+        <DetailTransition key={active.id} appear={appear}>
+          <McpProjectDetail
+            project={active}
+            status={status.data}
+            refetch={() => status.refetch()}
+            state={cardState(active)}
+            busy={busy}
+            onToggle={(agentId, on) => toggle(active, agentId, on)}
+            onReapply={() =>
+              reapply(active, cardState(active).reapply?.agentIds ?? [])
+            }
+            onBack={() => requestNavigation(() => setDetail(null))}
+          />
+        </DetailTransition>
+        {dialogs}
+      </>
+    );
+
+  const keyword = query.trim().toLowerCase();
+  const visible = projects.filter((p) =>
+    `${p.name} ${p.root}`.toLowerCase().includes(keyword),
+  );
+  // Studio 写进项目的接入（项目自己的部署 + Hub 写在项目里的），和项目里已有但没纳入管理的配置
+  const owned = ownedBindings(status.data);
+  const managedHere = [
+    ...owned,
+    ...catalog.flatMap((row) => row.entry.bindings),
+  ].filter((b) => projects.some((p) => inProject(b, p)));
+  const unmanaged = (p: ProjectBinding) =>
+    catalog.flatMap((row) =>
+      row.sources.filter(
         (source) =>
-          source.project === root ||
-          MCP_PROJECT_SUFFIXES.some(
-            (suffix) => source.path === root.replace(/\/+$/, "") + suffix,
+          inProject({ ...source, project: source.project ?? null }, p) &&
+          !managedHere.some(
+            (b) =>
+              b.agent === source.agent &&
+              b.path === source.path &&
+              b.key === source.key &&
+              (b.project ?? null) === (source.project ?? null),
           ),
       ),
-    ).length;
-  /** 这个项目里有没有该 MCP Agent 的接入（托管的或原有配置都算） */
-  const agentInProject = (mcpId: string, project: { root: string }) =>
-    catalog.some((row) =>
-      [...row.entry.bindings, ...row.sources].some(
-        (source) => source.agent === mcpId && inProject(source, project),
-      ),
     );
-  const list = projects.data ?? [];
-  const agentCount = (appId: string) =>
-    list.filter((project) => agentInProject(mcpAgentId(appId), project)).length;
-  const selectedMcpId = agentFilter ? mcpAgentId(agentFilter) : null;
-  // Studio 写进项目的托管接入，和项目里已有但没纳入管理的配置
-  const projectBindings = catalog.flatMap((row) =>
-    row.entry.bindings.filter((binding) =>
-      list.some((project) => inProject(binding, project)),
-    ),
-  );
-  const unmanagedSources = catalog.flatMap((row) =>
-    row.sources.filter(
-      (source) =>
-        list.some((project) => inProject(source, project)) &&
-        !row.entry.bindings.some(
-          (binding) =>
-            binding.agent === source.agent &&
-            binding.path === source.path &&
-            binding.key === source.key &&
-            (binding.project ?? null) === (source.project ?? null),
-        ),
-    ),
-  );
-  const enabledProjects = list.filter((project) =>
-    catalog.some((row) =>
-      row.entry.bindings.some((binding) => inProject(binding, project)),
-    ),
-  ).length;
-  const filtered = list
-    .filter((project) =>
-      `${project.name} ${project.root}`
-        .toLowerCase()
-        .includes(query.trim().toLowerCase()),
-    )
-    .filter(
-      (project) => !selectedMcpId || agentInProject(selectedMcpId, project),
-    );
+  const unmanagedCount = projects.reduce((n, p) => n + unmanaged(p).length, 0);
+  const enabledProjects = projects.filter((p) => activeIds(p).length).length;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <PageTools
-        query={query}
-        onQueryChange={(value) =>
-          requestNavigation(() => {
-            setQuery(value);
-            setDetail(null);
-          })
-        }
-        placeholder="搜索项目…"
-        createLabel="添加项目"
-        onCreate={() =>
-          requestNavigation(() => {
-            setForm({ name: "", root: "" });
-            setCreating(true);
-          })
-        }
-      />
-      {active ? (
-        // 标题栏和内容一起过渡，与 Skill 项目详情一致
-        <DetailTransition key={active.id} appear={appear}>
-          <div className="flex items-center gap-3 py-4">
-            <Button
-              variant="outline"
-              size="icon"
-              title="返回"
-              onClick={() => requestNavigation(() => setDetail(null))}
+      {tools}
+      <DetailTransition appear={appear}>
+        <GroupBoard
+          showTools={false}
+          query={query}
+          onQueryChange={setQuery}
+          onCreate={() => setCreating(true)}
+          loading={projectsQuery.isPending || status.isPending}
+          error={projectsQuery.error ?? status.error}
+          ids={projects.map((p) => p.id)}
+          visible={visible.length}
+          reorderDisabled={busy || reorder.isPending || !!keyword}
+          onReorder={(ids) => reorder.mutate(ids)}
+          noun="MCP"
+          hub="MCP Hub"
+          labels={PROJECT_BOARD_LABELS("MCP")}
+          summary={
+            <GroupAgentFilter
+              noun="项目"
+              total={projects.length}
+              agents={mcpAgents.filter((a) => managedIds.has(a.id))}
+              current={(agentId) =>
+                projects.filter((p) =>
+                  activeIds(p).includes(mcpAgentId(agentId)),
+                ).length
+              }
+              selected={viewAgent?.id ?? null}
+              onSelect={setViewAgentId}
             >
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-base font-semibold">{active.name}</p>
-              <p className="truncate text-xs text-muted-foreground">
-                {active.root}
-              </p>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              title="打开项目目录"
-              onClick={() => void systemApi.revealPath(active.root)}
-            >
-              <FolderOpen className="h-4 w-4" />
-            </Button>
-            {managedProjectCount > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={removeBusy}
-                onClick={() => setRemovingProject(true)}
+              <SummaryStat
+                title={`托管接入：Studio 写进这些项目的接入，共 ${managedHere.length} 处，同一项目可以有多处`}
               >
-                <Trash2 className="h-4 w-4" />
-                移除托管接入 ({managedProjectCount})
-              </Button>
-            )}
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto pb-6">
-            <McpAssignments project={active} />
-          </div>
-        </DetailTransition>
-      ) : (
-        <>
-          <DetailTransition appear={appear}>
-            <SummaryBar>
-              <SummaryFilter
-                label="按项目 Agent 筛选"
-                title="点击 Agent 筛选：这些项目里配了该 Agent 的 MCP（含未托管的原有配置）"
-                total={list.length}
-                options={mcpAgents.map((a) =>
-                  agentOption({
-                    id: a.id,
-                    label: a.displayName,
-                    count: agentCount(a.id),
-                    title: `筛选：${a.displayName} 配了 MCP 的项目（含未托管的原有配置）`,
-                  }),
-                )}
-                selected={agentFilter}
-                onSelect={setAgentFilter}
-              />
-              <SummaryEnd title="按 Studio 已写入的项目接入统计，同一项目只计一次">
-                <SummaryStat
-                  title={`托管接入：Studio 写进这些项目的接入，共 ${projectBindings.length} 处，同一项目可以有多处`}
-                >
-                  托管接入 {projectBindings.length}
-                </SummaryStat>
-                <SummaryStat
-                  title={`未托管：项目里已有、但没纳入 Studio 管理的 MCP 配置，共 ${unmanagedSources.length} 处，可在项目详情里「纳入管理」`}
-                >
-                  未托管 {unmanagedSources.length}
-                </SummaryStat>
-                <SummaryStat
-                  title={`已启用：至少有一条托管接入的项目，共 ${enabledProjects} 个`}
-                >
-                  已启用 {enabledProjects}
-                </SummaryStat>
-              </SummaryEnd>
-            </SummaryBar>
-            <div className="min-h-0 flex-1 overflow-y-auto pb-6">
-              {(projects.isPending || status.isPending) && (
-                <p className="py-6 text-sm text-muted-foreground">
-                  正在读取项目 MCP…
-                </p>
-              )}
-              {(projects.error || status.error) && (
-                <p role="alert" className="text-sm text-destructive">
-                  {String(projects.error ?? status.error)}
-                </p>
-              )}
-              {!projects.isPending &&
-                !projects.error &&
-                !projects.data?.length && (
-                  <EmptyState
-                    icon={FolderGit2}
-                    title="还没有项目"
-                    description="添加项目目录后，可从 MCP Hub 选择服务，只在该项目中接入。"
-                  />
-                )}
-              <ListContainer cards>
-                {filtered.map((project) => (
-                  <ListItemRow
-                    key={project.id}
-                    card
-                    onPreview={() => setDetail(project.id)}
-                    previewLabel={`查看 ${project.name} 的 MCP`}
+                托管接入 {managedHere.length}
+              </SummaryStat>
+              <SummaryStat
+                title={`未托管：项目里已有、但没纳入 Studio 管理的 MCP 配置，共 ${unmanagedCount} 处，可在项目详情里「纳入管理」`}
+              >
+                未托管 {unmanagedCount}
+              </SummaryStat>
+              <SummaryStat
+                title={`已启用：至少有一个 Agent 已启用的项目，共 ${enabledProjects} 个`}
+              >
+                已启用 {enabledProjects}
+              </SummaryStat>
+            </GroupAgentFilter>
+          }
+        >
+          {visible.map((p) => {
+            const ids = members(p);
+            const state = cardState(p);
+            const skillsActive = !!p.deployments?.length;
+            const locked = state.used || skillsActive;
+            const others = unmanaged(p).length;
+            return (
+              <GroupCard
+                key={p.id}
+                id={p.id}
+                name={p.name}
+                noun="MCP"
+                memberCount={ids.length}
+                subtitle={
+                  <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
+                    {p.root}
+                  </p>
+                }
+                extraBadges={
+                  !!others && (
+                    <Badge
+                      variant="outline"
+                      title={`未托管：项目配置里已有、但没纳入 Studio 管理的 MCP，共 ${others} 处`}
+                    >
+                      未托管 {others}
+                    </Badge>
+                  )
+                }
+                actions={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title="打开项目目录"
+                    aria-label={`打开 ${p.name} 目录`}
+                    onClick={() => void systemApi.revealPath(p.root)}
                   >
-                    <NameAvatar name={project.name} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate text-sm font-medium">
-                          {project.name}
-                        </span>
-                        {!status.isPending && !status.error && (
-                          <Badge variant="outline">
-                            {count(project.root)} 个 MCP
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="truncate pt-0.5 text-xs text-muted-foreground">
-                        {project.root}
-                      </p>
-                    </div>
-                    <RowActions>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        title="打开项目目录"
-                        onClick={() => void systemApi.revealPath(project.root)}
-                      >
-                        <FolderOpen className="h-4 w-4" />
-                      </Button>
-                    </RowActions>
-                  </ListItemRow>
-                ))}
-              </ListContainer>
-              {!!projects.data?.length && !filtered.length && (
-                <p className="py-6 text-center text-sm text-muted-foreground">
-                  没有匹配的项目
-                </p>
-              )}
-            </div>
-          </DetailTransition>
-        </>
-      )}
-      <Dialog
-        open={creating}
-        onOpenChange={(open) => !create.isPending && setCreating(open)}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>添加项目</DialogTitle>
-            <DialogDescription>
-              选择项目根目录，在此项目中配置 MCP。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 px-6 py-5">
-            <label className="block space-y-2 text-sm">
-              <span>项目目录</span>
-              <div className="flex gap-2">
-                <Input
-                  aria-label="项目目录"
-                  value={form.root}
-                  disabled={create.isPending}
-                  onChange={(e) => setForm({ ...form, root: e.target.value })}
-                />
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label="选择项目目录"
-                  disabled={create.isPending}
-                  onClick={async () => {
-                    const root = await projectsApi.pickDirectory();
-                    if (root)
-                      setForm((prev) => ({
-                        root,
-                        name:
-                          prev.name ||
-                          root.split(/[/\\]/).filter(Boolean).pop() ||
-                          root,
-                      }));
-                  }}
-                >
-                  <FolderOpen className="h-4 w-4" />
-                </Button>
-              </div>
-            </label>
-            <label className="block space-y-2 text-sm">
-              <span>项目名</span>
-              <Input
-                aria-label="项目名"
-                value={form.name}
-                disabled={create.isPending}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    <FolderOpen className="h-4 w-4" />
+                  </Button>
+                }
+                removal={
+                  locked && !state.used
+                    ? {
+                        ...PROJECT_REMOVAL,
+                        blocked: "请先在 Skill 项目里停用所有 Agent",
+                      }
+                    : PROJECT_REMOVAL
+                }
+                state={{ ...state, used: locked }}
+                viewAgent={
+                  viewAgent && {
+                    id: viewAgent.id,
+                    label: viewAgent.displayName,
+                  }
+                }
+                dragDisabled={
+                  busy || reorder.isPending || !!viewAgent || !!keyword
+                }
+                dragHint={
+                  viewAgent
+                    ? "在「全部」视角下拖动排序"
+                    : keyword
+                      ? "清除搜索后拖动排序"
+                      : undefined
+                }
+                busy={busy}
+                deleting={busy && deleting?.id === p.id}
+                onOpen={() => setDetail(p.id)}
+                onDelete={() => setDeleting(p)}
+                onToggle={(agentId, on) => toggle(p, agentId, on)}
+                onReapply={(agentIds) => reapply(p, agentIds)}
               />
-            </label>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              disabled={create.isPending}
-              onClick={() => setCreating(false)}
-            >
-              取消
-            </Button>
-            <Button
-              disabled={
-                create.isPending || !form.name.trim() || !form.root.trim()
-              }
-              onClick={() =>
-                create.mutate(form, { onSuccess: () => setCreating(false) })
-              }
-            >
-              {create.isPending ? "添加中…" : "添加"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <ConfirmDialog
-        open={removingProject}
-        onOpenChange={setRemovingProject}
-        title={`移除 ${active?.name ?? "此项目"} 的托管 MCP？`}
-        description="仅恢复此项目中由 Studio 写入的 MCP 接入，保留 Hub 服务、原有手动配置和项目中的 Skill。已被其他程序或手动改过的接入原样保留，不会覆盖修改。"
-        confirmText="移除托管接入"
-        pending={removeBusy}
-        onConfirm={() => void removeAll()}
-      />
+            );
+          })}
+        </GroupBoard>
+      </DetailTransition>
+      {dialogs}
     </div>
   );
 }
