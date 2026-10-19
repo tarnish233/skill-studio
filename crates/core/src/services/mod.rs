@@ -19,5 +19,6 @@ pub(crate) mod manual_policy;
 
 pub mod isolation;
 
+pub mod hub_backups;
 pub mod skill_files;
 pub mod variants;

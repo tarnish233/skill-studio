@@ -27,6 +27,7 @@ pub async fn update_settings(
     patch: SettingsPatch,
 ) -> Result<Settings, String> {
     let changed_mcp = patch.manage_mcp;
+    let changed_keep = patch.backup_keep.is_some();
     let mcp_dir = state.studio().store().dir().join("mcp");
     let enabling = changed_mcp == Some(true) && !state.config().settings.manage_mcp;
     let mut started_gateway = false;
@@ -67,6 +68,10 @@ pub async fn update_settings(
             return Err(error);
         }
     };
+    if changed_keep {
+        // 保留份数与 MCP 配置备份共用：调小后立即清理，不必等下一次写入
+        crate::commands::mcp::prune_backups(mcp_dir.clone(), settings.backup_keep).await;
+    }
     if let Some(enabled) = changed_mcp {
         if enabled {
             let _ =
@@ -84,6 +89,16 @@ pub async fn list_backups(state: State<'_, AppState>) -> Result<Vec<String>, Str
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         skill_studio_service::settings::list_backups(&state)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn delete_backup(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        skill_studio_service::settings::delete_backup(&state, path)
     })
     .await
     .map_err(|e| e.to_string())?

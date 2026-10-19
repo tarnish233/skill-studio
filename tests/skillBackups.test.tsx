@@ -33,7 +33,7 @@ it("filters backups and confirms purge while allowing recovery", async () => {
     records = records.filter((r) => r.id !== id);
   });
   renderWithProviders(<SkillBackups scope="agent:codex" />);
-  fireEvent.click(await screen.findByText("已备份 1 个 skill"));
+  fireEvent.click(await screen.findByText("已备份 1"));
   expect(screen.getByText("agent-demo")).toBeVisible();
   expect(screen.queryByText("project-demo")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "恢复" }));

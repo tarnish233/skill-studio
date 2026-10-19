@@ -85,27 +85,25 @@ it("汇总统计与 Agent 筛选：托管 / 未托管分开算，筛选能只留
   setup();
   renderWithProviders(<McpProjectsPage />);
   await screen.findByText("webapp");
-  // 右侧统计：1 处托管接入（webapp 的 Codex）、1 处未托管（note 原有的 Claude 配置）
-  expect(screen.getByText("项目 2 个")).toBeInTheDocument();
-  expect(screen.getByText("托管接入 1 处")).toBeInTheDocument();
-  expect(screen.getByText("未托管 1 处")).toBeInTheDocument();
-  expect(screen.getByText("已启用 1 个")).toBeInTheDocument();
+  // 总数在「全部」上；右侧统计：1 处托管接入（webapp 的 Codex）、1 处未托管（note 原有的 Claude 配置）
+  expect(screen.getByRole("button", { name: "全部 2" })).toBeInTheDocument();
+  expect(screen.getByText("托管接入 1")).toBeInTheDocument();
+  expect(screen.getByText("未托管 1")).toBeInTheDocument();
+  expect(screen.getByText("已启用 1")).toBeInTheDocument();
   // 左侧 Agent 胶囊带各自的项目数
   const group = within(
     screen.getByRole("group", { name: "按项目 Agent 筛选" }),
   );
   expect(
-    group.getByRole("button", { name: /Claude Code: 1/ }),
+    group.getByRole("button", { name: "Claude Code 1" }),
   ).toBeInTheDocument();
-  expect(group.getByRole("button", { name: /Codex: 1/ })).toBeInTheDocument();
-  expect(
-    group.getByRole("button", { name: /OpenCode: 0/ }),
-  ).toBeInTheDocument();
+  expect(group.getByRole("button", { name: "Codex 1" })).toBeInTheDocument();
+  expect(group.getByRole("button", { name: "OpenCode 0" })).toBeInTheDocument();
   // 点胶囊只留该 Agent 配了 MCP 的项目，再点一次恢复
-  fireEvent.click(group.getByRole("button", { name: /Codex: 1/ }));
+  fireEvent.click(group.getByRole("button", { name: "Codex 1" }));
   expect(screen.queryByText("note")).not.toBeInTheDocument();
   expect(screen.getByText("webapp")).toBeInTheDocument();
-  fireEvent.click(group.getByRole("button", { name: /Codex: 1/ }));
+  fireEvent.click(group.getByRole("button", { name: "Codex 1" }));
   expect(await screen.findByText("note")).toBeInTheDocument();
 });
 

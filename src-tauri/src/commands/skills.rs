@@ -68,6 +68,31 @@ pub async fn adopt_to_hub(state: State<'_, AppState>, skill_id: String) -> Resul
 }
 
 #[tauri::command(rename_all = "camelCase")]
+pub async fn list_hub_backups(
+    state: State<'_, AppState>,
+) -> Result<Vec<skill_studio_core::services::hub_backups::HubBackup>, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        skill_studio_service::skills::list_hub_backups(&state)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn delete_hub_backups(
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+) -> Result<usize, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        skill_studio_service::skills::delete_hub_backups(&state, ids)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command(rename_all = "camelCase")]
 pub async fn prune_missing(state: State<'_, AppState>) -> Result<usize, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {

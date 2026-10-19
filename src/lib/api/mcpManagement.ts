@@ -51,6 +51,25 @@ export interface ActiveMcpGroup {
   entries: ManagedMcp[];
   bindings: ManagedBinding[];
 }
+/** 一次 MCP 写入的备份。状态在打开备份列表时按当前配置判断。 */
+export interface McpBackupView {
+  id: string;
+  createdAt: number;
+  paths: string[];
+  size: number;
+  /** 现在能恢复 / 先恢复更新的备份才能恢复 / 已无法恢复 */
+  status: "restorable" | "afterNewer" | "unrestorable";
+  reason?: string | null;
+}
+/** 旧版本写在配置文件旁边、不在任何备份记录里的文件 */
+export interface McpLegacyBackup {
+  path: string;
+  size: number;
+}
+export interface McpBackupList {
+  backups: McpBackupView[];
+  legacy: McpLegacyBackup[];
+}
 export interface ManagementStatus {
   backups?: {
     id: string;

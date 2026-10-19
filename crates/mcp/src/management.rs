@@ -758,17 +758,18 @@ fn commit(dir: &Path, files: BTreeMap<PathBuf, Change>, catalog: &Catalog) -> Re
         None
     } else {
         let id = uuid::Uuid::new_v4().to_string();
+        // 备份集中放在 Studio 目录，不写进 Agent 配置和项目目录（见 backups.rs）
+        let folder = backups::folder(dir, &id);
         Some(Backup {
             files: changes
                 .iter()
                 .enumerate()
                 .map(|(index, change)| BackupFile {
                     path: change.path.clone(),
-                    backup_path: change.before.as_ref().map(|_| {
-                        change
-                            .path
-                            .with_extension(format!("studio-backup-{id}-{index}"))
-                    }),
+                    backup_path: change
+                        .before
+                        .as_ref()
+                        .map(|_| folder.join(backups::file_name(index, &change.path))),
                     before_hash: change.before.as_deref().map(digest),
                     after_hash: change.after.as_deref().map(digest),
                 })
@@ -777,13 +778,14 @@ fn commit(dir: &Path, files: BTreeMap<PathBuf, Change>, catalog: &Catalog) -> Re
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            catalog_backup_path: dir.join(format!("catalog.studio-backup-{id}.json")),
+            catalog_backup_path: folder.join(backups::CATALOG),
             before_catalog_hash: digest(&previous_catalog_text),
             after_catalog_hash,
             id,
         })
     };
     if let Some(backup) = &backup {
+        backups::create_folder(dir, &backup.id)?;
         atomic::atomic_write_private(
             &backup.catalog_backup_path,
             previous_catalog_text.as_bytes(),
@@ -869,4 +871,5 @@ fn recover(dir: &Path) -> Result<()> {
 #[path = "management_tests.rs"]
 mod tests;
 
+pub mod backups;
 pub mod groups;

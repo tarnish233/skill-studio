@@ -25,6 +25,9 @@ describe("remote target routing", () => {
       "list_groups",
       "list_backups",
       "restore_backup",
+      "delete_backup",
+      "list_hub_backups",
+      "delete_hub_backups",
       "read_skill_document",
       "register_skills",
     ]) {

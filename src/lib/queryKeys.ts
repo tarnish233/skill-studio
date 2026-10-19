@@ -12,5 +12,8 @@ export const queryKeys = {
   config: ["config"] as const,
   skillBackups: ["skill-backups"] as const,
   backups: ["backups"] as const,
+  /** 纳入托管、移出 Hub 时保存的完整备份 */
+  hubBackups: ["hub-backups"] as const,
+  mcpBackups: ["mcp-backups"] as const,
   version: ["version"] as const,
 };

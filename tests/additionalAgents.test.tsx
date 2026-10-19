@@ -177,7 +177,7 @@ it.each(skillOnlyAgents.filter((agent) => !agent.supportsNativeToggle))(
     fireEvent.click(
       await waitFor(() => viewChip(new RegExp(`^${agent.displayName}`))),
     );
-    expect(screen.getByText("已安装 1 个 skill")).toBeInTheDocument();
+    expect(screen.getByText("已安装 1")).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
         name: `${agent.displayName} Skill 使用说明`,
@@ -199,7 +199,7 @@ it("Pi 已接入原生开关：Agent 视角按已启用统计，不再显示「�
   ]);
   renderWithProviders(<GroupsPage />);
   fireEvent.click(await waitFor(() => viewChip(/^Pi/)));
-  expect(screen.getByText("已启用 1 个 skill")).toBeInTheDocument();
+  expect(screen.getByText("已启用 1")).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "Pi Skill 使用说明" }),
   ).not.toBeInTheDocument();

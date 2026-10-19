@@ -112,6 +112,13 @@ pub fn dispatch(state: &AppState, method: &str, params: Value) -> Result<Value, 
         "get_config_dir" => serde_json::to_value(settings::get_config_dir(state)?),
         "get_settings" => serde_json::to_value(settings::get_settings(state)?),
         "list_backups" => serde_json::to_value(settings::list_backups(state)?),
+        "delete_backup" => {
+            serde_json::to_value(settings::delete_backup(state, arg(&params, "path")?)?)
+        }
+        "list_hub_backups" => serde_json::to_value(skills::list_hub_backups(state)?),
+        "delete_hub_backups" => {
+            serde_json::to_value(skills::delete_hub_backups(state, arg(&params, "ids")?)?)
+        }
         "restore_backup" => {
             serde_json::to_value(settings::restore_backup(state, arg(&params, "path")?)?)
         }

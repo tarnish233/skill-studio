@@ -56,7 +56,7 @@ describe("startup readiness", () => {
     expect(
       screen.getByRole("navigation", { name: "主导航" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("已安装 1 个")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "全部 1" })).toBeInTheDocument();
     expect(calls.filter((c) => c.command === "scan_skills")).toHaveLength(1);
     expect(
       calls.filter((c) => c.command === "list_agents").map((c) => c.args),

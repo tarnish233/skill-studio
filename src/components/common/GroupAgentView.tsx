@@ -1,14 +1,12 @@
 import { useState, type ReactNode } from "react";
 import { Play, RefreshCw, Square } from "lucide-react";
-import { AgentIcon } from "@/components/common/AgentIcon";
 import {
   SummaryBar,
   SummaryEnd,
-  SummaryStart,
-  summaryPillClass,
+  SummaryFilter,
+  agentOption,
 } from "@/components/common/SummaryBar";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
 /**
  * 分组页「按 Agent 查看」的选择，Skill / MCP 分开记住，离开页面再回来仍停在上次的视角。
@@ -34,6 +32,20 @@ export function useGroupAgentView(
 }
 
 /**
+ * 至少有一个 Agent 在用的分组 id，Skill 与 MCP 分组页共用。以配置里的全部启用记录
+ * 为准，不只看显示出来的 Agent。
+ */
+export function groupsInUse(
+  activeGroups: Record<string, readonly { groupId: string }[]>,
+): Set<string> {
+  return new Set(
+    Object.values(activeGroups)
+      .flat()
+      .map((g) => g.groupId),
+  );
+}
+
+/**
  * 分组页顶部：「全部」与每个 Agent 的视角胶囊（胶囊上带着它当前用的分组），右侧是当前视角的统计。
  * 「全部」是每张卡片一排 Agent 图标；选中某个 Agent 后，卡片只保留这个 Agent 的启停按钮。
  */
@@ -54,52 +66,27 @@ export function GroupAgentFilter({
   /** 右侧统计 */
   children: ReactNode;
 }) {
-  const pill = (pressed: boolean) =>
-    cn(
-      summaryPillClass,
-      "border-border-default transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-      pressed
-        ? "bg-muted text-foreground ring-1 ring-current"
-        : "text-muted-foreground",
-    );
   return (
     <SummaryBar>
-      <SummaryStart role="group" aria-label="按 Agent 查看">
-        <button
-          type="button"
-          aria-pressed={!selected}
-          onClick={() => onSelect(null)}
-          className={pill(!selected)}
-        >
-          全部 {total}
-        </button>
-        {agents.map((agent) => {
+      <SummaryFilter
+        label="按 Agent 查看"
+        total={total}
+        allTitle="每张分组卡片列出所有 Agent 的启停"
+        options={agents.map((agent) => {
+          // 数字是这个 Agent 叠加的分组数
           const count = current(agent.id);
-          return (
-            <button
-              key={agent.id}
-              type="button"
-              aria-pressed={selected === agent.id}
-              title={
-                count
-                  ? `${agent.displayName} 正在使用 ${count} 个分组`
-                  : `${agent.displayName} 没有启用分组`
-              }
-              // Agent 只留品牌图标：数字是它启用的分组数，名字进读屏与悬停提示
-              aria-label={
-                count
-                  ? `${agent.displayName} · ${count} 个分组`
-                  : agent.displayName
-              }
-              onClick={() => onSelect(agent.id)}
-              className={pill(selected === agent.id)}
-            >
-              <AgentIcon agentId={agent.id} size="sm" />
-              {count}
-            </button>
-          );
+          return agentOption({
+            id: agent.id,
+            label: agent.displayName,
+            count,
+            title: count
+              ? `${agent.displayName} 正在使用 ${count} 个分组`
+              : `${agent.displayName} 没有启用分组`,
+          });
         })}
-      </SummaryStart>
+        selected={selected}
+        onSelect={onSelect}
+      />
       <SummaryEnd>{children}</SummaryEnd>
     </SummaryBar>
   );

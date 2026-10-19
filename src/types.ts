@@ -156,6 +156,19 @@ export interface ProjectBinding {
   linkMode: LinkMode;
 }
 
+/** 纳入托管、移出 Hub 时保存的完整备份 */
+export interface HubBackup {
+  id: string;
+  name: string;
+  /** `adopt` 纳入托管、`release` 移出 Hub；早期版本的备份没有记录 */
+  operation?: string | null;
+  originalPath: string;
+  createdAt: number;
+  size: number;
+  /** 来源记录引用的这份：退出应用管理、移出 Hub 时用它还原，不能删除 */
+  inUse: boolean;
+}
+
 export interface Settings {
   disabledAgents?: string[];
   manageMcp?: boolean;

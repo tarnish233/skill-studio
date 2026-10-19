@@ -1,11 +1,13 @@
 import {
   SummaryBar,
-  SummaryStart,
   SummaryEnd,
-  summaryPillClass,
+  SummaryFilter,
+  SummaryStat,
+  SummaryToggle,
+  agentOption,
+  type SummaryOption,
 } from "@/components/common/SummaryBar";
 import { SkillVariantDetails } from "@/components/common/SkillVariantDetails";
-import { agentSourceColor } from "@/lib/agents";
 import { useSkillPreview } from "@/components/common/SkillPreview";
 import {
   SkillBackups,
@@ -18,11 +20,10 @@ import { toast } from "sonner";
 import { PageTools } from "@/components/common/PageTools";
 import { useEffect, useMemo, useState } from "react";
 import {
+  Bot,
   FolderOpen,
   PackagePlus,
-  Bot,
   PackageMinus,
-  CircleHelp,
   Link2,
 } from "lucide-react";
 import { AgentIcon } from "@/components/common/AgentIcon";
@@ -74,15 +75,14 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
   const client = useQueryClient();
   const { previewSkill, previewDialog } = useSkillPreview();
   const [releaseTarget, setReleaseTarget] = useState<SkillView | null>(null);
-  const [sourceFilter, setSourceFilter] = useState<string | null>(null);
-  const activeSourceFilter =
-    sourceFilter && !settings?.disabledAgents?.includes(sourceFilter)
-      ? sourceFilter
-      : null;
+  /** 左侧筛选：某个来源；null 是「全部」 */
+  const [filter, setFilter] = useState<string | null>(null);
+  const activeFilter =
+    filter && !settings?.disabledAgents?.includes(filter) ? filter : null;
   useEffect(() => {
-    if (sourceFilter && settings?.disabledAgents?.includes(sourceFilter))
-      setSourceFilter(null);
-  }, [sourceFilter, settings?.disabledAgents]);
+    if (filter && settings?.disabledAgents?.includes(filter)) setFilter(null);
+  }, [filter, settings?.disabledAgents]);
+  /** 右侧开关：只看已托管的，和左侧来源叠加 */
   const [hubOnly, setHubOnly] = useState(false);
   const [adding, setAdding] = useState(false);
   const [query, setQuery] = useState("");
@@ -101,7 +101,7 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
       setSourceCard(null);
       // 还原后它不再是 Hub 托管，「已托管」会藏住它；来源归属也可能跟着变
       setHubOnly(false);
-      setSourceFilter(null);
+      setFilter(null);
       toast.success("已移出 Hub 并还原到原始目录");
     },
     onError: (e) => toast.error(String(e)),
@@ -111,7 +111,7 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
   const adoptAndKeepVisible = (skillId: string) =>
     // 托管后它的真身必定在 Hub，「已托管」不会藏它；但来源归属可能变（旧后端
     // 认不出已托管内容的原始来源），所以只清来源筛选。失败了就别动用户的筛选
-    adopt.mutate(skillId, { onSuccess: () => setSourceFilter(null) });
+    adopt.mutate(skillId, { onSuccess: () => setFilter(null) });
 
   const catalog = useMemo(
     () =>
@@ -133,7 +133,7 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
     );
   const available = catalog.filter((c) => !c.unavailable);
   const tokens = useMemo(() => tokenIndex(skills), [skills]);
-  // 与已安装数量一致：合并的多来源 skill 只计一次，筛选不改变总量。
+  // 与「全部」的数量一致：合并的多来源 skill 只计一次，筛选不改变总量。
   const totalTokens = sumTokens(
     tokens,
     available.map((c) => c.skill.id),
@@ -142,132 +142,72 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
   const isHubManaged = (card: HubCard) =>
     card.sources.some((s) => s.origin.kind === "hub");
   const hubManaged = available.filter(isHubManaged);
-  // 来源胶囊的计数必须和列表同一口径：开着「已托管」时，一枚写着 3 的胶囊
+  // 左侧的数字必须和列表同一口径：开着「已托管」时，一枚写着 3 的胶囊
   // 点下去只剩 0 条，等于刚承诺完就打自己的脸
   const counted = hubOnly ? hubManaged : available;
-  const filtered = counted.filter(
-    (c) =>
-      matches(c) &&
-      (!activeSourceFilter || hubSourceIds(c).includes(activeSourceFilter)),
-  );
+  const passes = (card: HubCard, id: string | null) =>
+    !id || hubSourceIds(card).includes(id);
+  const filtered = counted.filter((c) => matches(c) && passes(c, activeFilter));
   const invalid = catalog.filter(
     (c) => c.unavailable && matches(c) && (!hubOnly || isHubManaged(c)),
   );
 
-  const sourceOptions: {
-    id: string;
-    label: string;
-    color: string;
-    hideLabel?: boolean;
-  }[] = [
-    ...visibleAgents.map((a) => ({
-      id: a.id,
-      label: a.displayName,
-      color: agentSourceColor(a.id),
-      // Agent 在界面上统一用品牌图标表示，胶囊里不再重复名字
-      hideLabel: true,
-    })),
-    {
-      id: "studio",
-      label: "Skill Studio",
-      color: "bg-blue-500/10 text-blue-600 dark:text-blue-300",
-    },
-    {
-      id: "agent",
-      label: "Agent",
-      color: "bg-violet-500/10 text-violet-600 dark:text-violet-300",
-    },
-  ];
-  for (const [id, label] of [
-    ["unknown", "来源待确认"],
-    ["external", "外部来源"],
-  ]) {
-    if (
-      activeSourceFilter === id ||
-      counted.some((c) => hubSourceIds(c).includes(id))
-    )
-      sourceOptions.push({
+  const count = (id: string) => counted.filter((c) => passes(c, id)).length;
+  const sourceLabel = (id: string) =>
+    SOURCE_LABELS[id] ?? agentName(agents, id);
+  const options: SummaryOption[] = [
+    ...visibleAgents.map((a) =>
+      agentOption({
+        id: a.id,
+        label: a.displayName,
+        count: count(a.id),
+        title: `筛选 ${a.displayName} 来源`,
+      }),
+    ),
+    ...(["studio", "agent", "unknown", "external"] as const)
+      // 待确认与外部来源只在确实有（或正筛着它）时出现
+      .filter(
+        (id) =>
+          id === "studio" ||
+          id === "agent" ||
+          activeFilter === id ||
+          count(id) > 0,
+      )
+      .map((id) => ({
         id,
-        label,
-        color: "bg-muted text-muted-foreground",
-      });
-  }
+        label: SOURCE_LABELS[id],
+        icon: sourceIcon(id),
+        title: SOURCE_TITLES[id],
+        count: count(id),
+      })),
+  ];
   const summary = (
     <SummaryBar>
-      <SummaryStart role="group" aria-label="按来源筛选">
-        {sourceOptions.map(({ id, label, color, hideLabel }) => {
-          const count = counted.filter((c) =>
-            hubSourceIds(c).includes(id),
-          ).length;
-          return (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={activeSourceFilter === id}
-              aria-label={`${label}: ${count}`}
-              onClick={() => setSourceFilter(sourceFilter === id ? null : id)}
-              title={
-                id === "agent"
-                  ? "共享 Agent 目录（~/.agents/skills）：Codex、OpenCode、Pi、Grok Build 都会直接加载这里的 skill，分组管不住。Skill Studio 不会往里部署；纳入托管会把它移出共享目录。"
-                  : `筛选 ${label} 来源`
-              }
-              className={`${summaryPillClass} border-transparent transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${color} ${activeSourceFilter === id ? "ring-2 ring-current" : ""}`}
-            >
-              {id === "studio" ? (
-                <SkillStudioIcon className="h-4 w-4" />
-              ) : id === "agent" ? (
-                <Bot className="h-4 w-4" />
-              ) : id === "unknown" || id === "external" ? (
-                <CircleHelp className="h-4 w-4" />
-              ) : (
-                <AgentIcon agentId={id} size="sm" />
-              )}
-              {hideLabel ? null : `${label}: `}
-              {count}
-            </button>
-          );
-        })}
-      </SummaryStart>
+      <SummaryFilter
+        label="筛选 skill"
+        total={counted.length}
+        allTitle={`显示全部 ${counted.length} 个${hubOnly ? "已托管" : "已安装"} skill`}
+        options={options}
+        selected={activeFilter}
+        onSelect={setFilter}
+      />
       <SummaryEnd>
-        {/*
-          这两枚是筛选器（有 aria-pressed），所以保留 button；但边框必须走主题
-          token —— 裸 `border` 会吃到 preflight 推出的 #e4e4e7，深色下是一枚
-          近白胶囊套在已经变暗的卡片里。
-        */}
-        <button
-          type="button"
-          aria-pressed={!activeSourceFilter && !hubOnly}
-          onClick={() => {
-            setSourceFilter(null);
-            setHubOnly(false);
-          }}
-          title={`清除来源与「已托管」筛选，显示全部 ${available.length} 个已安装 skill`}
-          className={`${summaryPillClass} border-border-default transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
-        >
-          已安装 {available.length} 个
-        </button>
-        <button
-          type="button"
-          aria-pressed={hubOnly}
+        <SummaryToggle
+          pressed={hubOnly}
           onClick={() => setHubOnly((v) => !v)}
-          title={`真身已搬进 Hub 目录集中托管的 skill，共 ${hubManaged.length} 个（其余仍在各 agent 原处）。点击只看这些。`}
-          className={`${summaryPillClass} border-border-default transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-            hubOnly ? "bg-muted text-foreground ring-2 ring-current" : ""
-          }`}
+          title={`已托管：真身已搬进 Hub 目录集中托管的 skill，共 ${hubManaged.length} 个（其余仍在各 Agent 原处）。点击只看这些，可与左侧的来源叠加。`}
         >
-          已托管 {hubManaged.length} 个
-        </button>
-        <SkillBackups scope="hub" className={summaryPillClass} />
-        <Badge
-          variant="outline"
-          className={summaryPillClass}
+          已托管 {hubManaged.length}
+        </SummaryToggle>
+        <SkillBackups scope="hub" />
+        <SummaryStat
           title={tokenTitle(
             totalTokens,
             "当前显示的已安装 skill（多来源去重）",
           )}
         >
           合计 ≈ {formatTokens(totalTokens.total)} tokens
-        </Badge>
+        </SummaryStat>
       </SummaryEnd>
     </SummaryBar>
   );
@@ -340,31 +280,31 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
                     <span className="truncate text-sm font-medium">
                       {skill.name}
                     </span>
-                    {origins.map((id) => (
-                      <span
-                        key={id}
-                        role="img"
-                        aria-label={`来源：${sourceOptions.find((o) => o.id === id)?.label ?? agentName(agents, id)}`}
-                        title={`${sourceOptions.find((o) => o.id === id)?.label ?? agentName(agents, id)}\n${card.sources
-                          .filter((s) =>
-                            hubSourceIds({ ...card, sources: [s] }).includes(
-                              id,
-                            ),
-                          )
-                          .map((s) => s.sourcePath)
-                          .join("\n")}`}
-                      >
-                        {id === "agent" ? (
-                          <Bot className="h-4 w-4 text-violet-500" />
-                        ) : id === "studio" ? (
-                          <SkillStudioIcon className="h-4 w-4" />
-                        ) : id === "unknown" || id === "external" ? (
-                          <CircleHelp className="h-4 w-4 text-muted-foreground" />
-                        ) : (
-                          <AgentIcon agentId={id} size="sm" />
-                        )}
-                      </span>
-                    ))}
+                    {origins.map((id) => {
+                      const title = `${sourceLabel(id)}\n${card.sources
+                        .filter((s) =>
+                          hubSourceIds({ ...card, sources: [s] }).includes(id),
+                        )
+                        .map((s) => s.sourcePath)
+                        .join("\n")}`;
+                      const icon = sourceIcon(id);
+                      // 与顶部筛选同一规则：认得出的用图标，其余写出名称
+                      return icon ? (
+                        <span
+                          key={id}
+                          role="img"
+                          aria-label={`来源：${sourceLabel(id)}`}
+                          title={title}
+                        >
+                          {icon}
+                        </span>
+                      ) : (
+                        <Badge key={id} variant="outline" title={title}>
+                          <span className="sr-only">来源：</span>
+                          {sourceLabel(id)}
+                        </Badge>
+                      );
+                    })}
                     <Badge
                       variant="outline"
                       title={`${tokenTitle(rowTokens, skill.name)} 整个目录文本合计 ≈ ${formatTokens(rowTokens.total)} tokens。`}
@@ -518,7 +458,7 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
         </ListContainer>
         {!filtered.length && (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            {query || activeSourceFilter || hubOnly
+            {query || activeFilter || hubOnly
               ? "没有匹配的可用 skill"
               : !catalog.length && skills.length
                 ? "当前 Agent 选择下没有可显示的 skill，可在设置中开启其他 Agent。"
@@ -783,6 +723,35 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
       />
     </div>
   );
+}
+
+/** 不是 Agent 的来源：Skill Studio、共享 Agent 目录、无法确认的来源 */
+const SOURCE_LABELS: Record<string, string> = {
+  studio: "Skill Studio",
+  agent: "Agent",
+  unknown: "来源待确认",
+  external: "外部来源",
+};
+/** 筛选胶囊的悬停提示：先报名称再解释（有图标的胶囊只显示图标） */
+const SOURCE_TITLES = {
+  studio: "Skill Studio：通过 Skill Studio 安装的 skill",
+  agent:
+    "Agent：共享 Agent 目录（~/.agents/skills）里的 skill。Codex、OpenCode、Pi、Grok Build 都会直接加载这里的 skill，分组管不住；Skill Studio 不会往里部署，纳入托管会把它移出共享目录。",
+  unknown: "来源待确认：缺少托管记录，无法确认原始来源",
+  external: "外部来源：不在任何 Agent 的 skill 目录里",
+} as const;
+
+/**
+ * 来源图标，筛选胶囊和卡片上的来源标记共用。只给一眼认得出的：Agent 的品牌
+ * 图标、Skill Studio，以及共享 Agent 目录的小机器人；待确认、外部来源没有，
+ * 直接写名称。
+ */
+function sourceIcon(id: string) {
+  if (id === "studio") return <SkillStudioIcon className="h-4 w-4" />;
+  if (id === "agent")
+    return <Bot className="h-4 w-4 text-violet-500 dark:text-violet-400" />;
+  if (id in SOURCE_LABELS) return undefined;
+  return <AgentIcon agentId={id} size="sm" />;
 }
 
 function agentName(

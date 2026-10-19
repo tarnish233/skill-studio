@@ -160,6 +160,16 @@ pub fn restore_backup(state: &AppState, path: String) -> Result<AppConfig, Strin
         .map_err(Into::into)
 }
 
+/// 删除一份配置备份。恢复模式下不删：那时备份是唯一的退路。
+pub fn delete_backup(state: &AppState, path: String) -> Result<(), String> {
+    state.ensure_writable().map_err(String::from)?;
+    state
+        .studio()
+        .store()
+        .delete_backup(std::path::Path::new(&path))
+        .map_err(Into::into)
+}
+
 /// 配置目录路径，供前端"在 Finder 中显示"用
 pub fn get_config_dir(state: &AppState) -> Result<String, String> {
     Ok(state.studio().store().dir().to_string_lossy().to_string())

@@ -1,8 +1,9 @@
 import {
   SummaryBar,
-  SummaryStart,
   SummaryEnd,
-  summaryPillClass,
+  SummaryFilter,
+  SummaryStat,
+  agentOption,
 } from "@/components/common/SummaryBar";
 import {
   MCP_PROJECT_SUFFIXES,
@@ -33,8 +34,6 @@ import {
   useNavigationGuard,
 } from "@/components/common/NavigationGuard";
 import { useTarget } from "@/components/targets/TargetProvider";
-import { AgentIcon } from "@/components/common/AgentIcon";
-import { agentSourceColor } from "@/lib/agents";
 import { useAgents } from "@/hooks/useData";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -251,57 +250,37 @@ function McpProjectsContent() {
         <>
           <DetailTransition appear={appear}>
             <SummaryBar>
-              <SummaryStart
-                role="group"
-                aria-label="按项目 Agent 筛选"
+              <SummaryFilter
+                label="按项目 Agent 筛选"
                 title="点击 Agent 筛选：这些项目里配了该 Agent 的 MCP（含未托管的原有配置）"
-              >
-                {mcpAgents.map((a) => (
-                  <button
-                    key={a.id}
-                    type="button"
-                    title={`筛选：${a.displayName} 配了 MCP 的项目（含未托管的原有配置）`}
-                    className={`${summaryPillClass} border-transparent transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${agentSourceColor(a.id)} ${agentFilter === a.id ? "ring-2 ring-current" : ""}`}
-                    aria-pressed={agentFilter === a.id}
-                    aria-label={`${a.displayName}: ${agentCount(a.id)}`}
-                    onClick={() =>
-                      setAgentFilter(agentFilter === a.id ? null : a.id)
-                    }
-                  >
-                    <AgentIcon agentId={a.id} size="sm" />
-                    {agentCount(a.id)}
-                  </button>
-                ))}
-              </SummaryStart>
+                total={list.length}
+                options={mcpAgents.map((a) =>
+                  agentOption({
+                    id: a.id,
+                    label: a.displayName,
+                    count: agentCount(a.id),
+                    title: `筛选：${a.displayName} 配了 MCP 的项目（含未托管的原有配置）`,
+                  }),
+                )}
+                selected={agentFilter}
+                onSelect={setAgentFilter}
+              />
               <SummaryEnd title="按 Studio 已写入的项目接入统计，同一项目只计一次">
-                <Badge
-                  variant="outline"
-                  className={summaryPillClass}
-                  title="已登记的项目目录数量"
+                <SummaryStat
+                  title={`托管接入：Studio 写进这些项目的接入，共 ${projectBindings.length} 处，同一项目可以有多处`}
                 >
-                  项目 {list.length} 个
-                </Badge>
-                <Badge
-                  variant="outline"
-                  className={summaryPillClass}
-                  title="Studio 写进这些项目的接入条数，同一项目可以有多条"
+                  托管接入 {projectBindings.length}
+                </SummaryStat>
+                <SummaryStat
+                  title={`未托管：项目里已有、但没纳入 Studio 管理的 MCP 配置，共 ${unmanagedSources.length} 处，可在项目详情里「纳入管理」`}
                 >
-                  托管接入 {projectBindings.length} 处
-                </Badge>
-                <Badge
-                  variant="outline"
-                  className={summaryPillClass}
-                  title="项目里已有、但没纳入 Studio 管理的 MCP 配置，可在项目详情里「纳入管理」"
+                  未托管 {unmanagedSources.length}
+                </SummaryStat>
+                <SummaryStat
+                  title={`已启用：至少有一条托管接入的项目，共 ${enabledProjects} 个`}
                 >
-                  未托管 {unmanagedSources.length} 处
-                </Badge>
-                <Badge
-                  variant="outline"
-                  className={summaryPillClass}
-                  title="至少有一条托管接入的项目数量"
-                >
-                  已启用 {enabledProjects} 个
-                </Badge>
+                  已启用 {enabledProjects}
+                </SummaryStat>
               </SummaryEnd>
             </SummaryBar>
             <div className="min-h-0 flex-1 overflow-y-auto pb-6">

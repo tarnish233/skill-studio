@@ -72,9 +72,9 @@ it("hides disabled Agent-only Skills and updates totals while retaining Hub cont
     </>,
   );
   const sources = within(
-    await screen.findByRole("group", { name: "按来源筛选" }),
+    await screen.findByRole("group", { name: "筛选 skill" }),
   );
-  fireEvent.click(await sources.findByRole("button", { name: "OpenCode: 1" }));
+  fireEvent.click(await sources.findByRole("button", { name: "OpenCode 1" }));
   expect(
     screen.queryByRole("button", { name: "预览 Hub skill" }),
   ).not.toBeInTheDocument();
@@ -84,17 +84,15 @@ it("hides disabled Agent-only Skills and updates totals while retaining Hub cont
       sources.queryByRole("button", { name: /OpenCode/ }),
     ).not.toBeInTheDocument(),
   );
-  for (const name of [/Claude Code/, /Pi:/, /Grok Build/])
+  for (const name of [/Claude Code/, /^Pi /, /Grok Build/])
     expect(sources.queryByRole("button", { name })).not.toBeInTheDocument();
-  expect(sources.getByRole("button", { name: "Codex: 0" })).toBeVisible();
-  expect(
-    sources.getByRole("button", { name: "Skill Studio: 1" }),
-  ).toBeVisible();
+  expect(sources.getByRole("button", { name: "Codex 0" })).toBeVisible();
+  expect(sources.getByRole("button", { name: "Skill Studio 1" })).toBeVisible();
   expect(
     screen.queryByRole("button", { name: "预览 Open skill" }),
   ).not.toBeInTheDocument();
   expect(screen.getByText("合计 ≈ 100 tokens")).toBeVisible();
-  expect(screen.getByRole("button", { name: "已安装 1 个" })).toHaveAttribute(
+  expect(sources.getByRole("button", { name: "全部 1" })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
@@ -103,7 +101,7 @@ it("hides disabled Agent-only Skills and updates totals while retaining Hub cont
   expect(
     await screen.findByRole("button", { name: "预览 Open skill" }),
   ).toBeVisible();
-  expect(screen.getByRole("button", { name: "已安装 2 个" })).toBeVisible();
+  expect(sources.getByRole("button", { name: "全部 2" })).toBeVisible();
 });
 
 it("maps disabled Claude and new Agents to MCP statistics and clears hidden filters", async () => {

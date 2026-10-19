@@ -72,6 +72,8 @@ pub fn run() {
             commands::discover_local_skills,
             commands::import_local_skill,
             commands::prune_missing,
+            commands::list_hub_backups,
+            commands::delete_hub_backups,
             // 分组
             commands::list_groups,
             commands::save_group,
@@ -103,6 +105,7 @@ pub fn run() {
             commands::update_settings,
             commands::list_backups,
             commands::restore_backup,
+            commands::delete_backup,
             commands::get_config_dir,
             commands::reveal_path,
         ])

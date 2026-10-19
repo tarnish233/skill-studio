@@ -83,7 +83,7 @@ it("counts uncollected project skills and refreshes collection and confirmed del
   });
   renderWithProviders(<ProjectsPage />);
   expect(await screen.findByText("1 skill未托管")).toBeVisible();
-  expect(screen.getByText("未托管 skill 1 个")).toBeVisible();
+  expect(screen.getByText("未托管 1")).toBeVisible();
   fireEvent.click(screen.getByText("webapp"));
   fireEvent.click(
     await screen.findByRole("button", { name: "托管 release 到 Hub" }),

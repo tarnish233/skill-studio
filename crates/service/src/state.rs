@@ -228,6 +228,8 @@ impl AppState {
             return Err(error);
         }
         *guard = next;
+        // 开关管理也会写 Agent 配置并留下备份；清理失败不影响开关本身
+        let _ = skill_studio_mcp::management::backups::prune(&dir, guard.settings.backup_keep);
         Ok(())
     }
 

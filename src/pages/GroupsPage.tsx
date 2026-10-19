@@ -46,10 +46,11 @@ import { GroupAgentToggles } from "@/components/common/GroupAgentToggles";
 import {
   AgentGroupAction,
   GroupAgentFilter,
+  groupsInUse,
   useGroupAgentView,
 } from "@/components/common/GroupAgentView";
 import { HelpPopover } from "@/components/common/HelpPopover";
-import { summaryPillClass } from "@/components/common/SummaryBar";
+import { SummaryStat } from "@/components/common/SummaryBar";
 import { agentDetection } from "@/lib/agents";
 import { sameMembers } from "@/lib/utils";
 import { formatTokens, sumTokens, tokenIndex, tokenTitle } from "@/lib/tokens";
@@ -118,6 +119,8 @@ export function GroupsPage() {
   const activeCount = (agentId: string) => (activeGroups[agentId] ?? []).length;
   const activeIds = (agentId: string) =>
     (activeGroups[agentId] ?? []).map((g) => g.groupId);
+  const inUse = groupsInUse(activeGroups);
+  const usedGroups = groups.filter((g) => inUse.has(g.id)).length;
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -279,21 +282,17 @@ export function GroupsPage() {
       >
         {viewAgent ? (
           <>
-            <Badge
-              variant="outline"
-              className={summaryPillClass}
+            <SummaryStat
               title={
                 viewAgent.supportsNativeToggle
-                  ? "文件在位、且没被 agent 的原生开关停用的 skill。目录里有痕迹但用不上的（外来占位、悬空链接）不计。"
-                  : "按标准目录中的 Skill 文件统计；实际加载状态由 Agent 自身配置决定。"
+                  ? `已启用：文件在位、且没被 agent 的原生开关停用的 skill，共 ${enabledSkills.length} 个。目录里有痕迹但用不上的（外来占位、悬空链接）不计。`
+                  : `已安装：按标准目录中的 Skill 文件统计，共 ${enabledSkills.length} 个；实际加载状态由 Agent 自身配置决定。`
               }
             >
               {viewAgent.supportsNativeToggle ? "已启用" : "已安装"}{" "}
-              {enabledSkills.length} 个 skill
-            </Badge>
-            <Badge
-              variant="outline"
-              className={summaryPillClass}
+              {enabledSkills.length}
+            </SummaryStat>
+            <SummaryStat
               title={tokenTitle(
                 enabledTokens,
                 viewAgent.supportsNativeToggle
@@ -302,8 +301,8 @@ export function GroupsPage() {
                 driftedCount,
               )}
             >
-              ≈ {formatTokens(enabledTokens.total)} tokens
-            </Badge>
+              合计 ≈ {formatTokens(enabledTokens.total)} tokens
+            </SummaryStat>
             {!viewAgent.supportsNativeToggle && (
               <HelpPopover label={`${viewAgent.displayName} Skill 使用说明`}>
                 {viewAgent.displayName} 本版支持 Skill
@@ -318,9 +317,12 @@ export function GroupsPage() {
             )}
           </>
         ) : (
-          <Badge variant="outline" className={summaryPillClass}>
-            共 {groups.length} 个分组
-          </Badge>
+          // 总数已在「全部」上；这里给出在用的分组数，和卡片上的「使用中」同一口径
+          <SummaryStat
+            title={`已启用：至少有一个 Agent 正在使用的分组，共 ${usedGroups} 个`}
+          >
+            已启用 {usedGroups}
+          </SummaryStat>
         )}
       </GroupAgentFilter>
       <div className="min-h-0 flex-1 overflow-y-auto pb-6">
@@ -363,10 +365,7 @@ export function GroupsPage() {
                       ...groupStatus(g, a.id),
                     }));
                   const activeStatuses = statuses.filter((s) => s.active);
-                  // 是否在用以配置里的全部启用记录为准，不只看显示出来的 Agent
-                  const inUse = Object.values(activeGroups)
-                    .flat()
-                    .some((v) => v.groupId === g.id);
+                  const used = inUse.has(g.id);
                   const unavailable = activeStatuses.some((s) => s.unavailable);
                   const changed = activeStatuses.some((s) => s.changed);
                   const reapplyTargets = activeStatuses.filter(
@@ -375,7 +374,7 @@ export function GroupsPage() {
                   // 单个 Agent 视角：徽标与高亮只说这个 Agent 的情况
                   const view = viewAgent && groupStatus(g, viewAgent.id);
                   const shown = view ?? {
-                    active: inUse,
+                    active: used,
                     changed,
                     unavailable,
                   };
@@ -444,9 +443,9 @@ export function GroupsPage() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          title={inUse ? "请先停用分组" : "删除分组"}
+                          title={used ? "请先停用分组" : "删除分组"}
                           aria-label={`删除 ${g.name}`}
-                          disabled={inUse || activate.isPending}
+                          disabled={used || activate.isPending}
                           onClick={() => setDeleting(g)}
                         >
                           <Trash2 className="h-4 w-4" />

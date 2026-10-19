@@ -20,10 +20,9 @@ pub fn apply(
         return Ok(());
     }
     if path.exists() {
-        atomic::atomic_write(
-            &path.with_extension(format!("studio-backup-{}", uuid::Uuid::new_v4())),
-            old.as_bytes(),
-        )?;
+        // 每个配置文件只留最近一份，放在 Studio 目录；可能含凭据，只给自己读
+        let backup = crate::management::backups::gateway_backup(Path::new(dir), agent, path)?;
+        atomic::atomic_write_private(&backup, old.as_bytes())?;
     }
     if read(path)? != old {
         bail!("配置已被其他程序修改，请刷新后重试");

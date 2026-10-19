@@ -2,6 +2,7 @@ import { invoke } from "@/lib/api/transport";
 import type {
   CatalogSkill,
   CatalogInstallResult,
+  HubBackup,
   LocalSkill,
   LinkMode,
   LinkReport,
@@ -82,5 +83,13 @@ export const skillsApi = {
 
   async prune(): Promise<number> {
     return await invoke("prune_missing");
+  },
+
+  async listHubBackups(): Promise<HubBackup[]> {
+    return await invoke("list_hub_backups");
+  },
+
+  async deleteHubBackups(ids: string[]): Promise<number> {
+    return await invoke("delete_hub_backups", { ids });
   },
 };

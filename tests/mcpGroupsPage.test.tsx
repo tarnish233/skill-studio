@@ -405,10 +405,10 @@ it("switches to one Agent's view with its own MCP count and a single enable butt
   fireEvent.click(
     within(screen.getByRole("group", { name: "按 Agent 查看" })).getByRole(
       "button",
-      { name: "Codex" },
+      { name: "Codex 0" },
     ),
   );
-  expect(screen.getByText("已启用 1 个 MCP")).toBeInTheDocument();
+  expect(screen.getByText("已启用 1")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /为 Claude Code/ })).toBeNull();
   fireEvent.click(
     screen.getByRole("button", { name: "为 Codex 启用「开发」" }),
@@ -470,7 +470,7 @@ it("stacks two MCP groups for one Agent instead of replacing the first", async (
   expect(
     within(screen.getByRole("group", { name: "按 Agent 查看" })).getByRole(
       "button",
-      { name: "Claude Code · 2 个分组" },
+      { name: "Claude Code 2" },
     ),
   ).toBeInTheDocument();
   // 停用一个，另一个继续生效

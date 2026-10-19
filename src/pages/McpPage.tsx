@@ -1,7 +1,10 @@
 import {
+  SummaryAction,
   SummaryBar,
-  SummaryStart,
   SummaryEnd,
+  SummaryFilter,
+  SummaryToggle,
+  agentOption,
   summaryPillClass,
 } from "@/components/common/SummaryBar";
 import { MCP_AGENTS, mcpAgentName, mcpAppId } from "@/lib/mcpAgents";
@@ -22,7 +25,6 @@ import {
   Play,
   LogIn,
   LogOut,
-  ArchiveRestore,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -48,6 +50,7 @@ import { EmptyState } from "@/components/common/EmptyState";
 import { AgentIcon } from "@/components/common/AgentIcon";
 import { useTarget } from "@/components/targets/TargetProvider";
 import { McpEditor } from "@/components/mcp/McpEditor";
+import { McpBackupsDialog } from "@/components/mcp/McpBackupsDialog";
 import { RemoteMcpPage } from "@/pages/RemoteMcpPage";
 import { mcpRequest } from "@/lib/api/mcp";
 import {
@@ -108,13 +111,18 @@ function LocalMcpPage({
   );
   const running = status.data?.running ?? false;
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState("all");
-  const activeFilter = settings?.disabledAgents?.includes(mcpAppId(filter))
-    ? "all"
-    : filter;
+  /** 左侧筛选：某个 Agent 或「网关连接」；null 是「全部」 */
+  const [filter, setFilter] = useState<string | null>(null);
+  const activeFilter =
+    filter && settings?.disabledAgents?.includes(mcpAppId(filter))
+      ? null
+      : filter;
   useEffect(() => {
-    if (settings?.disabledAgents?.includes(mcpAppId(filter))) setFilter("all");
+    if (filter && settings?.disabledAgents?.includes(mcpAppId(filter)))
+      setFilter(null);
   }, [filter, settings?.disabledAgents]);
+  /** 右侧开关：只看已托管的，和左侧筛选叠加 */
+  const [managedOnly, setManagedOnly] = useState(false);
   const [localEditor, setLocalEditor] = useState<McpEditorState | null>(null);
   const editor =
     controlledEditor === undefined ? localEditor : controlledEditor;
@@ -142,7 +150,6 @@ function LocalMcpPage({
   const signature = (entry: ManagedMcp) =>
     JSON.stringify({ mode: entry.mode, definition: entry.definition });
   const [backupsOpen, setBackupsOpen] = useState(false);
-  const [restoreBackup, setRestoreBackup] = useState<string | null>(null);
   const backups = [...(status.data?.backups ?? [])].reverse();
   const detail = catalog.find((r) => r.entry.id === detailId);
   const detailUsesSse =
@@ -150,14 +157,16 @@ function LocalMcpPage({
   const hasAgent = (row: McpRow, agent: string) =>
     row.entry.bindings.some((b) => b.agent === agent) ||
     row.sources.some((s) => s.agent === agent);
-  const matches = (row: McpRow, f: string) =>
-    f === "all" ||
-    (f === "managed"
-      ? row.managed
-      : f === "gateway"
-        ? row.managed && row.entry.mode === "gateway"
-        : hasAgent(row, f));
-  const filtered = catalog.filter(
+  const matches = (row: McpRow, f: string | null) =>
+    !f ||
+    (f === "gateway"
+      ? row.managed && row.entry.mode === "gateway"
+      : hasAgent(row, f));
+  const managedRows = catalog.filter((row) => row.managed);
+  // 左侧的数字和列表同一口径：开着「已托管」时只数托管的
+  const counted = managedOnly ? managedRows : catalog;
+  const count = (f: string) => counted.filter((row) => matches(row, f)).length;
+  const filtered = counted.filter(
     (row) =>
       matches(row, activeFilter) &&
       `${row.entry.name} ${row.entry.definition.command ?? ""} ${row.entry.definition.url ?? ""} ${row.sources.map((s) => s.scope).join(" ")}`
@@ -170,7 +179,9 @@ function LocalMcpPage({
       : []
   ).filter(
     (service) =>
-      (activeFilter === "all" || activeFilter === "codex") &&
+      // 内置服务不归 Studio 托管
+      !managedOnly &&
+      (!activeFilter || activeFilter === "codex") &&
       `${service.name} ${service.scope} ${service.path}`
         .toLowerCase()
         .includes(query.trim().toLowerCase()),
@@ -338,7 +349,7 @@ function LocalMcpPage({
   function saved(entry: ManagedMcp, result?: McpInstallResult) {
     setEditor(null);
     setQuery("");
-    setFilter("all");
+    setFilter(null);
     void status.refetch();
     if (result?.setupError) {
       toast.warning(`配置已保存，连接设置尚未完成：${result.setupError}`);
@@ -392,42 +403,43 @@ function LocalMcpPage({
         onCreate={() => setEditor({ row: null })}
       />
       <SummaryBar>
-        <SummaryStart role="group" aria-label="筛选 MCP">
-          {[
-            ["all", "全部"],
-            ...visibleMcpAgents.map((a) => [a.id, a.name]),
-            ["managed", "已托管"],
-            ["gateway", "网关连接"],
-          ].map(([key, label]) => {
-            const isAgent = MCP_AGENTS.some((a) => a.id === key);
-            const count = catalog.filter((r) => matches(r, key)).length;
-            return (
-              <button
-                key={key}
-                type="button"
-                aria-pressed={activeFilter === key}
-                aria-label={`${label} ${count}`}
-                onClick={() => setFilter(key)}
-                className={`${summaryPillClass} border-border-default transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${activeFilter === key ? "bg-muted ring-1 ring-current" : "text-muted-foreground"}`}
-              >
-                {isAgent && <AgentIcon agentId={mcpAppId(key)} size="sm" />}
-                {/* Agent 只留品牌图标，名字留给读屏和悬停提示 */}
-                {isAgent ? null : `${label} `}
-                {count}
-              </button>
-            );
-          })}
-        </SummaryStart>
+        <SummaryFilter
+          label="筛选 MCP"
+          total={counted.length}
+          options={[
+            ...visibleMcpAgents.map((a) =>
+              agentOption({
+                id: a.id,
+                label: a.name,
+                iconId: a.appId,
+                count: count(a.id),
+                title: `筛选 ${a.name} 已配置的 MCP`,
+              }),
+            ),
+            {
+              id: "gateway",
+              label: "网关连接",
+              count: count("gateway"),
+              title: "网关连接：托管后经 Studio 网关连接的 MCP",
+            },
+          ]}
+          selected={activeFilter}
+          onSelect={setFilter}
+        />
         <SummaryEnd>
-          <Button
-            variant="outline"
-            size="sm"
-            className={summaryPillClass}
-            onClick={() => setBackupsOpen(true)}
+          <SummaryToggle
+            pressed={managedOnly}
+            onClick={() => setManagedOnly((v) => !v)}
+            title={`已托管：已纳入 Studio 托管的 MCP，共 ${managedRows.length} 个。点击只看这些，可与左侧的筛选叠加。`}
           >
-            <ArchiveRestore className="h-4 w-4" />
-            已备份 {backups.length} 次
-          </Button>
+            已托管 {managedRows.length}
+          </SummaryToggle>
+          <SummaryAction
+            onClick={() => setBackupsOpen(true)}
+            title={`已备份：Studio 每次写入 MCP 配置前留下的备份，共 ${backups.length} 次。点击查看，可恢复或删除`}
+          >
+            已备份 {backups.length}
+          </SummaryAction>
           <Button
             variant="ghost"
             size="sm"
@@ -875,7 +887,7 @@ function LocalMcpPage({
               projectId: "",
             });
             setAdopt(null);
-            setFilter("all");
+            setFilter(null);
             toast.success("已托管到 MCP Hub");
           })
         }
@@ -935,57 +947,10 @@ function LocalMcpPage({
           })
         }
       />
-      <Dialog open={backupsOpen} onOpenChange={setBackupsOpen}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>MCP 配置备份</DialogTitle>
-          </DialogHeader>
-          <div className="max-h-96 space-y-3 overflow-y-auto px-6 pb-6">
-            <p className="text-xs text-muted-foreground">
-              可恢复一次写入涉及的配置文件和托管状态；备份后若文件或托管状态已变化，恢复会停止以保护新内容。
-            </p>
-            {!backups.length && (
-              <p className="text-sm text-muted-foreground">暂无可恢复的备份</p>
-            )}
-            {backups.map((backup) => (
-              <div
-                key={backup.id}
-                className="rounded-xl border border-border-default p-3"
-              >
-                <p className="break-all text-sm">{backup.paths.join(" · ")}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {new Date(backup.createdAt * 1000).toLocaleString()}
-                </p>
-                <Button
-                  className="mt-2"
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => setRestoreBackup(backup.id)}
-                >
-                  <ArchiveRestore className="h-4 w-4" /> 恢复
-                </Button>
-              </div>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
-      <ConfirmDialog
-        open={!!restoreBackup}
-        onOpenChange={(open) => !open && !busy && setRestoreBackup(null)}
-        title="恢复 MCP 配置备份？"
-        description="将配置文件及对应托管状态恢复到备份前。若之后的配置或托管状态已修改，操作会停止。"
-        confirmText="恢复"
-        pending={busy}
-        onConfirm={() =>
-          restoreBackup &&
-          void run(async () => {
-            await mcpRequest("restoreBackup", { id: restoreBackup });
-            setRestoreBackup(null);
-            setBackupsOpen(false);
-            toast.success("配置已恢复，请在 Agent 中重新加载 MCP");
-          })
-        }
+      <McpBackupsDialog
+        open={backupsOpen}
+        onOpenChange={setBackupsOpen}
+        onChanged={() => status.refetch()}
       />
       <Dialog
         open={!!loginUrl}

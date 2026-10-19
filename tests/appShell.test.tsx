@@ -300,7 +300,7 @@ it("uses the header resource toggle to scope the Groups and project pages", asyn
   expect(
     await screen.findByRole("group", { name: "按项目 Agent 筛选" }),
   ).toBeInTheDocument();
-  expect(screen.getByText("托管接入 0 处")).toBeInTheDocument();
+  expect(screen.getByText("托管接入 0")).toBeInTheDocument();
   await user.click(header.getByRole("button", { name: "Skill" }));
   await user.click(nav.getByRole("button", { name: "分组" }));
   expect(
@@ -335,11 +335,13 @@ it("hides MCP navigation and returns a saved MCP mode to Skill management when d
   localStorage.setItem("skill-studio-resource", "mcp");
   renderWithProviders(<App />);
   const nav = within(await screen.findByRole("navigation", { name: "主导航" }));
+  // 设置返回后才谈得上「已关闭」：等保存的 MCP 模式切回 Skill，再检查期间没有请求过 MCP
   await waitFor(() =>
-    expect(nav.getByRole("button", { name: "Hub" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    ),
+    expect(localStorage.getItem("skill-studio-resource")).toBe("skills"),
+  );
+  expect(nav.getByRole("button", { name: "Hub" })).toHaveAttribute(
+    "aria-current",
+    "page",
   );
   expect(
     screen.queryByRole("group", { name: "资源类型" }),
@@ -348,7 +350,6 @@ it("hides MCP navigation and returns a saved MCP mode to Skill management when d
   expect(calls.filter((call) => call.command === "mcp_request")).toHaveLength(
     0,
   );
-  expect(localStorage.getItem("skill-studio-resource")).toBe("skills");
 });
 
 it("returns from MCP settings to Skill Hub when management is turned off", async () => {

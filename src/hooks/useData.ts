@@ -97,6 +97,36 @@ export function useBackups() {
   });
 }
 
+/** 删除一份 Skill Studio 配置备份 */
+export function useDeleteBackup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (path: string) => settingsApi.deleteBackup(path),
+    onSuccess: () => toast.success("配置备份已删除"),
+    onError: (e: unknown) => toast.error(String(e)),
+    onSettled: () => void qc.invalidateQueries({ queryKey: queryKeys.backups }),
+  });
+}
+
+/** 纳入托管、移出 Hub 时保存的完整备份 */
+export function useHubBackups() {
+  return useQuery({
+    queryKey: queryKeys.hubBackups,
+    queryFn: () => skillsApi.listHubBackups(),
+  });
+}
+
+export function useDeleteHubBackups() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => skillsApi.deleteHubBackups(ids),
+    onSuccess: (count) => toast.success(`已删除 ${count} 份完整备份`),
+    onError: (e: unknown) => toast.error(String(e)),
+    onSettled: () =>
+      void qc.invalidateQueries({ queryKey: queryKeys.hubBackups }),
+  });
+}
+
 export function useAppVersion() {
   return useQuery({
     queryKey: queryKeys.version,
@@ -135,6 +165,7 @@ function useInvalidateAfterWrite() {
     void qc.invalidateQueries({ queryKey: queryKeys.backups });
     void qc.invalidateQueries({ queryKey: queryKeys.config });
     void qc.invalidateQueries({ queryKey: queryKeys.skillBackups });
+    void qc.invalidateQueries({ queryKey: queryKeys.hubBackups });
   };
 }
 
@@ -245,6 +276,8 @@ export function useUpdateSettings() {
     mutationFn: (patch: SettingsPatch) => settingsApi.update(patch),
     onSuccess: (settings, patch) => {
       qc.setQueryData(queryKeys.settings, settings);
+      // 每次保存都会先备份当前配置，并按保留份数轮转
+      void qc.invalidateQueries({ queryKey: queryKeys.backups });
       const visibilityOnly = patch.disabledAgents !== undefined;
       // Leaving Agent management may stop a Skill group and restore manual policy.
       // Mark these snapshots stale, but avoid scans/CLI probes while editing settings.
@@ -254,7 +287,9 @@ export function useUpdateSettings() {
       void qc.invalidateQueries({ queryKey: queryKeys.config, refetchType });
       if (
         patch.manageMcp !== undefined ||
-        patch.agentDirOverrides !== undefined
+        patch.agentDirOverrides !== undefined ||
+        // 份数变了，后端已按新份数清理 MCP 备份（MCP Hub 的「已备份 N」）
+        patch.backupKeep !== undefined
       ) {
         void qc.invalidateQueries({ queryKey: ["mcp", "local"] });
       }

@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { LibraryPage } from "@/pages/LibraryPage";
@@ -74,7 +74,7 @@ describe("Skill Hub", () => {
     expect(screen.getByText("≈ 300 tokens").getAttribute("title")).toContain(
       "整个目录文本合计 ≈ 400 tokens",
     );
-    await user.click(screen.getByRole("button", { name: "Codex: 1" }));
+    await user.click(screen.getByRole("button", { name: "Codex 1" }));
     expect(screen.queryByText("≈ 300 tokens")).not.toBeInTheDocument();
     expect(screen.getByText("≈ 1k tokens")).toBeInTheDocument();
     expect(screen.getByText("合计 ≈ 1.6k tokens")).toBeInTheDocument();
@@ -120,10 +120,7 @@ describe("Skill Hub", () => {
     ]);
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     renderWithProviders(<LibraryPage />);
-    expect(
-      await screen.findByRole("button", { name: "已安装 2 个" }),
-    ).toBeInTheDocument();
-    const hubPill = screen.getByRole("button", { name: "已托管 1 个" });
+    const hubPill = await screen.findByRole("button", { name: "已托管 1" });
     expect(hubPill).toHaveAttribute("aria-pressed", "false");
 
     await user.click(hubPill);
@@ -131,17 +128,13 @@ describe("Skill Hub", () => {
     expect(screen.getByText("StudioOnly")).toBeInTheDocument();
     expect(screen.queryByText("pdf-tools")).toBeNull();
 
-    // 「已安装 N 个」是「显示全部」那一枚，必须把这个筛选也清掉
-    await user.click(screen.getByRole("button", { name: "已安装 2 个" }));
+    // 是个开关：再点一次关掉
+    await user.click(hubPill);
     expect(screen.getByText("pdf-tools")).toBeInTheDocument();
     expect(hubPill).toHaveAttribute("aria-pressed", "false");
-    // 它现在连托管筛选一起清，title 不能只承诺来源
-    expect(
-      screen.getByRole("button", { name: "已安装 2 个" }).getAttribute("title"),
-    ).toContain("已托管");
   });
 
-  it("两枚统计胶囊用主题边框，深色模式下不是硬编码的近白色", async () => {
+  it("筛选胶囊用主题边框，深色模式下不是硬编码的近白色", async () => {
     setup([
       makeSkill(),
       makeSkill({
@@ -153,12 +146,15 @@ describe("Skill Hub", () => {
       }),
     ]);
     renderWithProviders(<LibraryPage />);
-    expect(
-      await screen.findByRole("button", { name: "已安装 2 个" }),
-    ).toHaveClass("border-border-default");
-    expect(screen.getByRole("button", { name: "已托管 1 个" })).toHaveClass(
-      "border-border-default",
+    const filters = within(
+      await screen.findByRole("group", { name: "筛选 skill" }),
     );
+    await filters.findByRole("button", { name: "全部 2" });
+    for (const pill of [
+      ...filters.getAllByRole("button"),
+      screen.getByRole("button", { name: "已托管 1" }),
+    ])
+      expect(pill).toHaveClass("border-border-default");
   });
 
   it("开着「已托管」时，来源胶囊与失效来源都按同一口径收窄", async () => {
@@ -176,17 +172,17 @@ describe("Skill Hub", () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     renderWithProviders(<LibraryPage />);
     expect(
-      await screen.findByRole("button", { name: "Claude Code: 1" }),
+      await screen.findByRole("button", { name: "Claude Code 1" }),
     ).toBeInTheDocument();
     expect(screen.getByText("失效来源（1）")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "已托管 1 个" }));
+    await user.click(screen.getByRole("button", { name: "已托管 1" }));
     // 胶囊不能承诺一条点下去只剩 0 条的筛选
     expect(
-      screen.getByRole("button", { name: "Claude Code: 0" }),
+      screen.getByRole("button", { name: "Claude Code 0" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Skill Studio: 1" }),
+      screen.getByRole("button", { name: "Skill Studio 1" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("失效来源（1）")).toBeNull();
   });
@@ -223,9 +219,7 @@ describe("Skill Hub", () => {
     });
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     renderWithProviders(<LibraryPage />);
-    await user.click(
-      await screen.findByRole("button", { name: "已托管 1 个" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "已托管 1" }));
     expect(screen.queryByText("Alpha")).toBeNull();
 
     await user.click(
@@ -258,7 +252,7 @@ describe("Skill Hub", () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 });
     renderWithProviders(<LibraryPage />);
     await user.click(
-      await screen.findByRole("button", { name: "Claude Code: 1" }),
+      await screen.findByRole("button", { name: "Claude Code 1" }),
     );
     expect(screen.getByText("pdf-tools")).toBeInTheDocument();
 
@@ -313,7 +307,8 @@ describe("Skill Hub", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent(
       "不包含插件、hooks 或扩展",
     );
-    expect(screen.getByText("已安装 1 个")).toBeInTheDocument();
+    // 弹窗开着时背景不在无障碍树里，按文字找
+    expect(screen.getByText("全部 1")).toBeInTheDocument();
   });
 
   it("搜索按名称与描述过滤", async () => {
@@ -478,35 +473,33 @@ it("counts unique cards per installation source and combines source filtering wi
   const user = userEvent.setup();
   renderWithProviders(<LibraryPage />);
   expect(
-    await screen.findByRole("button", { name: "已安装 3 个" }),
+    await screen.findByRole("button", { name: "全部 3" }),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Claude Code: 1" }),
+    screen.getByRole("button", { name: "Claude Code 1" }),
   ).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Codex: 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Codex 1" })).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Skill Studio: 1" }),
+    screen.getByRole("button", { name: "Skill Studio 1" }),
   ).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Claude Code: 1" }));
+  await user.click(screen.getByRole("button", { name: "Claude Code 1" }));
   expect(screen.getAllByText("Shared")).toHaveLength(1);
   expect(screen.queryByText("StudioOnly")).toBeNull();
   await user.type(screen.getByPlaceholderText("按名称或描述搜索…"), "Neutral");
   expect(screen.getByText("没有匹配的可用 skill")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Agent: 1" }));
+  await user.click(screen.getByRole("button", { name: "Agent 1" }));
   expect(screen.getByText("Neutral")).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "已安装 3 个" }),
-  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "全部 3" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "清除搜索" }));
-  await user.click(screen.getByRole("button", { name: "已安装 3 个" }));
+  await user.click(screen.getByRole("button", { name: "全部 3" }));
   expect(screen.getByText("StudioOnly")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Agent: 1" })).toHaveAttribute(
+  expect(screen.getByRole("button", { name: "Agent 1" })).toHaveAttribute(
     "aria-pressed",
     "false",
   );
 });
 
-it("shows Agent and Codex logos for a shared skill with a Codex copy, matching the counters", async () => {
+it("marks a shared skill with a Codex copy by the shared-directory robot and the Codex logo, matching the counters", async () => {
   handlers.set("list_agents", () => [claudeAgent, codexAgent]);
   handlers.set("scan_skills", () => [
     makeSkill({
@@ -527,15 +520,14 @@ it("shows Agent and Codex logos for a shared skill with a Codex copy, matching t
     }),
   ]);
   renderWithProviders(<LibraryPage />);
+  // 共享目录是小机器人，Codex 用品牌图标
   expect(
     await screen.findByRole("img", { name: "来源：Agent" }),
   ).toBeInTheDocument();
   expect(screen.getByRole("img", { name: "来源：Codex" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Agent: 1" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Codex: 1" })).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "已安装 1 个" }),
-  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Agent 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Codex 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "全部 1" })).toBeInTheDocument();
 });
 
 it("keeps original source counts for collected cards and restores via the source record", async () => {
@@ -572,19 +564,19 @@ it("keeps original source counts for collected cards and restores via the source
   const user = userEvent.setup();
   renderWithProviders(<LibraryPage />);
   expect(
-    await screen.findByRole("button", { name: "Skill Studio: 0" }),
+    await screen.findByRole("button", { name: "Skill Studio 0" }),
   ).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Agent: 1" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Codex: 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Agent 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Codex 1" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "还原 yuque 到原位置" }));
   expect(screen.getByRole("dialog")).toHaveTextContent(provenance.originalPath);
   await user.click(screen.getByRole("button", { name: "还原到原位置" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(
-    screen.getByRole("button", { name: "Skill Studio: 0" }),
+    screen.getByRole("button", { name: "Skill Studio 0" }),
   ).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Codex: 1" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Agent: 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Codex 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Agent 1" })).toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "还原 yuque 到原位置" }),
   ).toBeNull();
@@ -596,10 +588,10 @@ it("does not invent a source or offer automatic restoration for historical Hub i
   ]);
   renderWithProviders(<LibraryPage />);
   expect(
-    await screen.findByRole("button", { name: "来源待确认: 1" }),
+    await screen.findByRole("button", { name: "来源待确认 1" }),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Skill Studio: 0" }),
+    screen.getByRole("button", { name: "Skill Studio 0" }),
   ).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /还原 .* 到原位置/ })).toBeNull();
 });
@@ -657,14 +649,12 @@ it("collects and restores one source of a merged card while retaining unique sou
   await user.click(screen.getByRole("button", { name: "移出 Hub 并还原" }));
   await user.click(screen.getByRole("button", { name: "还原到原位置" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.getByRole("button", { name: "全部 1" })).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "已安装 1 个" }),
+    screen.getByRole("button", { name: "Claude Code 1" }),
   ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Codex 1" })).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Claude Code: 1" }),
-  ).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Codex: 1" })).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "Skill Studio: 0" }),
+    screen.getByRole("button", { name: "Skill Studio 0" }),
   ).toBeInTheDocument();
 });

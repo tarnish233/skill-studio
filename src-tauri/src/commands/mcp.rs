@@ -11,6 +11,24 @@ fn dir(state: &AppState) -> PathBuf {
     state.studio().store().dir().join("mcp")
 }
 
+/// 按「配置备份保留份数」清理最旧的 MCP 备份。清理失败不影响刚完成的写入。
+pub async fn prune_backups(dir: PathBuf, keep: usize) {
+    match tokio::task::spawn_blocking(move || management::backups::prune(&dir, keep)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => log::warn!("清理 MCP 配置备份失败: {error:#}"),
+        Err(error) => log::warn!("清理 MCP 配置备份失败: {error}"),
+    }
+}
+
+/// 找旧备份文件时要看的 Agent 配置文件
+fn backup_configs(state: &AppState) -> Vec<PathBuf> {
+    scan_files(state)
+        .0
+        .into_iter()
+        .map(|file| file.path)
+        .collect()
+}
+
 pub async fn start(dir: PathBuf) -> Result<(), String> {
     if gateway::request(&dir, "list", Value::Null).await.is_ok() {
         return Ok(());
@@ -97,6 +115,44 @@ pub async fn mcp_request(
             .await
             .map_err(|e| e.to_string());
     }
+    if method == "listBackups" {
+        let configs = backup_configs(&state);
+        let task_dir = dir.clone();
+        return tokio::task::spawn_blocking(move || -> anyhow::Result<Value> {
+            Ok(json!({
+                "backups": management::backups::list(&task_dir)?,
+                "legacy": management::backups::legacy(&task_dir, &configs)?,
+            }))
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string());
+    }
+    if method == "deleteBackups" || method == "deleteLegacyBackups" {
+        state.ensure_writable().map_err(|e| e.to_string())?;
+        let configs = backup_configs(&state);
+        let task_dir = dir.clone();
+        let removed = tokio::task::spawn_blocking(move || -> anyhow::Result<usize> {
+            use management::backups::{self, Selection};
+            if method == "deleteLegacyBackups" {
+                return backups::delete_legacy(&task_dir, &configs);
+            }
+            let selection = match params["which"].as_str() {
+                Some("unrestorable") => Selection::Unrestorable,
+                Some("all") => Selection::All,
+                Some(other) => anyhow::bail!("未知的删除范围：{other}"),
+                None => Selection::Ids(
+                    serde_json::from_value(params["ids"].clone())
+                        .map_err(|_| anyhow::anyhow!("缺少备份 ID"))?,
+                ),
+            };
+            backups::delete(&task_dir, &selection)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+        return Ok(json!({"removed":removed}));
+    }
     if method == "restoreBackup" {
         state.ensure_writable().map_err(|e| e.to_string())?;
         let id = params["id"].as_str().ok_or("缺少备份 ID")?.to_owned();
@@ -105,6 +161,8 @@ pub async fn mcp_request(
             .await
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
+        let keep = state.config().settings.backup_keep;
+        prune_backups(dir.clone(), keep).await;
         let _ = gateway::request(&dir, "list", Value::Null).await;
         return Ok(Value::Null);
     }
@@ -119,12 +177,15 @@ pub async fn mcp_request(
             .ok_or("项目不存在")?
             .root
             .clone();
+        let task_dir = dir.clone();
         let count = tokio::task::spawn_blocking(move || {
-            management::remove_project_bindings(&dir, &project_root)
+            management::remove_project_bindings(&task_dir, &project_root)
         })
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
+        let keep = state.config().settings.backup_keep;
+        prune_backups(dir, keep).await;
         return Ok(json!({"removed":count}));
     }
     if matches!(
@@ -132,6 +193,7 @@ pub async fn mcp_request(
         "saveGroup" | "removeGroup" | "activateGroup" | "reorderGroups"
     ) {
         state.ensure_writable().map_err(|e| e.to_string())?;
+        let keep = state.config().settings.backup_keep;
         let state = state.inner().clone();
         let task_dir = dir.clone();
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
@@ -265,11 +327,13 @@ pub async fn mcp_request(
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
+        prune_backups(dir.clone(), keep).await;
         let _ = gateway::request(&dir, "list", Value::Null).await;
         return Ok(Value::Null);
     }
     if method == "saveEntry" || method == "removeEntry" || method == "removeSources" {
         state.ensure_writable().map_err(|e| e.to_string())?;
+        let keep = state.config().settings.backup_keep;
         let state = state.inner().clone();
         let method = method.clone();
         let task_dir = dir.clone();
@@ -309,6 +373,7 @@ pub async fn mcp_request(
         })
         .await
         .map_err(|e| e.to_string())??;
+        prune_backups(dir.clone(), keep).await;
         // Notify a running gateway without starting it. Every gateway request also
         // reads the latest committed catalog, so a missed notification is harmless.
         let _ = gateway::request(&dir, "list", Value::Null).await;

@@ -1,10 +1,11 @@
 import {
   SummaryBar,
-  SummaryStart,
   SummaryEnd,
-  summaryPillClass,
+  SummaryFilter,
+  SummaryStat,
+  agentOption,
 } from "@/components/common/SummaryBar";
-import { agentSourceColor, projectSkillDirectory } from "@/lib/agents";
+import { projectSkillDirectory } from "@/lib/agents";
 import { useSkillPreview } from "@/components/common/SkillPreview";
 import { SkillBackups } from "@/components/common/SkillBackups";
 import { PageTools } from "@/components/common/PageTools";
@@ -220,6 +221,13 @@ function ProjectsContent() {
   /** 胶囊上的数字：该 Agent 已启用的项目数（同一项目只计一次） */
   const countFor = (agentId: string) =>
     projects.filter((p) => projectAgentIds(p).includes(agentId)).length;
+  const uncollected = projects.reduce(
+    (sum, p) => sum + (p.uncollectedSkillCount ?? 0),
+    0,
+  );
+  const enabledProjects = projects.filter(
+    (p) => projectAgentIds(p).length > 0,
+  ).length;
   const pick = async () => {
     const picked = await projectsApi.pickDirectory();
     if (!picked) return;
@@ -232,47 +240,34 @@ function ProjectsContent() {
       {tools}
       <DetailTransition appear={appear}>
         <SummaryBar>
-          <SummaryStart role="group" aria-label="按项目 Agent 筛选">
-            {agents
+          <SummaryFilter
+            label="按项目 Agent 筛选"
+            total={projects.length}
+            options={agents
               .filter((a) => a.supportsProjectSkills)
-              .map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  title={`筛选 ${a.displayName} 已启用的项目`}
-                  className={`${summaryPillClass} border-transparent transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${agentSourceColor(a.id)} ${sourceFilter === a.id ? "ring-2 ring-current" : ""}`}
-                  aria-pressed={sourceFilter === a.id}
-                  aria-label={`${a.displayName}: ${countFor(a.id)}`}
-                  onClick={() =>
-                    setSourceFilter(sourceFilter === a.id ? null : a.id)
-                  }
-                >
-                  <AgentIcon agentId={a.id} size="sm" />
-                  {countFor(a.id)}
-                </button>
-              ))}
-          </SummaryStart>
+              .map((a) =>
+                agentOption({
+                  id: a.id,
+                  label: a.displayName,
+                  count: countFor(a.id),
+                  title: `筛选 ${a.displayName} 已启用的项目`,
+                }),
+              )}
+            selected={sourceFilter}
+            onSelect={setSourceFilter}
+          />
           <SummaryEnd title="按 Skill Studio 已写入的项目部署统计，同一项目只计一次">
-            <Badge variant="outline" className={summaryPillClass}>
-              项目 {projects.length} 个
-            </Badge>
-            <SkillBackups scope="projects" className={summaryPillClass} />
-            <Badge
-              variant="outline"
-              className={summaryPillClass}
-              title="各项目目录中未托管、未部署的 skill 数量"
+            <SkillBackups scope="projects" />
+            <SummaryStat
+              title={`未托管：各项目目录中未托管、未部署的 skill，共 ${uncollected} 个`}
             >
-              未托管 skill{" "}
-              {projects.reduce(
-                (sum, p) => sum + (p.uncollectedSkillCount ?? 0),
-                0,
-              )}{" "}
-              个
-            </Badge>
-            <Badge variant="outline" className={summaryPillClass}>
-              已启用{" "}
-              {projects.filter((p) => projectAgentIds(p).length > 0).length} 个
-            </Badge>
+              未托管 {uncollected}
+            </SummaryStat>
+            <SummaryStat
+              title={`已启用：至少有一个 Agent 已启用的项目，共 ${enabledProjects} 个`}
+            >
+              已启用 {enabledProjects}
+            </SummaryStat>
           </SummaryEnd>
         </SummaryBar>
 

@@ -51,12 +51,16 @@ it("renders remote MCP names and Agent owners as inert cards with no management 
   const card = name.parentElement!;
   expect(within(card).getByText("Codex")).toBeVisible();
   expect(within(card).getByText("OpenCode")).toBeVisible();
-  expect(screen.getByText("已配置 3 个 MCP")).toBeVisible();
+  const filter = screen.getByRole("group", { name: "筛选 MCP" });
+  expect(within(filter).getByRole("button", { name: "全部 3" })).toBeVisible();
   expect(screen.getByText("只读")).toBeVisible();
   const add = screen.getByRole("button", { name: "添加 MCP" });
   expect(add).toBeVisible();
   expect(add).toHaveAttribute("aria-disabled", "true");
-  expect(screen.queryAllByRole("button")).toHaveLength(1);
+  // 只读：除了筛选，唯一的按钮是不可用的「添加 MCP」
+  expect(
+    screen.queryAllByRole("button").filter((b) => !filter.contains(b)),
+  ).toEqual([add]);
   expect(screen.queryAllByRole("link")).toHaveLength(0);
   fireEvent.click(add);
   fireEvent.click(name);
@@ -114,7 +118,27 @@ it("hides disabled Agent badges and private cards while retaining shared MCP", a
   );
   expect(screen.queryByText("OpenCode")).not.toBeInTheDocument();
   expect(screen.getByText("Shared MCP")).toBeVisible();
-  expect(screen.getByText("已配置 2 个 MCP")).toBeVisible();
+  expect(screen.getByRole("button", { name: "全部 2" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: /^OpenCode/ })).toBeNull();
+});
+
+it("returns to 全部 when the selected Agent is hidden, instead of filtering by an Agent that is no longer shown", async () => {
+  renderWithProviders(
+    <>
+      <HideOpenCode />
+      <McpPage />
+    </>,
+  );
+  const filter = within(await screen.findByRole("group", { name: "筛选 MCP" }));
+  fireEvent.click(await filter.findByRole("button", { name: "OpenCode 2" }));
+  expect(screen.queryByText("Pi tools")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "隐藏 OpenCode" }));
+  expect(await screen.findByText("Pi tools")).toBeVisible();
+  expect(screen.getByText("Shared MCP")).toBeVisible();
+  expect(filter.getByRole("button", { name: "全部 2" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
 });
 
 it("keeps late remote responses scoped to their original server and restores local controls", async () => {

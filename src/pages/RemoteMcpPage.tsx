@@ -7,9 +7,10 @@ import { ListContainer, ListItemRow } from "@/components/common/ListItemRow";
 import { PageTools } from "@/components/common/PageTools";
 import {
   SummaryBar,
-  SummaryStart,
   SummaryEnd,
-  summaryPillClass,
+  SummaryFilter,
+  SummaryStat,
+  agentOption,
 } from "@/components/common/SummaryBar";
 import { useTarget } from "@/components/targets/TargetProvider";
 import { useSettings } from "@/hooks/useData";
@@ -26,6 +27,7 @@ export function RemoteMcpPage() {
   const target = useTarget();
   const { data: settings } = useSettings();
   const [query, setQuery] = useState("");
+  const [agentFilter, setAgentFilter] = useState<string | null>(null);
   const inventory = useQuery({
     queryKey: ["mcp", "inventory", target.id],
     queryFn: () => requestRemote<RemoteMcpInventory>(target.id, "scan_mcp"),
@@ -43,10 +45,21 @@ export function RemoteMcpPage() {
       ),
     }))
     .filter((server) => server.agents.length > 0);
-  const filtered = servers.filter((server) =>
-    `${server.name} ${server.agents.map((a) => a.name).join(" ")}`
-      .toLowerCase()
-      .includes(query.trim().toLowerCase()),
+  const visibleAgents = MCP_AGENTS.filter(
+    (agent) => !settings?.disabledAgents?.includes(mcpAppId(agent.id)),
+  );
+  // 选中的 Agent 被关闭管理后回到「全部」
+  const activeAgent = visibleAgents.some((agent) => agent.id === agentFilter)
+    ? agentFilter
+    : null;
+  const hasAgent = (server: (typeof servers)[number], id: string | null) =>
+    !id || server.agents.some((agent) => agent.id === id);
+  const filtered = servers.filter(
+    (server) =>
+      hasAgent(server, activeAgent) &&
+      `${server.name} ${server.agents.map((a) => a.name).join(" ")}`
+        .toLowerCase()
+        .includes(query.trim().toLowerCase()),
   );
   const error = String(inventory.error ?? "");
   return (
@@ -59,19 +72,29 @@ export function RemoteMcpPage() {
         createDisabledReason="远程 MCP 仅支持只读展示，暂不支持添加。"
       />
       <SummaryBar>
-        <SummaryStart>
-          <Plug className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="whitespace-nowrap text-xs text-muted-foreground">
-            远程 MCP · 仅展示服务器已有配置
-          </span>
-        </SummaryStart>
+        <SummaryFilter
+          label="筛选 MCP"
+          total={servers.length}
+          options={visibleAgents.map((agent) =>
+            agentOption({
+              id: agent.id,
+              label: agent.name,
+              iconId: agent.appId,
+              count: servers.filter((server) => hasAgent(server, agent.id))
+                .length,
+              title: `筛选 ${agent.name} 已配置的 MCP`,
+            }),
+          )}
+          selected={activeAgent}
+          onSelect={setAgentFilter}
+        />
         <SummaryEnd>
-          <span className={summaryPillClass}>
-            已配置 {inventory.data ? servers.length : "—"} 个 MCP
-          </span>
-          <span className={`${summaryPillClass} text-muted-foreground`}>
+          <SummaryStat
+            className="text-muted-foreground"
+            title="只读：远程 MCP 只展示服务器上已有的配置，不能在这里修改"
+          >
             只读
-          </span>
+          </SummaryStat>
         </SummaryEnd>
       </SummaryBar>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-6">
@@ -102,7 +125,11 @@ export function RemoteMcpPage() {
         ) : target.connected && !inventory.isError && filtered.length === 0 ? (
           <EmptyState
             icon={Plug}
-            title={query.trim() ? "没有匹配的 MCP" : "未发现远程 MCP 配置"}
+            title={
+              query.trim() || activeAgent
+                ? "没有匹配的 MCP"
+                : "未发现远程 MCP 配置"
+            }
             description="扫描 Agent 的全局配置和已登记项目配置。"
           />
         ) : (

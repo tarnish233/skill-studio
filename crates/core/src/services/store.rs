@@ -119,8 +119,13 @@ impl Store {
     /// 把当前 config.json 复制一份到 backups/，并只保留最近 `keep` 份。
     /// 备份失败不阻塞主流程 —— 保住写入比保住备份重要。
     fn rotate_backup(&self, keep: usize) -> Result<()> {
+        if keep == 0 {
+            // 保留 0 份：不再备份，已有的也不留（与 MCP 配置备份共用这个份数）
+            self.prune_backups(0);
+            return Ok(());
+        }
         let current = self.config_path();
-        if !current.is_file() || keep == 0 {
+        if !current.is_file() {
             return Ok(());
         }
         let backups = self.backups_dir();
@@ -176,6 +181,25 @@ impl Store {
         files.sort();
         files.reverse();
         files
+    }
+
+    /// 删除一份配置备份。只接受 `backups/` 下的 `config-*.json`。
+    pub fn delete_backup(&self, backup: &Path) -> Result<()> {
+        let named = backup
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with(BACKUP_PREFIX) && n.ends_with(".json"));
+        let inside = backup
+            .parent()
+            .is_some_and(|p| paths::paths_alias(p, &self.backups_dir()));
+        if !named || !inside || backup.symlink_metadata().is_ok_and(|m| !m.is_file()) {
+            return Err(Error::invalid("只能删除配置备份"));
+        }
+        match std::fs::remove_file(backup) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(Error::io(backup, e)),
+        }
     }
 
     pub fn read_backup(&self, backup: &Path) -> Result<AppConfig> {
@@ -285,6 +309,46 @@ mod tests {
         let backups = s.list_backups();
         assert_eq!(backups.len(), 1, "事务性写入必须留下一份备份");
         assert_eq!(s.restore_backup(&backups[0]).unwrap().groups[0].name, "旧");
+    }
+
+    #[test]
+    fn lowering_the_keep_count_removes_older_backups_down_to_zero() {
+        let (_t, s) = store();
+        let mut cfg = AppConfig::default();
+        for _ in 0..3 {
+            s.save(&cfg).unwrap();
+            // 备份文件名精确到毫秒
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(s.list_backups().len(), 2);
+        cfg.settings.backup_keep = 1;
+        s.save(&cfg).unwrap();
+        assert_eq!(s.list_backups().len(), 1);
+        cfg.settings.backup_keep = 0;
+        s.save(&cfg).unwrap();
+        assert!(s.list_backups().is_empty(), "保留 0 份：已有的备份也不留");
+    }
+
+    #[test]
+    fn deleting_a_backup_accepts_only_config_backups() {
+        let (t, s) = store();
+        let cfg = AppConfig::default();
+        s.save(&cfg).unwrap();
+        s.save(&cfg).unwrap();
+        let backups = s.list_backups();
+        assert_eq!(backups.len(), 1);
+        for other in [
+            s.config_path(),
+            t.path().join("config-elsewhere.json"),
+            s.backups_dir().join("notes.json"),
+        ] {
+            std::fs::write(&other, "{}").unwrap();
+            assert!(s.delete_backup(&other).is_err(), "{}", other.display());
+            assert!(other.exists());
+        }
+        s.delete_backup(&backups[0]).unwrap();
+        assert!(s.list_backups().is_empty());
+        assert!(s.config_path().exists());
     }
 
     #[test]

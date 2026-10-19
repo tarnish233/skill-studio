@@ -44,9 +44,10 @@ import { GroupAgentToggles } from "@/components/common/GroupAgentToggles";
 import {
   AgentGroupAction,
   GroupAgentFilter,
+  groupsInUse,
   useGroupAgentView,
 } from "@/components/common/GroupAgentView";
-import { summaryPillClass } from "@/components/common/SummaryBar";
+import { SummaryStat } from "@/components/common/SummaryBar";
 import { McpAgentNote } from "@/components/mcp/McpAgentNote";
 import { agentDetection } from "@/lib/agents";
 import { sameMembers } from "@/lib/utils";
@@ -124,6 +125,8 @@ function LocalGroups() {
     (activeGroups[mcpAgentId(agentId)] ?? []).length;
   const activeIds = (mcpId: string) =>
     (activeGroups[mcpId] ?? []).map((g) => g.groupId);
+  const inUse = groupsInUse(activeGroups);
+  const usedGroups = groups.filter((g) => inUse.has(g.id)).length;
   // 单个 Agent 视角的统计：用户全局配置里已启用的 MCP（与原「已配置 MCP」同口径）
   const enabledMcp = viewMcpId
     ? catalog.filter((r) =>
@@ -229,15 +232,20 @@ function LocalGroups() {
       >
         {viewAgent && viewMcpId ? (
           <>
-            <Badge variant="outline" className={summaryPillClass}>
-              已启用 {enabledMcp} 个 MCP
-            </Badge>
+            <SummaryStat
+              title={`已启用：${viewAgent.displayName} 用户全局配置里已启用的 MCP，共 ${enabledMcp} 个`}
+            >
+              已启用 {enabledMcp}
+            </SummaryStat>
             <McpAgentNote agent={viewMcpId} compact />
           </>
         ) : (
-          <Badge variant="outline" className={summaryPillClass}>
-            共 {groups.length} 个分组
-          </Badge>
+          // 总数已在「全部」上；这里给出在用的分组数，和卡片上的「使用中」同一口径
+          <SummaryStat
+            title={`已启用：至少有一个 Agent 正在使用的分组，共 ${usedGroups} 个`}
+          >
+            已启用 {usedGroups}
+          </SummaryStat>
         )}
       </GroupAgentFilter>
       <div className="min-h-0 flex-1 overflow-y-auto pb-6">
@@ -303,10 +311,7 @@ function LocalGroups() {
                         };
                       });
                     const activeStatuses = statuses.filter((s) => s.active);
-                    // 是否在用以全部启用记录为准，不只看显示出来的 Agent
-                    const inUse = Object.values(activeGroups)
-                      .flat()
-                      .some((g) => g.groupId === group.id);
+                    const used = inUse.has(group.id);
                     const hasIssue = activeStatuses.some((s) => !!s.issue);
                     const changedForAny = activeStatuses.some((s) => s.changed);
                     const reapplyTargets = activeStatuses.filter(
@@ -321,7 +326,7 @@ function LocalGroups() {
                           issue: !!view.issue,
                         }
                       : {
-                          active: inUse,
+                          active: used,
                           changed: changedForAny,
                           issue: hasIssue,
                         };
@@ -378,8 +383,8 @@ function LocalGroups() {
                             variant="ghost"
                             size="icon"
                             aria-label={`删除 ${group.name}`}
-                            title={inUse ? "请先停用分组" : "删除分组"}
-                            disabled={busy || inUse}
+                            title={used ? "请先停用分组" : "删除分组"}
+                            disabled={busy || used}
                             onClick={() => setDeleting(group)}
                           >
                             <Trash2 className="h-4 w-4" />

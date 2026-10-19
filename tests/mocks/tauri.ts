@@ -52,6 +52,7 @@ function defaultResult(command: string): unknown {
     case "list_skill_backups":
     case "list_project_skills":
     case "list_backups":
+    case "list_hub_backups":
       return [];
     case "get_settings":
       return defaultSettings();

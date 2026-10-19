@@ -1,4 +1,3 @@
-import { cn } from "@/lib/utils";
 import { queryKeys, NAVIGATION_STALE_TIME } from "@/lib/queryKeys";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,6 +13,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { SummaryAction } from "./SummaryBar";
 
 interface Backup {
   id: string;
@@ -22,13 +22,7 @@ interface Backup {
   originalPath: string;
   deletedAt: number;
 }
-export function SkillBackups({
-  scope,
-  className,
-}: {
-  scope: string;
-  className?: string;
-}) {
+export function SkillBackups({ scope }: { scope: string }) {
   const [open, setOpen] = useState(false);
   const [purging, setPurging] = useState<Backup | null>(null);
   const qc = useQueryClient();
@@ -56,15 +50,12 @@ export function SkillBackups({
   });
   return (
     <>
-      <button
-        className={cn(
-          "rounded-full border border-border-default px-3 py-1 text-sm font-medium hover:bg-muted",
-          className,
-        )}
+      <SummaryAction
         onClick={() => setOpen(true)}
+        title={`已备份：删除 skill 时留下的备份，共 ${backups.length} 个。点击查看，可恢复到原位置或彻底删除`}
       >
-        已备份 {backups.length} 个 skill
-      </button>
+        已备份 {backups.length}
+      </SummaryAction>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>

@@ -22,6 +22,10 @@ export const settingsApi = {
     return await invoke("restore_backup", { path });
   },
 
+  async deleteBackup(path: string): Promise<void> {
+    await invoke("delete_backup", { path });
+  },
+
   async getConfigDir(): Promise<string> {
     return await invoke("get_config_dir");
   },

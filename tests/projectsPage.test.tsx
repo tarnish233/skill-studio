@@ -117,18 +117,19 @@ it("counts deployed projects per agent once, filters cards, and toggles through 
     return { succeeded: [], failed: [] };
   });
   renderWithProviders(<ProjectsPage />);
-  expect(await screen.findByText("项目 2 个")).toBeInTheDocument();
-  expect(screen.getByText("已启用 1 个")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Codex: 1" })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Claude Code: 1" }));
+  // 总数在「全部」上，右侧不再重复一枚「项目 N 个」
+  expect(
+    await screen.findByRole("button", { name: "全部 2" }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("已启用 1")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Codex 1" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Claude Code 1" }));
   expect(
     screen.queryByRole("button", { name: "Draft" }),
   ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Claude Code: 1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Claude Code 1" }));
   fireEvent.click(screen.getByRole("button", { name: "停用" }));
-  await waitFor(() =>
-    expect(screen.getByText("已启用 0 个")).toBeInTheDocument(),
-  );
+  await waitFor(() => expect(screen.getByText("已启用 0")).toBeInTheDocument());
   expect(
     screen.getByRole("button", { name: "拖拽排序 Both" }),
   ).toBeInTheDocument();

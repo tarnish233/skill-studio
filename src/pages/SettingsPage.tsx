@@ -29,6 +29,7 @@ import {
   Eraser,
   Archive,
   Info,
+  Trash2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,12 +50,16 @@ import {
   useAgents,
   useAppVersion,
   useBackups,
+  useDeleteBackup,
+  useDeleteHubBackups,
+  useHubBackups,
   usePrune,
   useRestoreBackup,
   useSettings,
   useUpdateSettings,
 } from "@/hooks/useData";
-import type { LinkMode } from "@/types";
+import { formatBytes } from "@/lib/format";
+import type { HubBackup, LinkMode } from "@/types";
 
 type SettingsTab =
   "general" | "directories" | "maintenance" | "servers" | "about";
@@ -71,11 +76,16 @@ export function SettingsPage() {
   const update = useUpdateSettings();
   const visibilityUpdate = useUpdateSettings();
   const restore = useRestoreBackup();
+  const deleteBackup = useDeleteBackup();
+  const hubBackups = useHubBackups();
+  const deleteHubBackups = useDeleteHubBackups();
   const prune = usePrune();
 
   const [hubDraft, setHubDraft] = useState<string | null>(null);
   const [tab, setTab] = useState<SettingsTab>("general");
   const [restoring, setRestoring] = useState<string | null>(null);
+  const [deletingBackup, setDeletingBackup] = useState<string | null>(null);
+  const [deletingHub, setDeletingHub] = useState<string[] | null>(null);
   const [configDir, setConfigDir] = useState<string>("");
 
   // 配置目录只需取一次；放在渲染体里会每次渲染都发起调用
@@ -394,7 +404,7 @@ export function SettingsPage() {
               <SettingCard
                 title="配置备份保留份数"
                 icon={<Archive />}
-                description="写入配置前自动备份，超过保留数量时清理最旧的备份。"
+                description="写入前自动备份 Skill Studio 配置和 MCP 配置，各最多保留这么多份；超出时先删已无法恢复的，再删最旧的。设为 0 则不保留备份。托管完整备份不受此限制。"
               >
                 <Input
                   aria-label="配置备份保留份数"
@@ -446,6 +456,15 @@ export function SettingsPage() {
                         >
                           恢复
                         </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`删除 ${path.split(/[/\\]/).pop()}`}
+                          disabled={deleteBackup.isPending}
+                          onClick={() => setDeletingBackup(path)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
                     ))}
                   </div>
@@ -456,6 +475,12 @@ export function SettingsPage() {
                   </p>
                 )}
               </div>
+              <HubBackupsCard
+                backups={hubBackups.data ?? []}
+                error={hubBackups.error}
+                pending={deleteHubBackups.isPending}
+                onDelete={(ids) => setDeletingHub(ids)}
+              />
             </SettingsSection>
           </TabsContent>
 
@@ -551,6 +576,147 @@ export function SettingsPage() {
           setRestoring(null);
         }}
       />
+      <ConfirmDialog
+        open={deletingBackup !== null}
+        onOpenChange={(o) => !o && setDeletingBackup(null)}
+        title="删除这份配置备份？"
+        confirmText="删除"
+        pending={deleteBackup.isPending}
+        description={
+          <>
+            删除后不能再恢复到这份备份。当前配置不受影响。
+            <span className="block break-all pt-2 font-mono text-xs">
+              {deletingBackup?.split(/[/\\]/).pop()}
+            </span>
+          </>
+        }
+        onConfirm={() => {
+          if (deletingBackup) deleteBackup.mutate(deletingBackup);
+          setDeletingBackup(null);
+        }}
+      />
+      <ConfirmDialog
+        open={deletingHub !== null}
+        onOpenChange={(o) => !o && setDeletingHub(null)}
+        title={
+          deletingHub?.length === 1
+            ? "删除这份完整备份？"
+            : `删除未使用的 ${deletingHub?.length ?? 0} 份完整备份？`
+        }
+        confirmText="删除"
+        pending={deleteHubBackups.isPending}
+        description="这些是纳入托管、移出 Hub 时留下的历史快照，当前没有被引用；删除后无法找回。仍被引用的那份会保留。"
+        onConfirm={() => {
+          if (deletingHub) deleteHubBackups.mutate(deletingHub);
+          setDeletingHub(null);
+        }}
+      />
+    </div>
+  );
+}
+
+/** 纳入托管、移出 Hub 时保存的完整备份。被来源记录引用的那份要用来还原，不能删。 */
+function HubBackupsCard({
+  backups,
+  error,
+  pending,
+  onDelete,
+}: {
+  backups: HubBackup[];
+  /** 恢复模式下后端拒绝列出：判断不了哪份仍被引用 */
+  error: unknown;
+  pending: boolean;
+  onDelete: (ids: string[]) => void;
+}) {
+  const unused = backups.filter((backup) => !backup.inUse);
+  const total = backups.reduce((sum, backup) => sum + backup.size, 0);
+  return (
+    <div className="overflow-hidden rounded-xl border border-border-default bg-card">
+      <div className="flex items-center justify-between gap-3 border-b border-border/60 px-5 py-4">
+        <div className="min-w-0">
+          <span className="text-sm font-medium">托管完整备份</span>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            纳入托管、移出 Hub 时保存的 skill
+            全部文件。被引用的那份在退出应用管理、移出 Hub
+            时用来还原，不能删除。
+          </p>
+        </div>
+        {!error && (
+          <Badge variant="outline" className="shrink-0">
+            {backups.length} 份 · {formatBytes(total)}
+          </Badge>
+        )}
+      </div>
+      {error ? (
+        <p className="px-5 py-8 text-center text-xs text-muted-foreground">
+          无法读取完整备份：{String(error)}
+        </p>
+      ) : backups.length === 0 ? (
+        <p className="px-5 py-8 text-center text-xs text-muted-foreground">
+          暂无完整备份。纳入托管时会自动生成。
+        </p>
+      ) : (
+        <div className="divide-y divide-border/60">
+          {backups.map((backup) => (
+            <div key={backup.id} className="flex items-center gap-3 px-5 py-3">
+              <Archive className="h-5 w-5 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <p className="flex flex-wrap items-center gap-x-2 text-sm">
+                  <span className="font-medium">{backup.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {backup.operation === "adopt"
+                      ? "纳入托管时"
+                      : backup.operation === "release"
+                        ? "移出 Hub 时"
+                        : "托管时"}
+                    {" · "}
+                    {new Date(backup.createdAt * 1000).toLocaleString()}
+                    {" · "}
+                    {formatBytes(backup.size)}
+                  </span>
+                </p>
+                <p
+                  title={backup.originalPath}
+                  className="truncate font-mono text-xs text-muted-foreground"
+                >
+                  {backup.originalPath}
+                </p>
+              </div>
+              {backup.inUse ? (
+                <Badge
+                  variant="outline"
+                  className="shrink-0"
+                  title="退出应用管理、移出 Hub 时用它还原"
+                >
+                  使用中
+                </Badge>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`删除 ${backup.name} 的完整备份`}
+                  disabled={pending}
+                  onClick={() => onDelete([backup.id])}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {unused.length > 0 && (
+        <div className="flex justify-end border-t border-border/60 px-5 py-3">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={pending}
+            onClick={() => onDelete(unused.map((backup) => backup.id))}
+          >
+            删除未使用的 {unused.length} 份
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

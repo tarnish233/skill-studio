@@ -1,4 +1,5 @@
 use skill_studio_core::models::skill::{LinkMode, LinkReport, Skill};
+use skill_studio_core::services::hub_backups::HubBackup;
 use skill_studio_core::services::studio::SkillView;
 
 use crate::state::AppState;
@@ -63,6 +64,25 @@ pub fn prune_missing(state: &AppState) -> Result<usize, String> {
 
 pub fn release_from_hub(state: &AppState, skill_id: String) -> Result<Skill, String> {
     state.release_from_hub(&skill_id).map_err(Into::into)
+}
+
+/// 纳入托管、移出 Hub 时保存的完整备份。恢复模式下不列：配置没加载，判断不了哪份
+/// 仍被引用，宁可不列，也不能把还原要用的那份标成可删。
+pub fn list_hub_backups(state: &AppState) -> Result<Vec<HubBackup>, String> {
+    state.ensure_writable().map_err(String::from)?;
+    let config = state.config();
+    state.studio().hub_backups(&config).map_err(Into::into)
+}
+
+/// 删除未被引用的完整备份。持有配置读锁：托管和移出 Hub 要拿写锁，
+/// 不会在判断「是否仍被引用」之后才写下新的引用。
+pub fn delete_hub_backups(state: &AppState, ids: Vec<String>) -> Result<usize, String> {
+    state.ensure_writable().map_err(String::from)?;
+    let config = state.config();
+    state
+        .studio()
+        .delete_hub_backups(&config, &ids)
+        .map_err(Into::into)
 }
 
 pub fn search_catalog_skills(

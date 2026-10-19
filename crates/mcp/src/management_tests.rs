@@ -512,7 +512,16 @@ fn migration_reuses_original_keys_and_restores_original_entries() {
         .unwrap(),
         Some(original)
     );
-    assert!(std::fs::read_dir(root.path())
+    // 每次写入都留了备份，集中在 Studio 目录；配置文件旁边不再出现备份文件
+    let backups = read(&dir).unwrap().backups;
+    assert!(!backups.is_empty());
+    for backup in &backups {
+        assert!(backup.catalog_backup_path.starts_with(dir.join("backups")));
+        for file in backup.files.iter().filter_map(|f| f.backup_path.as_ref()) {
+            assert!(file.starts_with(dir.join("backups")) && file.is_file());
+        }
+    }
+    assert!(!std::fs::read_dir(root.path())
         .unwrap()
         .flatten()
         .any(|f| f.file_name().to_string_lossy().contains("studio-backup")));

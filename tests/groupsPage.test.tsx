@@ -494,7 +494,7 @@ it("switches to one Agent's view: that Agent's buttons only, its own stats, and 
     active = { ...active, [args.agentId]: args.groupIds };
   });
   renderWithProviders(<GroupsPage />);
-  fireEvent.click(await viewChip("Codex · 1 个分组"));
+  fireEvent.click(await viewChip("Codex 1"));
   expect(
     screen.getByRole("button", { name: "为 Codex 停用「Dev」" }),
   ).toBeInTheDocument();
@@ -504,8 +504,8 @@ it("switches to one Agent's view: that Agent's buttons only, its own stats, and 
   // 卡片上只有这个 Agent 的按钮
   expect(screen.queryByRole("button", { name: /为 Claude Code/ })).toBeNull();
   // 右侧是这个 Agent 自己的统计
-  expect(screen.getByText("已启用 2 个 skill")).toBeInTheDocument();
-  expect(screen.getByText("≈ 700 tokens")).toBeInTheDocument();
+  expect(screen.getByText("已启用 2")).toBeInTheDocument();
+  expect(screen.getByText("合计 ≈ 700 tokens")).toBeInTheDocument();
   // 视角里不能拖动排序（排序属于「全部」视角）
   expect(screen.getByRole("button", { name: "拖拽排序 Dev" })).toBeDisabled();
   fireEvent.click(
@@ -517,7 +517,7 @@ it("switches to one Agent's view: that Agent's buttons only, its own stats, and 
     ).toEqual({ agentId: "codex", groupIds: ["c", "o"] }),
   );
   // 叠加后两张卡片都是"停用"，胶囊的数字跟着变
-  await viewChip("Codex · 2 个分组");
+  await viewChip("Codex 2");
   expect(
     await screen.findByRole("button", { name: "为 Codex 停用「Other」" }),
   ).toBeInTheDocument();
@@ -535,7 +535,7 @@ it("remembers the Agent view after leaving the page, and 全部 brings back the 
     makeGroup({ id: "c", name: "Dev", skillIds: ["a"] }),
   ]);
   const first = renderWithProviders(<GroupsPage />);
-  fireEvent.click(await viewChip("Codex"));
+  fireEvent.click(await viewChip("Codex 0"));
   expect(
     screen.getByRole("button", { name: "为 Codex 启用「Dev」" }),
   ).toBeInTheDocument();
@@ -564,7 +564,7 @@ it("applies pending changes for the selected Agent from its view", async () => {
     },
   }));
   renderWithProviders(<GroupsPage />);
-  fireEvent.click(await viewChip("Codex · 1 个分组"));
+  fireEvent.click(await viewChip("Codex 1"));
   expect(screen.getByText("有待应用修改")).toBeInTheDocument();
   fireEvent.click(
     screen.getByRole("button", { name: "为 Codex 应用修改「Dev」" }),
@@ -627,7 +627,7 @@ it("stacks two groups for one Agent from the 全部 view, and stopping one keeps
   expect(
     await screen.findByRole("button", { name: "为 Codex 停用「Y」" }),
   ).toBeInTheDocument();
-  await viewChip("Codex · 1 个分组");
+  await viewChip("Codex 1");
 });
 it("分组卡片按名字生成图标：首字不同、同一个分组前后一致", async () => {
   setup();
