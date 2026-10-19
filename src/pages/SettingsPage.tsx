@@ -17,15 +17,15 @@ import {
   Palette,
   SunMoon,
   Layers,
+  LayoutGrid,
   HardDrive,
-  Package,
   BookmarkCheck,
   Link2,
   FolderCog,
   Settings2,
   Plug,
   Power,
-  Blocks,
+  Eye,
   Eraser,
   Archive,
   Info,
@@ -202,7 +202,7 @@ export function SettingsPage() {
                     </label>
                   }
                   description="在 MCP Hub 中显示 Codex App 内置服务。卡片置灰且只读，不支持托管、编辑或删除。"
-                  icon={<Blocks />}
+                  icon={<Eye />}
                 >
                   <Switch
                     id="show-codex-builtin-mcp"
@@ -215,7 +215,7 @@ export function SettingsPage() {
                 </SettingCard>
               )}
             </SettingsSection>
-            <SettingsSection title="分组与安装" icon={<Package />}>
+            <SettingsSection title="分组与安装" icon={<LayoutGrid />}>
               <SettingCard
                 title={
                   <label htmlFor="preserve-manual">

@@ -33,6 +33,28 @@ it("keeps sidebar navigation mounted across Agent, settings and Hub pages", asyn
   expect(within(nav).getByRole("button", { name: "分组" })).toBe(groups);
 });
 
+it("侧栏「分组」用四宫格图标，设置页「分组与安装」用同一个，上方卡片不用长得像的图标", async () => {
+  handlers.set("list_agents", () => [claudeAgent]);
+  renderWithProviders(<App />);
+  // svg 上 lucide-<图标名> 的 class，例如 lucide-layout-grid
+  const iconOf = (el: Element) =>
+    (el.querySelector("svg")?.getAttribute("class") ?? "")
+      .split(" ")
+      .filter((c) => c.startsWith("lucide-"));
+  const sidebar = screen.getByRole("complementary", { name: "侧边栏" });
+  const groups = await within(sidebar).findByRole("button", { name: "分组" });
+  expect(iconOf(groups)).toEqual(["lucide-layout-grid"]);
+  fireEvent.click(within(sidebar).getByRole("button", { name: "设置" }));
+  const section = await screen.findByRole("heading", { name: "分组与安装" });
+  expect(iconOf(section)).toEqual(iconOf(groups));
+  // 紧挨在上方的「显示 Codex App 内置 MCP」原先用积木，也是几个方块，和四宫格看着像；
+  // 改用眼睛，对应标题里的「显示」（与「启用 MCP 管理」用电源键同理）
+  const builtin = screen
+    .getByText("显示 Codex App 内置 MCP")
+    .closest("div.flex");
+  expect(iconOf(builtin!)).toEqual(["lucide-eye"]);
+});
+
 it("leaves the MCP editor when the currently selected Hub is clicked", async () => {
   localStorage.setItem("skill-studio-resource", "mcp");
   handlers.set("get_settings", () => ({

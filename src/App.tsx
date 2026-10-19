@@ -27,8 +27,8 @@ import { motion, useReducedMotion } from "framer-motion";
 import {
   ArrowLeft,
   FolderGit2,
-  Group as GroupIcon,
   Layers,
+  LayoutGrid,
   RefreshCw,
   Settings as SettingsIcon,
   TriangleAlert,
@@ -149,7 +149,7 @@ function AppContent() {
       {
         id: "groups",
         label: VIEW_TITLES.groups,
-        icon: <GroupIcon className="h-5 w-5" />,
+        icon: <LayoutGrid className="h-5 w-5" />,
         disabledReason: remoteMcp
           ? "远程 MCP 暂不支持分组管理，请在 MCP Hub 查看。"
           : undefined,
