@@ -42,7 +42,8 @@ import { isLinux, isWindows } from "@/lib/platform";
 import { GroupsPage } from "@/pages/GroupsPage";
 import { LibraryPage } from "@/pages/LibraryPage";
 import { ProjectsPage } from "@/pages/ProjectsPage";
-import { McpPage, mcpEditorTitle, type McpEditorState } from "@/pages/McpPage";
+import { McpPage } from "@/pages/McpPage";
+import { PageResetProvider } from "@/components/common/PageReset";
 import { SettingsPage } from "@/pages/SettingsPage";
 
 // macOS 把红绿灯悬浮在内容上（titleBarStyle: Overlay），需要让出 28px；
@@ -89,12 +90,8 @@ function AppContent() {
   const [pageSlide, setPageSlide] = useState({ x: 0, y: 0 });
   const [searchHost, setSearchHost] = useState<HTMLDivElement | null>(null);
   const [addHost, setAddHost] = useState<HTMLDivElement | null>(null);
-  const [mcpEditor, setMcpEditor] = useState<McpEditorState | null>(null);
-  useEffect(() => setMcpEditor(null), [target.id]);
-  const activeMcpEditor =
-    mcpEnabled && view === "hub" && target.id === "local" ? mcpEditor : null;
   const isSettings = view === "settings";
-  const isSubpage = isSettings || view === "install" || !!activeMcpEditor;
+  const isSubpage = isSettings || view === "install";
   const nativeTools = useNativePageTools(
     { search: searchHost, add: addHost },
     !isSubpage && !connecting && !initError,
@@ -106,7 +103,6 @@ function AppContent() {
   useEffect(() => {
     if (settings?.manageMcp !== false) return;
     setResource("skills");
-    setMcpEditor(null);
     if (view === "install") setView("hub");
   }, [settings?.manageMcp, view]);
   useEffect(() => {
@@ -179,7 +175,7 @@ function AppContent() {
     switch (view) {
       case "hub":
         return activeResource === "mcp" ? (
-          <McpPage editor={mcpEditor} onEditorChange={setMcpEditor} />
+          <McpPage />
         ) : (
           <LibraryPage
             onAdd={() => requestNavigation(() => setView("install"))}
@@ -204,8 +200,13 @@ function AppContent() {
     }
   };
 
+  /** 再点当前所在的导航项：页面回到列表（关掉页内展开的详情） */
+  const [pageReset, setPageReset] = useState(0);
   const navigate = (next: ViewId) => {
-    if (next === view && !activeMcpEditor) return;
+    if (next === view) {
+      requestNavigation(() => setPageReset((n) => n + 1));
+      return;
+    }
     requestNavigation(() => {
       const order: ViewId[] = [...navItems.map((item) => item.id), "settings"];
       const from = order.indexOf(view);
@@ -214,7 +215,6 @@ function AppContent() {
         x: 0,
         y: from >= 0 && to >= 0 ? Math.sign(to - from) * 14 : 0,
       });
-      setMcpEditor(null);
       setView(next);
     });
   };
@@ -227,9 +227,7 @@ function AppContent() {
         target.id !== "local" &&
         (id === "projects" || id === "groups");
       if (unavailable(backTarget.current)) backTarget.current = "hub";
-      if (view === "install" || !!mcpEditor || unavailable(view))
-        setView("hub");
-      setMcpEditor(null);
+      if (view === "install" || unavailable(view)) setView("hub");
       // The toggle sits left (Skill) → right (MCP); slide content the same way.
       setPageSlide({ x: next === "mcp" ? 14 : -14, y: 0 });
       setResource(next);
@@ -297,11 +295,7 @@ function AppContent() {
                       className="h-9 w-9 shrink-0 rounded-xl text-muted-foreground"
                       title="返回"
                       aria-label="返回"
-                      onClick={() =>
-                        activeMcpEditor
-                          ? requestNavigation(() => setMcpEditor(null))
-                          : navigate(backTarget.current)
-                      }
+                      onClick={() => navigate(backTarget.current)}
                     >
                       <ArrowLeft className="h-5 w-5" />
                     </Button>
@@ -330,9 +324,7 @@ function AppContent() {
                 </div>
                 <div className="flex min-w-0 max-w-sm items-baseline justify-center gap-3">
                   <h1 className="shrink-0 text-xl font-semibold leading-5 tracking-tight">
-                    {activeMcpEditor
-                      ? mcpEditorTitle(activeMcpEditor)
-                      : (titles[view] ?? "Skill Studio")}
+                    {titles[view] ?? "Skill Studio"}
                   </h1>
                   {isSettings ? (
                     <p
@@ -405,7 +397,9 @@ function AppContent() {
                         ease: [0.22, 1, 0.36, 1],
                       }}
                     >
-                      {content()}
+                      <PageResetProvider value={pageReset}>
+                        {content()}
+                      </PageResetProvider>
                     </motion.div>
                   </div>
                 </fieldset>

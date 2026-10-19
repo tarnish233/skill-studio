@@ -36,8 +36,8 @@ it("creates a shared draft and saves the full rapid selection without activating
   fireEvent.change(screen.getByLabelText("分组名称"), {
     target: { value: "Dev" },
   });
-  fireEvent.click(await screen.findByRole("checkbox", { name: "选择 Alpha" }));
-  fireEvent.click(screen.getByRole("checkbox", { name: "选择 Beta" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Alpha" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Beta" }));
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await waitFor(() =>
     expect(calls.find((c) => c.command === "save_group")?.args).toEqual({
@@ -116,7 +116,7 @@ it("shows every shared group at once, and each Agent's icon only activates that 
     ).toEqual({ agentId: "codex", groupIds: ["c"] }),
   );
 });
-it("cancel discards unsaved selection and failed saves preserve the editable draft", async () => {
+it("failed saves keep the editable draft, and going back discards it only after confirming", async () => {
   setup();
   handlers.set("save_group", () => {
     throw new Error("disk full");
@@ -126,17 +126,20 @@ it("cancel discards unsaved selection and failed saves preserve the editable dra
   fireEvent.change(screen.getByLabelText("分组名称"), {
     target: { value: "Dev" },
   });
-  fireEvent.click(await screen.findByRole("checkbox", { name: "选择 Alpha" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Alpha" }));
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "保存失败，修改已保留：disk full",
+  );
   expect(screen.getByLabelText("分组名称")).toHaveValue("Dev");
-  expect(screen.getByRole("checkbox", { name: "选择 Alpha" })).toBeChecked();
-  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  expect(screen.getByRole("checkbox", { name: "Alpha" })).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "返回" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "放弃修改并离开" }),
+  );
   fireEvent.click(screen.getAllByRole("button", { name: "新建分组" })[0]);
-  expect(screen.getByLabelText("分组名称")).toHaveValue("");
-  expect(
-    screen.getByRole("checkbox", { name: "选择 Alpha" }),
-  ).not.toBeChecked();
+  expect(await screen.findByLabelText("分组名称")).toHaveValue("");
+  expect(screen.getByRole("checkbox", { name: "Alpha" })).not.toBeChecked();
 });
 it("pending changes get their own apply button, and the Agent icon still stops the group when re-applying is rejected", async () => {
   setup();
@@ -646,7 +649,7 @@ it("分组卡片按名字生成图标：首字不同、同一个分组前后一�
   expect(first.parentElement?.className).toMatch(/bg-\S+ text-/);
 });
 
-it("整张分组卡片可点：点卡片打开编辑分组，卡片上的图标与删除按钮不会误开", async () => {
+it("整张分组卡片可点：点卡片在页内展开编辑，卡片上的图标不会误开", async () => {
   setup();
   handlers.set("list_groups", () => [
     makeGroup({ id: "c", name: "Dev", skillIds: ["a"] }),
@@ -654,15 +657,17 @@ it("整张分组卡片可点：点卡片打开编辑分组，卡片上的图标�
   renderWithProviders(<GroupsPage />);
   // 卡片本身就是进入编辑的入口，不再有单独的铅笔按钮
   fireEvent.click(await screen.findByRole("button", { name: "编辑 Dev" }));
-  const dialog = await screen.findByRole("dialog");
-  expect(within(dialog).getByLabelText("分组名称")).toHaveValue("Dev");
-  fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+  expect(await screen.findByLabelText("分组名称")).toHaveValue("Dev");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "返回" }));
   // 行内的就地按钮（启用图标、删除）仍然只做自己的事
-  fireEvent.click(screen.getByRole("button", { name: "为 Codex 启用「Dev」" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "为 Codex 启用「Dev」" }),
+  );
   await waitFor(() =>
     expect(
       calls.find((c) => c.command === "activate_agent_group")?.args,
     ).toEqual({ agentId: "codex", groupIds: ["c"] }),
   );
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("分组名称")).not.toBeInTheDocument();
 });

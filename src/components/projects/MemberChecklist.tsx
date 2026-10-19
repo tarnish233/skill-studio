@@ -20,7 +20,7 @@ export interface ChecklistItem {
 }
 
 /**
- * 项目详情里的成员清单（绑定分组、单独选择 skill / MCP）：点一行即勾选或取消。
+ * 项目详情与分组编辑里的成员清单（绑定分组、选择 skill / MCP）：点一行即勾选或取消。
  * `pinned` 里的（打开详情时已选的）排在最前，勾选过程中顺序不跳动。
  */
 export function MemberChecklist({
@@ -31,6 +31,7 @@ export function MemberChecklist({
   onToggle,
   disabled,
   searchPlaceholder,
+  searchLabel,
   emptyText,
 }: {
   title: string;
@@ -41,6 +42,8 @@ export function MemberChecklist({
   disabled?: boolean;
   /** 有就显示搜索框 */
   searchPlaceholder?: string;
+  /** 搜索框的无障碍名称，默认同占位文字 */
+  searchLabel?: string;
   emptyText: string;
 }) {
   const [query, setQuery] = useState("");
@@ -65,7 +68,7 @@ export function MemberChecklist({
       </h3>
       {searchPlaceholder && (
         <Input
-          aria-label={searchPlaceholder}
+          aria-label={searchLabel ?? searchPlaceholder}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={searchPlaceholder}

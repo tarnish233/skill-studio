@@ -229,22 +229,21 @@ export function McpProjectDetail({
         root={project.root}
         onBack={onBack}
         agents={
-          <div title={dirty ? "先保存修改，再为 Agent 启停" : undefined}>
-            <GroupAgentToggles
-              groupName={project.name}
-              busy={locked || dirty}
-              agents={state.toggles}
-              onToggle={onToggle}
-              reapply={
-                state.reapply && {
-                  label: state.reapply.label,
-                  targets: state.reapply.targets,
-                  disabled: state.reapply.disabled,
-                  onClick: onReapply,
-                }
+          <GroupAgentToggles
+            groupName={project.name}
+            busy={locked}
+            locked={dirty ? "先保存修改，再为 Agent 启停" : undefined}
+            agents={state.toggles}
+            onToggle={onToggle}
+            reapply={
+              state.reapply && {
+                label: state.reapply.label,
+                targets: state.reapply.targets,
+                disabled: state.reapply.disabled,
+                onClick: onReapply,
               }
-            />
-          </div>
+            }
+          />
         }
         save={{
           onClick: () => void save(),

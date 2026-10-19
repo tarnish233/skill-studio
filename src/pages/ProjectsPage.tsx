@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { usePageReset } from "@/components/common/PageReset";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderOpen, PackagePlus, Play, Square, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -144,6 +145,7 @@ function ProjectsContent() {
   const viewAgent = projectAgents.find((a) => a.id === viewAgentId);
   const [query, setQuery] = useState("");
   const [detail, setDetail] = useState<string | null>(null);
+  usePageReset(() => setDetail(null));
   const appear = useDetailAppear();
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<ProjectBinding | null>(null);
@@ -596,22 +598,21 @@ function ProjectDetail({
         root={project.root}
         onBack={onBack}
         agents={
-          <div title={dirty ? "先保存修改，再为 Agent 启停" : undefined}>
-            <GroupAgentToggles
-              groupName={project.name}
-              busy={locked || dirty}
-              agents={state.toggles}
-              onToggle={onToggle}
-              reapply={
-                state.reapply && {
-                  label: state.reapply.label,
-                  targets: state.reapply.targets,
-                  disabled: state.reapply.disabled,
-                  onClick: onReapply,
-                }
+          <GroupAgentToggles
+            groupName={project.name}
+            busy={locked}
+            locked={dirty ? "先保存修改，再为 Agent 启停" : undefined}
+            agents={state.toggles}
+            onToggle={onToggle}
+            reapply={
+              state.reapply && {
+                label: state.reapply.label,
+                targets: state.reapply.targets,
+                disabled: state.reapply.disabled,
+                onClick: onReapply,
               }
-            />
-          </div>
+            }
+          />
         }
         actions={
           <Button

@@ -1,20 +1,30 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { usePageReset } from "@/components/common/PageReset";
 import { useQuery } from "@tanstack/react-query";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import {
+  DetailTransition,
+  useDetailAppear,
+} from "@/components/common/DetailTransition";
 import {
   GroupAgentFilter,
   groupsInUse,
   useGroupAgentView,
 } from "@/components/common/GroupAgentView";
+import {
+  NavigationGuard,
+  useNavigationGuard,
+} from "@/components/common/NavigationGuard";
+import { PageTools } from "@/components/common/PageTools";
 import { SourceMark } from "@/components/common/SourceMark";
 import { SummaryStat } from "@/components/common/SummaryBar";
 import { GroupBoard } from "@/components/groups/GroupBoard";
 import { GroupCard } from "@/components/groups/GroupCard";
 import {
-  GroupEditor,
+  GroupDetail,
   type GroupDraft,
-  type MemberOption,
-} from "@/components/groups/GroupEditor";
+  type GroupSaveResult,
+} from "@/components/groups/GroupDetail";
 import {
   groupCardState,
   type AgentGroupStatus,
@@ -25,6 +35,7 @@ import {
   useGroupRunner,
 } from "@/components/groups/useGroupActions";
 import { McpAgentNote } from "@/components/mcp/McpAgentNote";
+import type { ChecklistItem } from "@/components/projects/MemberChecklist";
 import { useTarget } from "@/components/targets/TargetProvider";
 import { useAgents, useSettings } from "@/hooks/useData";
 import { agentDetection } from "@/lib/agents";
@@ -56,7 +67,8 @@ const RELOAD = "请在 Agent 中重新加载 MCP";
  * 分组不归属某个 Agent：名称和成员只保存一次，是否对某个 Agent 生效完全
  * 由卡片上的 Agent 图标独立决定，同一分组可以同时是多个 Agent 的当前组合。
  * 部署到 Agent 只通过分组；顶部胶囊可切到单个 Agent 的视角。
- * 页面骨架、卡片和编辑弹窗与 Skill 分组共用（见 `components/groups`）。
+ * 页面骨架、卡片和整页编辑与 Skill 分组共用（见 `components/groups`）：点卡片或「新建分组」
+ * 在页内展开，保存即写入正在使用这个分组的 Agent。
  */
 export function McpGroupsPage() {
   const target = useTarget();
@@ -66,9 +78,14 @@ export function McpGroupsPage() {
         MCP 分组当前仅支持本机。
       </p>
     );
-  return <LocalGroups />;
+  return (
+    <NavigationGuard>
+      <LocalGroups />
+    </NavigationGuard>
+  );
 }
 function LocalGroups() {
+  const requestNavigation = useNavigationGuard();
   const { data: allAgents = [], isDetecting, detectionFailed } = useAgents();
   const { data: settings } = useSettings();
   // Skill 侧的 Agent 列表（含品牌图标），过滤到真正支持 MCP 的；agents 再去掉关闭管理的
@@ -112,8 +129,14 @@ function LocalGroups() {
       ).length
     : 0;
   const [query, setQuery] = useState("");
-  const [draft, setDraft] = useState<GroupDraft | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  /** 展开的整页编辑：id 为 null 是新建；key 区分每次打开，新建保存后换成真实 id 也不重新挂载 */
+  const [detail, setDetail] = useState<{
+    key: number;
+    id: string | null;
+  } | null>(null);
+  const sessions = useRef(0);
+  usePageReset(() => setDetail(null));
+  const appear = useDetailAppear();
   const [deleting, setDeleting] = useState<McpGroup | null>(null);
   const { busy, run } = useGroupRunner(() => status.refetch());
   const reorder = useGroupReorder<ManagementStatus>({
@@ -163,16 +186,9 @@ function LocalGroups() {
       .toLowerCase()
       .includes(keyword),
   );
-  const edit = (g?: McpGroup) => {
-    setError(null);
-    setDraft({
-      id: g?.id ?? null,
-      name: g?.name ?? "",
-      memberIds: [...(g?.entryIds ?? [])],
-      pinned: [...(g?.entryIds ?? [])],
-    });
-  };
-  const options: MemberOption[] = catalog.map((row) => {
+  const open = (id: string | null) =>
+    requestNavigation(() => setDetail({ key: ++sessions.current, id }));
+  const options: ChecklistItem[] = catalog.map((row) => {
     const target = String(
       row.entry.definition.command ?? row.entry.definition.url ?? "",
     );
@@ -199,16 +215,87 @@ function LocalGroups() {
           : undefined,
     };
   });
-  const save = (draft: GroupDraft) => {
-    const saved = groups.find((g) => g.id === draft.id);
+  /** 卡片和整页编辑的标题栏共用：已关闭管理但仍在用的 Agent 保留一个只能停用的图标 */
+  function cardState(g: McpGroup) {
+    const statuses: AgentGroupStatus[] = mcpAgents
+      .filter(
+        (a) =>
+          managedIds.has(a.id) ||
+          (activeGroups[mcpAgentId(a.id)] ?? []).some(
+            (v) => v.groupId === g.id,
+          ),
+      )
+      .map((a) => {
+        const detection = agentDetection(a, {
+          isDetecting,
+          detectionFailed,
+        });
+        return {
+          agentId: a.id,
+          label: a.displayName,
+          managed: managedIds.has(a.id),
+          note: detection.note,
+          dimmed: detection.notInstalled,
+          ...agentStatus(g, mcpAgentId(a.id)),
+        };
+      });
+    return groupCardState({
+      statuses,
+      used: inUse.has(g.id),
+      memberCount: g.entryIds.length,
+      missingMembers: g.entryIds.some((id) => !entryName(id)),
+      viewAgentId: viewAgent?.id,
+    });
+  }
+  const toggle = (g: McpGroup, agentId: string, on: boolean) => {
+    const mcpId = mcpAgentId(agentId);
+    void switching(
+      mcpId,
+      on
+        ? [...activeIds(mcpId), g.id]
+        : activeIds(mcpId).filter((id) => id !== g.id),
+      `${on ? "分组已启用" : "分组已停用"}，${RELOAD}`,
+    );
+  };
+  const reapply = (agentIds: string[]) =>
+    void run(
+      async () => {
+        // 依次重新应用：遇到第一个失败就停下报错
+        const untouched: McpUntouched[] = [];
+        for (const agentId of agentIds) {
+          const mcpId = mcpAgentId(agentId);
+          untouched.push(
+            ...((await mcpRequest<McpUntouched[] | null>("activateGroup", {
+              agent: mcpId,
+              ids: activeIds(mcpId),
+            })) ?? []),
+          );
+        }
+        return untouched;
+      },
+      { success: `修改已应用，${RELOAD}`, notice: untouchedMcpNote },
+    );
+  /**
+   * 保存名称和成员，再依次重新写入正在使用这个分组的 Agent（与项目详情一致）。
+   * 分组已经存下、写入某个 Agent 失败时，修改不丢：卡片和标题栏会显示「有待应用修改」。
+   */
+  async function save(
+    id: string | null,
+    draft: GroupDraft,
+  ): Promise<GroupSaveResult> {
+    const stored = groups.find((g) => g.id === id);
     const group: McpGroup = {
-      ...(saved ?? { id: crypto.randomUUID(), sortOrder: groups.length }),
+      ...(stored ?? { id: crypto.randomUUID(), sortOrder: groups.length }),
       name: draft.name,
       entryIds: draft.memberIds,
     };
-    return run(
-      () =>
-        mcpRequest("saveGroup", {
+    const targets = stored
+      ? agents.filter((a) => activeIds(mcpAgentId(a.id)).includes(stored.id))
+      : [];
+    const outcome: { saved: boolean; error?: string } = { saved: false };
+    await run(
+      async () => {
+        await mcpRequest("saveGroup", {
           group,
           // 选中的原有配置只记下引用，不托管、不改动
           imports: catalog
@@ -218,173 +305,204 @@ function LocalGroups() {
               definition: r.entry.definition,
               sourceIds: r.sources.map((source) => source.id),
             })),
-        }),
+        });
+        outcome.saved = true;
+        const untouched: McpUntouched[] = [];
+        for (const agent of targets) {
+          const mcpId = mcpAgentId(agent.id);
+          try {
+            untouched.push(
+              ...((await mcpRequest<McpUntouched[] | null>("activateGroup", {
+                agent: mcpId,
+                ids: activeIds(mcpId),
+              })) ?? []),
+            );
+          } catch (e) {
+            throw new Error(
+              `分组已保存，写入 ${agent.displayName} 时失败：${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+        }
+        return untouched;
+      },
       {
-        success: "分组已保存，可在卡片上为需要的 Agent 启用",
-        onDone: () => setDraft(null),
-        onError: setError,
+        success: targets.length
+          ? `已保存并写入 ${targets.map((a) => a.displayName).join("、")}，${RELOAD}`
+          : "分组已保存，可在卡片上为需要的 Agent 启用",
+        notice: untouchedMcpNote,
+        onError: (message) => {
+          outcome.error = message;
+        },
       },
     );
-  };
+    if (outcome.saved && !stored) setDetail((d) => d && { ...d, id: group.id });
+    return {
+      saved: outcome.saved,
+      error:
+        outcome.error && !outcome.saved
+          ? `保存失败，修改已保留：${outcome.error}`
+          : outcome.error,
+    };
+  }
 
+  const tools = (
+    <PageTools
+      query={query}
+      onQueryChange={(v) =>
+        requestNavigation(() => {
+          setQuery(v);
+          setDetail(null);
+        })
+      }
+      placeholder="搜索分组…"
+      createLabel="新建分组"
+      onCreate={() => open(null)}
+    />
+  );
+  const deleteDialog = (
+    <ConfirmDialog
+      open={!!deleting}
+      onOpenChange={(open) => {
+        if (!open) setDeleting(null);
+      }}
+      title={`删除分组「${deleting?.name ?? ""}」`}
+      description="只删除分组记录，不删除 MCP Hub 中的服务。"
+      confirmText="删除"
+      pending={busy}
+      onConfirm={() =>
+        deleting &&
+        void run(() => mcpRequest("removeGroup", { id: deleting.id }), {
+          success: "分组已删除",
+          onDone: () => setDeleting(null),
+        })
+      }
+    />
+  );
+
+  const editing = detail?.id
+    ? groups.find((g) => g.id === detail.id)
+    : undefined;
+  if (detail && (detail.id === null || editing)) {
+    // 新建的分组还没有启用记录：标题栏的 Agent 图标全部未启用、先保存才能用
+    const current = editing ?? {
+      id: "",
+      name: "",
+      entryIds: [],
+      sortOrder: groups.length,
+    };
+    return (
+      <>
+        {tools}
+        <DetailTransition key={detail.key} appear={appear}>
+          <GroupDetail
+            group={
+              editing
+                ? { name: editing.name, memberIds: editing.entryIds }
+                : null
+            }
+            noun="MCP"
+            hub="MCP Hub"
+            searchLabel="搜索 Hub MCP"
+            options={options}
+            emptyHub="MCP Hub 暂无服务，请先添加 MCP。"
+            note="选中的原有配置只记下引用，不会托管或修改。"
+            describe={(ids) => `${ids.length} 个 MCP`}
+            state={cardState(current)}
+            writesTo={agents
+              .filter(
+                (a) =>
+                  editing && activeIds(mcpAgentId(a.id)).includes(editing.id),
+              )
+              .map((a) => a.displayName)}
+            busy={busy}
+            loading={status.isPending || !!status.error}
+            onToggle={(agentId, on) => toggle(current, agentId, on)}
+            onReapply={reapply}
+            onBack={() => requestNavigation(() => setDetail(null))}
+            onSave={(draft) => save(detail.id, draft)}
+          />
+        </DetailTransition>
+        {deleteDialog}
+      </>
+    );
+  }
   return (
-    <>
-      <GroupBoard
-        query={query}
-        onQueryChange={setQuery}
-        onCreate={() => edit()}
-        loading={status.isPending}
-        error={status.error}
-        ids={groups.map((g) => g.id)}
-        visible={visible.length}
-        reorderDisabled={busy || reorder.isPending}
-        onReorder={(ids) => reorder.mutate(ids)}
-        noun="MCP"
-        hub="MCP Hub"
-        summary={
-          <GroupAgentFilter
-            total={groups.length}
-            agents={agents}
-            current={(agentId) => activeIds(mcpAgentId(agentId)).length}
-            selected={viewAgent?.id ?? null}
-            onSelect={setViewAgentId}
-          >
-            {viewAgent && viewMcpId ? (
-              <>
+    <div className="flex min-h-0 flex-1 flex-col">
+      {tools}
+      <DetailTransition appear={appear}>
+        <GroupBoard
+          showTools={false}
+          query={query}
+          onQueryChange={setQuery}
+          onCreate={() => open(null)}
+          loading={status.isPending}
+          error={status.error}
+          ids={groups.map((g) => g.id)}
+          visible={visible.length}
+          reorderDisabled={busy || reorder.isPending}
+          onReorder={(ids) => reorder.mutate(ids)}
+          noun="MCP"
+          hub="MCP Hub"
+          summary={
+            <GroupAgentFilter
+              total={groups.length}
+              agents={agents}
+              current={(agentId) => activeIds(mcpAgentId(agentId)).length}
+              selected={viewAgent?.id ?? null}
+              onSelect={setViewAgentId}
+            >
+              {viewAgent && viewMcpId ? (
+                <>
+                  <SummaryStat
+                    title={`已启用：${viewAgent.displayName} 用户全局配置里已启用的 MCP，共 ${enabledMcp} 个`}
+                  >
+                    已启用 {enabledMcp}
+                  </SummaryStat>
+                  <McpAgentNote agent={viewMcpId} compact />
+                </>
+              ) : (
+                // 总数已在「全部」上；这里给出在用的分组数，和卡片上的「使用中」同一口径
                 <SummaryStat
-                  title={`已启用：${viewAgent.displayName} 用户全局配置里已启用的 MCP，共 ${enabledMcp} 个`}
+                  title={`已启用：至少有一个 Agent 正在使用的分组，共 ${usedGroups} 个`}
                 >
-                  已启用 {enabledMcp}
+                  已启用 {usedGroups}
                 </SummaryStat>
-                <McpAgentNote agent={viewMcpId} compact />
-              </>
-            ) : (
-              // 总数已在「全部」上；这里给出在用的分组数，和卡片上的「使用中」同一口径
-              <SummaryStat
-                title={`已启用：至少有一个 Agent 正在使用的分组，共 ${usedGroups} 个`}
-              >
-                已启用 {usedGroups}
-              </SummaryStat>
-            )}
-          </GroupAgentFilter>
-        }
-      >
-        {visible.map((g) => {
-          // 已关闭管理的 Agent 不显示图标，但若它仍在用这个分组，保留一个只能停用的图标
-          const statuses: AgentGroupStatus[] = mcpAgents
-            .filter(
-              (a) =>
-                managedIds.has(a.id) ||
-                (activeGroups[mcpAgentId(a.id)] ?? []).some(
-                  (v) => v.groupId === g.id,
-                ),
-            )
-            .map((a) => {
-              const detection = agentDetection(a, {
-                isDetecting,
-                detectionFailed,
-              });
-              return {
-                agentId: a.id,
-                label: a.displayName,
-                managed: managedIds.has(a.id),
-                note: detection.note,
-                dimmed: detection.notInstalled,
-                ...agentStatus(g, mcpAgentId(a.id)),
-              };
-            });
-          return (
-            <GroupCard
-              key={g.id}
-              id={g.id}
-              name={g.name}
-              noun="MCP"
-              memberCount={g.entryIds.length}
-              members={g.entryIds.map((id) => entryName(id) ?? `已缺失：${id}`)}
-              state={groupCardState({
-                statuses,
-                used: inUse.has(g.id),
-                memberCount: g.entryIds.length,
-                missingMembers: g.entryIds.some((id) => !entryName(id)),
-                viewAgentId: viewAgent?.id,
-              })}
-              viewAgent={
-                viewAgent && { id: viewAgent.id, label: viewAgent.displayName }
-              }
-              dragDisabled={busy || reorder.isPending || !!viewAgent}
-              dragHint={viewAgent ? "在「全部」视角下拖动排序" : undefined}
-              busy={busy}
-              deleting={busy && deleting?.id === g.id}
-              onOpen={() => edit(g)}
-              onDelete={() => setDeleting(g)}
-              onToggle={(agentId, on) => {
-                const mcpId = mcpAgentId(agentId);
-                void switching(
-                  mcpId,
-                  on
-                    ? [...activeIds(mcpId), g.id]
-                    : activeIds(mcpId).filter((id) => id !== g.id),
-                  `${on ? "分组已启用" : "分组已停用"}，${RELOAD}`,
-                );
-              }}
-              onReapply={(agentIds) =>
-                void run(
-                  async () => {
-                    // 依次重新应用：遇到第一个失败就停下报错
-                    const untouched: McpUntouched[] = [];
-                    for (const agentId of agentIds) {
-                      const mcpId = mcpAgentId(agentId);
-                      untouched.push(
-                        ...((await mcpRequest<McpUntouched[] | null>(
-                          "activateGroup",
-                          { agent: mcpId, ids: activeIds(mcpId) },
-                        )) ?? []),
-                      );
-                    }
-                    return untouched;
-                  },
-                  {
-                    success: `修改已应用，${RELOAD}`,
-                    notice: untouchedMcpNote,
-                  },
-                )
-              }
-            />
-          );
-        })}
-      </GroupBoard>
-      <GroupEditor
-        draft={draft}
-        onChange={setDraft}
-        onCancel={() => setDraft(null)}
-        onSave={() => draft && void save(draft)}
-        pending={busy}
-        saveDisabled={status.isPending || !!status.error}
-        error={error}
-        noun="MCP"
-        hub="MCP Hub"
-        searchLabel="搜索 Hub MCP"
-        options={options}
-        emptyHub="MCP Hub 暂无服务，请先添加 MCP。"
-        note="保存只记录成员，不会托管或修改已有配置。"
-      />
-      <ConfirmDialog
-        open={!!deleting}
-        onOpenChange={(open) => {
-          if (!open) setDeleting(null);
-        }}
-        title={`删除分组「${deleting?.name ?? ""}」`}
-        description="只删除分组记录，不删除 MCP Hub 中的服务。"
-        confirmText="删除"
-        pending={busy}
-        onConfirm={() =>
-          deleting &&
-          void run(() => mcpRequest("removeGroup", { id: deleting.id }), {
-            success: "分组已删除",
-            onDone: () => setDeleting(null),
-          })
-        }
-      />
-    </>
+              )}
+            </GroupAgentFilter>
+          }
+        >
+          {visible.map((g) => {
+            return (
+              <GroupCard
+                key={g.id}
+                id={g.id}
+                name={g.name}
+                noun="MCP"
+                memberCount={g.entryIds.length}
+                members={g.entryIds.map(
+                  (id) => entryName(id) ?? `已缺失：${id}`,
+                )}
+                state={cardState(g)}
+                viewAgent={
+                  viewAgent && {
+                    id: viewAgent.id,
+                    label: viewAgent.displayName,
+                  }
+                }
+                dragDisabled={busy || reorder.isPending || !!viewAgent}
+                dragHint={viewAgent ? "在「全部」视角下拖动排序" : undefined}
+                busy={busy}
+                deleting={busy && deleting?.id === g.id}
+                onOpen={() => open(g.id)}
+                onDelete={() => setDeleting(g)}
+                onToggle={(agentId, on) => toggle(g, agentId, on)}
+                onReapply={reapply}
+              />
+            );
+          })}
+        </GroupBoard>
+      </DetailTransition>
+      {deleteDialog}
+    </div>
   );
 }

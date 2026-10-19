@@ -149,13 +149,24 @@ it.each(skillOnlyAgents)(
         agents: { [agent.id]: agentState("source") },
       }),
     ]);
-    handlers.set("save_group", (args) => makeGroup(args));
+    // 保存过的分组之后能读到，和真实后端一样
+    let saved: ReturnType<typeof makeGroup>[] = [];
+    handlers.set("list_groups", () => saved);
+    handlers.set("save_group", (args) => {
+      const group = makeGroup({
+        id: "dev",
+        name: args.name as string,
+        skillIds: args.skillIds as string[],
+      });
+      saved = [group];
+      return group;
+    });
     renderWithProviders(<GroupsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "新建分组" }));
     fireEvent.change(screen.getByLabelText("分组名称"), {
       target: { value: "Dev" },
     });
-    fireEvent.click(await screen.findByRole("checkbox", { name: "选择 Demo" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Demo" }));
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() =>
       expect(calls.find((c) => c.command === "save_group")?.args).toEqual({
@@ -164,8 +175,9 @@ it.each(skillOnlyAgents)(
         skillIds: ["demo"],
       }),
     );
+    // 新建的分组保存后留在整页编辑里，保存按钮回到不可点
     await waitFor(() =>
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+      expect(screen.getByRole("button", { name: "保存" })).toBeDisabled(),
     );
   },
 );

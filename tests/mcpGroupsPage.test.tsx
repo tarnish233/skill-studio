@@ -159,7 +159,7 @@ it("lets two Agents activate the same shared group independently", async () => {
     within(card("开发")).getByRole("button", { name: "为 Codex 停用「开发」" }),
   ).toBeInTheDocument();
 });
-it("saves membership without applying it; the apply button re-applies while the Agent icon still stops", async () => {
+it("saving writes the group to the Agents already using it, and the Agent icon still stops it", async () => {
   const second = {
     ...entry,
     id: "two",
@@ -172,17 +172,25 @@ it("saves membership without applying it; the apply button re-applies while the 
   };
   await open();
   fireEvent.click(screen.getByRole("button", { name: "编辑 开发" }));
-  fireEvent.click(screen.getByRole("checkbox", { name: "选择 Two" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Two" }));
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
-  await screen.findByText("有待应用修改");
-  expect(methods()).toContain("saveGroup");
-  expect(methods()).not.toContain("activateGroup");
-  expect(
-    screen.getByRole("button", { name: "为 Claude Code 停用「开发」" }),
-  ).toBeEnabled();
-  fireEvent.click(screen.getByRole("button", { name: "应用修改「开发」" }));
   await waitFor(() =>
     expect(activations()).toEqual([{ agent: "claude", ids: ["g1"] }]),
+  );
+  expect(methods().indexOf("saveGroup")).toBeLessThan(
+    methods().indexOf("activateGroup"),
+  );
+  // 留在整页编辑里：标题栏的图标照样能停用
+  const stop = await screen.findByRole("button", {
+    name: "为 Claude Code 停用「开发」",
+  });
+  await waitFor(() => expect(stop).toBeEnabled());
+  fireEvent.click(stop);
+  await waitFor(() =>
+    expect(activations()).toEqual([
+      { agent: "claude", ids: ["g1"] },
+      { agent: "claude", ids: [] },
+    ]),
   );
 });
 it("keeps the stop action when an active member is gone and re-applying cannot succeed", async () => {
@@ -259,7 +267,7 @@ it("records discovered MCP references without adopting or activating on save", a
   fireEvent.change(screen.getByRole("textbox", { name: "分组名称" }), {
     target: { value: "浏览器" },
   });
-  fireEvent.click(screen.getByRole("checkbox", { name: "选择 Scan" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Scan" }));
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await waitFor(() => expect(methods()).toContain("saveGroup"));
   expect(
@@ -321,7 +329,10 @@ it("shows only group cards: no tabs and no Agent picker, single MCPs are added f
     screen.getByRole("textbox", { name: "搜索分组…" }),
   ).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "新建分组" }));
-  expect(await screen.findByRole("dialog")).toHaveTextContent("新建分组");
+  expect(await screen.findByRole("textbox", { name: "分组名称" })).toHaveValue(
+    "",
+  );
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(methods()).not.toContain("saveEntry");
   expect(methods()).not.toContain("activateGroup");
 });
@@ -488,12 +499,14 @@ it("stacks two MCP groups for one Agent instead of replacing the first", async (
     }),
   ).toBeInTheDocument();
 });
-it("整张 MCP 分组卡片可点：点卡片打开编辑分组，不再有铅笔按钮", async () => {
+it("整张 MCP 分组卡片可点：点卡片在页内展开编辑，不再有铅笔按钮", async () => {
   status.groups = [{ ...group, id: "g1", name: "开发", entryIds: ["one"] }];
   await open();
   fireEvent.click(screen.getByRole("button", { name: "编辑 开发" }));
-  const dialog = await screen.findByRole("dialog");
-  expect(within(dialog).getByLabelText("分组名称")).toHaveValue("开发");
-  fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+  expect(await screen.findByLabelText("分组名称")).toHaveValue("开发");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "返回" }));
+  expect(
+    await screen.findByRole("button", { name: "编辑 开发" }),
+  ).toBeInTheDocument();
 });

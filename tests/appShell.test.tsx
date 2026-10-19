@@ -186,7 +186,8 @@ it("header search and create actions follow the current page without leaking sea
   expect(screen.queryByText("Dev")).toBeNull();
   fireEvent.click(header.getByRole("button", { name: "新建分组" }));
   expect(screen.getByLabelText("分组名称")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  // 新建在页内展开；没改过就直接返回列表
+  fireEvent.click(screen.getByRole("button", { name: "返回" }));
   fireEvent.click(
     within(screen.getByRole("navigation")).getByRole("button", {
       name: "项目",
@@ -277,19 +278,21 @@ it("uses the header resource toggle to scope the Groups and project pages", asyn
   );
   await user.click(screen.getAllByRole("button", { name: "新建分组" })[0]);
   expect(
-    within(screen.getByRole("dialog")).getByRole("textbox", {
-      name: "搜索 Hub MCP",
-    }),
+    await screen.findByRole("textbox", { name: "搜索 Hub MCP" }),
   ).toBeInTheDocument();
   await user.type(
     screen.getByRole("textbox", { name: "分组名称" }),
     "取消的草稿",
   );
+  // 有未保存的修改：返回要先确认放弃
+  await user.click(screen.getByRole("button", { name: "返回" }));
   await user.click(
-    within(screen.getByRole("dialog")).getByRole("button", { name: "取消" }),
+    await screen.findByRole("button", { name: "放弃修改并离开" }),
   );
   await waitFor(() =>
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    expect(
+      screen.queryByRole("textbox", { name: "分组名称" }),
+    ).not.toBeInTheDocument(),
   );
   await user.click(nav.getByRole("button", { name: "项目" }));
   // 与 Skill 项目同一个入口：点卡片进项目详情

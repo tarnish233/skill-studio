@@ -1,3 +1,4 @@
+import { usePageReset } from "@/components/common/PageReset";
 import {
   SummaryAction,
   SummaryBar,
@@ -15,21 +16,15 @@ import {
 } from "@/lib/mcpAgents";
 import { useSettings } from "@/hooks/useData";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  ArrowLeft,
   ShieldCheck,
   Plug,
-  Pencil,
   Power,
-  FolderOpen,
   PackagePlus,
   PackageMinus,
   Trash2,
-  Play,
-  LogIn,
-  LogOut,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -54,7 +49,16 @@ import {
 import { EmptyState } from "@/components/common/EmptyState";
 import { AgentIcon } from "@/components/common/AgentIcon";
 import { useTarget } from "@/components/targets/TargetProvider";
-import { McpEditor } from "@/components/mcp/McpEditor";
+import {
+  DetailTransition,
+  useDetailAppear,
+} from "@/components/common/DetailTransition";
+import {
+  McpEntryDetail,
+  McpStatusBadges,
+  type McpTestState,
+} from "@/components/mcp/McpEntryDetail";
+import { McpQuickInstall } from "@/components/mcp/McpQuickInstall";
 import { McpBackupsDialog } from "@/components/mcp/McpBackupsDialog";
 import { RemoteMcpPage } from "@/pages/RemoteMcpPage";
 import { mcpRequest } from "@/lib/api/mcp";
@@ -69,31 +73,20 @@ import {
   type McpRemoval,
 } from "@/lib/api/mcpManagement";
 
-export type McpEditorState = { row: McpRow | null };
-type McpPageProps = {
-  editor?: McpEditorState | null;
-  onEditorChange?: (editor: McpEditorState | null) => void;
-};
-export function mcpEditorTitle(editor: McpEditorState) {
-  return editor.row?.managed
-    ? "编辑 MCP"
-    : editor.row
-      ? "管理已有 MCP"
-      : "添加 MCP";
-}
-export function McpPage(props: McpPageProps) {
+/**
+ * MCP Hub：点卡片在页内展开这个服务的整页（连接、接入位置、可直接编辑的服务配置），
+ * 「添加 MCP」同样在页内展开；标题栏与项目、分组详情同一套。
+ */
+export function McpPage() {
   const target = useTarget();
   if (target.id !== "local") return <RemoteMcpPage key={target.id} />;
   return (
     <NavigationGuard>
-      <LocalMcpPage {...props} />
+      <LocalMcpPage />
     </NavigationGuard>
   );
 }
-function LocalMcpPage({
-  editor: controlledEditor,
-  onEditorChange,
-}: McpPageProps) {
+function LocalMcpPage() {
   const requestNavigation = useNavigationGuard();
   const { data: settings } = useSettings();
   const visibleMcpAgents = MCP_AGENTS.filter(
@@ -129,11 +122,19 @@ function LocalMcpPage({
   }, [filter, settings?.disabledAgents]);
   /** 右侧开关：只看已托管的，和左侧筛选叠加 */
   const [managedOnly, setManagedOnly] = useState(false);
-  const [localEditor, setLocalEditor] = useState<McpEditorState | null>(null);
-  const editor =
-    controlledEditor === undefined ? localEditor : controlledEditor;
-  const setEditor = onEditorChange ?? setLocalEditor;
-  const [detailId, setDetailId] = useState<string | null>(null);
+  /** 展开的整页：id 为 null 是「添加 MCP」；key 区分每次打开 */
+  const [detail, setDetail] = useState<{
+    key: number;
+    id: string | null;
+  } | null>(null);
+  const sessions = useRef(0);
+  usePageReset(() => setDetail(null));
+  const appear = useDetailAppear();
+  const open = (id: string | null) =>
+    requestNavigation(() => setDetail({ key: ++sessions.current, id }));
+  /** 操作完成后转到某个服务的整页；已经在这一页就不动 */
+  const show = (id: string) =>
+    setDetail((d) => (d?.id === id ? d : { key: ++sessions.current, id }));
   const [remove, setRemove] = useState<McpRow | null>(null);
   const [adopt, setAdopt] = useState<McpRow | null>(null);
   const [restore, setRestore] = useState(true);
@@ -157,9 +158,14 @@ function LocalMcpPage({
     JSON.stringify({ mode: entry.mode, definition: entry.definition });
   const [backupsOpen, setBackupsOpen] = useState(false);
   const backups = [...(status.data?.backups ?? [])].reverse();
-  const detail = catalog.find((r) => r.entry.id === detailId);
-  const detailUsesSse =
-    detail?.entry.mode === "direct" && detail.entry.definition.type === "sse";
+  const detailRow = detail?.id
+    ? catalog.find((r) => r.entry.id === detail.id)
+    : undefined;
+  /** 只认对当前配置做的测试：改过配置后旧结果不再显示 */
+  const testFor = (row: McpRow): McpTestState | undefined =>
+    lastTest[row.entry.id]?.signature === signature(row.entry)
+      ? lastTest[row.entry.id]
+      : undefined;
   const hasAgent = (row: McpRow, agent: string) =>
     row.entry.bindings.some((b) => b.agent === agent) ||
     row.sources.some((s) => s.agent === agent);
@@ -320,7 +326,7 @@ function LocalMcpPage({
           setAuthRequired((ids) =>
             ids.filter((id) => id !== pendingLogin.entry.id),
           );
-          setDetailId(pendingLogin.entry.id);
+          show(pendingLogin.entry.id);
           toast.success("登录成功，正在测试连接");
           void run(() => runtime(pendingLogin.entry, "test"));
           return;
@@ -352,523 +358,34 @@ function LocalMcpPage({
     // The monitor belongs to this specific login attempt, not render-time callbacks.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingLogin]);
-  function saved(entry: ManagedMcp, result?: McpInstallResult) {
-    setEditor(null);
-    setQuery("");
-    setFilter(null);
-    void status.refetch();
-    if (result?.setupError) {
+  /** 保存之后转到（或留在）这个服务的整页：新添加的可以接着测试、登录 */
+  async function saved(entry: ManagedMcp, result?: McpInstallResult) {
+    // 编辑的是 Hub 里已有的这一个；否则是新添加的，或从原有配置另存的
+    const edited = detail?.id === entry.id && !!detailRow?.managed;
+    if (!edited) {
+      setQuery("");
+      setFilter(null);
+    }
+    await status.refetch();
+    show(entry.id);
+    if (result?.setupError)
       toast.warning(`配置已保存，连接设置尚未完成：${result.setupError}`);
-      setDetailId(entry.id);
-    } else if (result?.loginUrl) {
+    else if (result?.loginUrl) {
       toast.success("已安装，请在浏览器完成登录");
       setLoginUrl(result.loginUrl);
-    } else {
+    } else if (!edited) toast.success("已添加到 MCP Hub");
+    else
       toast.success(
         result?.installed === false
-          ? "已添加到 MCP Hub"
+          ? "已保存到 MCP Hub"
           : entry.mode === "gateway" && !running && !result?.gatewayStarted
-            ? "已保存并应用，使用前请开启网关"
-            : "已保存并应用，请在 Agent 中重新加载 MCP",
+            ? "已保存并同步接入，使用前请开启网关"
+            : "已保存并同步接入，请在 Agent 中重新加载 MCP",
       );
-      if (result?.installed !== false && entry.mode === "gateway")
-        setDetailId(entry.id);
-    }
   }
 
-  if (editor)
-    return (
-      <div className="flex min-h-0 flex-1 flex-col">
-        {!onEditorChange && (
-          <header className="flex items-center gap-3 py-4">
-            <Button
-              variant="outline"
-              size="icon"
-              aria-label="返回"
-              onClick={() => requestNavigation(() => setEditor(null))}
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-            <h1 className="text-xl font-semibold">{mcpEditorTitle(editor)}</h1>
-          </header>
-        )}
-        <McpEditor
-          row={editor.row}
-          onClose={() => setEditor(null)}
-          onSaved={saved}
-        />
-      </div>
-    );
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <PageTools
-        query={query}
-        onQueryChange={setQuery}
-        placeholder="按名称或地址搜索 MCP…"
-        createLabel="添加 MCP"
-        onCreate={() => setEditor({ row: null })}
-      />
-      <SummaryBar>
-        <SummaryFilter
-          label="筛选 MCP"
-          total={counted.length}
-          options={[
-            ...visibleMcpAgents.map((a) =>
-              agentOption({
-                id: a.id,
-                label: a.name,
-                iconId: a.appId,
-                count: count(a.id),
-                title: `筛选 ${a.name} 已配置的 MCP`,
-              }),
-            ),
-            {
-              id: "gateway",
-              label: "网关连接",
-              count: count("gateway"),
-              title: "网关连接：托管后经 Studio 网关连接的 MCP",
-            },
-          ]}
-          selected={activeFilter}
-          onSelect={setFilter}
-        />
-        <SummaryEnd>
-          <SummaryToggle
-            pressed={managedOnly}
-            onClick={() => setManagedOnly((v) => !v)}
-            title={`已托管：已纳入 Studio 托管的 MCP，共 ${managedRows.length} 个。点击只看这些，可与左侧的筛选叠加。`}
-          >
-            已托管 {managedRows.length}
-          </SummaryToggle>
-          <SummaryAction
-            onClick={() => setBackupsOpen(true)}
-            title={`已备份：Studio 每次写入 MCP 配置前留下的备份，共 ${backups.length} 次。点击查看，可恢复或删除`}
-          >
-            已备份 {backups.length}
-          </SummaryAction>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={`${summaryPillClass} border-transparent`}
-            aria-label="MCP 网关"
-            aria-pressed={running}
-            title={running ? "点击关闭网关" : "点击开启网关"}
-            disabled={busy || status.isLoading || !!status.error}
-            onClick={() =>
-              void run(async () => {
-                await mcpRequest(running ? "stop" : "start");
-                toast.success(running ? "网关已关闭" : "网关已开启");
-              })
-            }
-          >
-            <span
-              className={`h-2 w-2 rounded-full ${running ? "bg-emerald-500" : "bg-muted-foreground"}`}
-            />
-            {running ? "网关已开启" : "网关已关闭"}
-            <Power className="h-4 w-4" />
-          </Button>
-        </SummaryEnd>
-      </SummaryBar>
-      {status.data?.gatewayOutdated && (
-        <p
-          role="status"
-          className="mb-3 text-sm text-amber-600 dark:text-amber-400"
-        >
-          后台网关仍是旧版本，请关闭后重新开启，以应用新的连接配置。直连管理不受影响。
-        </p>
-      )}
-      {status.isLoading && (
-        <p className="py-6 text-sm text-muted-foreground">正在扫描 MCP 配置…</p>
-      )}
-      {status.error && (
-        <p role="alert" className="text-destructive">
-          {String(status.error)}
-        </p>
-      )}
-      {!!status.data?.scanWarnings?.length && (
-        <details className="mb-3 rounded-lg border border-amber-500/30 p-3 text-sm">
-          <summary className="cursor-pointer">
-            部分配置未能扫描（{status.data.scanWarnings.length}）
-          </summary>
-          {status.data.scanWarnings.map((warning) => (
-            <p
-              key={warning}
-              className="mt-2 break-all text-xs text-muted-foreground"
-            >
-              {warning}
-            </p>
-          ))}
-        </details>
-      )}
-      <div className="min-h-0 flex-1 overflow-y-auto pb-6">
-        {!status.isLoading &&
-          !status.error &&
-          !catalog.length &&
-          !builtinServices.length && (
-            <EmptyState
-              icon={Plug}
-              title={
-                allRows.length
-                  ? "当前 Agent 选择下没有可显示的 MCP"
-                  : "MCP Hub 还没有发现服务"
-              }
-              description={
-                allRows.length
-                  ? "可在设置中开启其他 Agent，或添加服务到 Hub。"
-                  : "已扫描支持的 Agent 全局和已登记项目配置。点击添加 MCP，粘贴安装命令、网址或配置即可添加到 Hub，再到 Agent 或项目页面启用。"
-              }
-            />
-          )}
-        <ListContainer cards>
-          {filtered.map((row) => (
-            <ListItemRow
-              key={row.entry.id}
-              card
-              onPreview={() => setDetailId(row.entry.id)}
-              previewLabel={`查看 ${row.entry.name}`}
-            >
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="truncate text-sm font-medium">
-                    {row.entry.name}
-                  </span>
-                  <Badge variant="outline">
-                    {row.managed
-                      ? row.entry.mode === "direct"
-                        ? "Agent 直连"
-                        : "Studio 网关"
-                      : "原有配置"}
-                  </Badge>
-                  {row.managed && (
-                    <Badge
-                      variant="outline"
-                      className="h-4 border-blue-200 bg-blue-50 px-1.5 text-[10px] text-blue-600 dark:border-blue-800 dark:bg-blue-950/50 dark:text-blue-400"
-                    >
-                      托管中
-                    </Badge>
-                  )}
-                  {lastTest[row.entry.id]?.signature ===
-                    signature(row.entry) && (
-                    <Badge
-                      title={`本次启动后的测试：${new Date(lastTest[row.entry.id].at).toLocaleString()}`}
-                      variant={
-                        lastTest[row.entry.id].status === "ok"
-                          ? "success"
-                          : "warning"
-                      }
-                    >
-                      {lastTest[row.entry.id].status === "ok"
-                        ? "本机连接已验证"
-                        : lastTest[row.entry.id].status === "auth"
-                          ? "需要登录"
-                          : "最近测试失败"}
-                    </Badge>
-                  )}
-                  {row.entry.mode === "gateway" &&
-                    (row.authorized ||
-                      row.authRequired ||
-                      authRequired.includes(row.entry.id)) && (
-                      <Badge variant="outline">
-                        {row.authRequired || authRequired.includes(row.entry.id)
-                          ? "待授权"
-                          : row.authorized
-                            ? "已授权"
-                            : running
-                              ? "待授权"
-                              : "授权待检查"}
-                      </Badge>
-                    )}
-                  {visibleMcpAgents
-                    .map((a) => a.id)
-                    .filter((a) => hasAgent(row, a))
-                    .map((agent) => (
-                      <span
-                        key={agent}
-                        title={`${mcpAgentName(agent)} 中已配置`}
-                      >
-                        <AgentIcon agentId={mcpAppId(agent)} size="sm" />
-                      </span>
-                    ))}
-                </div>
-                <p className="truncate pt-0.5 text-xs text-muted-foreground">
-                  {String(
-                    row.entry.definition.url ??
-                      row.entry.definition.command ??
-                      "点击查看配置来源",
-                  )}
-                </p>
-              </div>
-              <RowActions busy={busy}>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  title="查看来源与托管记录"
-                  aria-label={`查看 ${row.entry.name} 的来源`}
-                  disabled={busy}
-                  onClick={() => setDetailId(row.entry.id)}
-                >
-                  <FolderOpen className="h-4 w-4" />
-                </Button>
-                {row.managed ? (
-                  <>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      disabled={busy}
-                      title="编辑服务配置"
-                      aria-label={`编辑 ${row.entry.name}`}
-                      onClick={() => setEditor({ row })}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    {row.entry.bindings.some(
-                      (binding) => binding.original !== null,
-                    ) && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        disabled={busy}
-                        title="移出 Hub 并还原"
-                        aria-label={`还原 ${row.entry.name} 到原位置`}
-                        onClick={() => {
-                          setRemove(row);
-                          setRestore(true);
-                        }}
-                      >
-                        <PackageMinus className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </>
-                ) : (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    disabled={
-                      busy || row.sources.some((source) => source.gateway)
-                    }
-                    title="托管到 Hub"
-                    aria-label={`托管 ${row.entry.name} 到 Hub`}
-                    onClick={() => setAdopt(row)}
-                  >
-                    <PackagePlus className="h-4 w-4" />
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  title="删除 MCP"
-                  aria-label={`删除 ${row.entry.name}`}
-                  disabled={
-                    busy ||
-                    (!row.managed &&
-                      row.sources.some((source) => source.gateway))
-                  }
-                  onClick={() => {
-                    setRemove(row);
-                    setRestore(false);
-                  }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </RowActions>
-            </ListItemRow>
-          ))}
-          {builtinServices.map((service) => (
-            <ListItemRow
-              key={`builtin:${service.path}:${service.scope}:${service.name}`}
-              card
-              className="cursor-default bg-muted/40 text-muted-foreground hover:bg-muted/40"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="truncate text-sm font-medium">
-                    {service.name}
-                  </span>
-                  <Badge
-                    variant="outline"
-                    className="gap-1 border-border-default bg-muted text-muted-foreground"
-                  >
-                    <ShieldCheck className="h-4 w-4" />
-                    Codex 内置
-                  </Badge>
-                  <Badge variant="outline" className="text-muted-foreground">
-                    只读
-                  </Badge>
-                  <AgentIcon
-                    agentId="codex"
-                    size="sm"
-                    className="grayscale opacity-60"
-                  />
-                </div>
-                <p className="pt-0.5 text-xs">
-                  由 Codex App 管理 · 不支持操作 · 不计入 MCP 数量
-                </p>
-                <p className="truncate pt-0.5 text-xs" title={service.path}>
-                  {service.scope} · {service.path}
-                </p>
-              </div>
-            </ListItemRow>
-          ))}
-        </ListContainer>
-        {!!catalog.length && !filtered.length && !builtinServices.length && (
-          <p className="py-6 text-center text-sm text-muted-foreground">
-            没有匹配的 MCP
-          </p>
-        )}
-      </div>
-      <Dialog
-        open={!!detail}
-        onOpenChange={(open) => !open && setDetailId(null)}
-      >
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{detail?.entry.name} · 连接详情</DialogTitle>
-          </DialogHeader>
-          {detail && (
-            <div className="min-h-0 space-y-4 overflow-y-auto px-6 pb-6">
-              <p className="text-sm text-muted-foreground">
-                {detail.entry.mode === "gateway"
-                  ? "由 Studio 网关连接服务，授权由 Studio 管理。"
-                  : "由 Agent 直接连接服务，登录和运行状态由各 Agent 管理。"}
-              </p>
-              {detail.managed && (
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="outline"
-                    disabled={busy || detailUsesSse}
-                    onClick={() =>
-                      void run(() =>
-                        detail.entry.mode === "gateway"
-                          ? runtime(detail.entry, "test")
-                          : testDirect(detail.entry),
-                      )
-                    }
-                  >
-                    <Play className="h-4 w-4" />
-                    {detail.entry.mode === "direct" || running
-                      ? "测试连接"
-                      : "启动并测试"}
-                  </Button>
-                  {detail.entry.mode === "gateway" && (
-                    <>
-                      {detail.entry.definition.type !== "stdio" &&
-                        (detail.authorized ||
-                          detail.authRequired ||
-                          authRequired.includes(detail.entry.id)) && (
-                          <Button
-                            variant="outline"
-                            disabled={busy}
-                            onClick={() =>
-                              void run(() => runtime(detail.entry, "login"))
-                            }
-                          >
-                            <LogIn className="h-4 w-4" />
-                            {running ? "登录授权" : "启动并授权"}
-                          </Button>
-                        )}
-                      {detail.authorized && (
-                        <Button
-                          variant="ghost"
-                          disabled={busy || !running}
-                          onClick={() =>
-                            void run(async () => {
-                              await mcpRequest("logout", {
-                                id: detail.entry.id,
-                              });
-                              toast.success("已清除本地授权");
-                            })
-                          }
-                        >
-                          <LogOut className="h-4 w-4" />
-                          清除授权
-                        </Button>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-              {detail.entry.mode === "direct" && (
-                <p className="text-xs text-muted-foreground">
-                  {detailUsesSse
-                    ? "SSE 服务请在 Agent 中测试连接，Studio 暂不支持此类型的本机测试。"
-                    : "本机测试只验证服务握手和工具列表；Agent 是否已重新加载及其登录状态仍需在 Agent 中确认。"}
-                </p>
-              )}
-              {!!detail.entry.bindings.length && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium">Studio 管理的接入</h3>
-                  {detail.entry.bindings.map((b) => (
-                    <div
-                      key={b.id}
-                      className="rounded-lg border border-border-default p-3"
-                    >
-                      <p className="text-sm">
-                        {mcpAgentName(b.agent)} ·{" "}
-                        {detail.entry.mode === "gateway" ? "网关" : "直连"}
-                      </p>
-                      <p className="break-all text-xs text-muted-foreground">
-                        {b.path} · {b.key}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {!!detail.sources.length && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium">扫描到的配置来源</h3>
-                  {detail.sources.map((s) => (
-                    <div
-                      key={s.id}
-                      className="rounded-lg border border-border-default p-3"
-                    >
-                      <p className="text-sm">
-                        {mcpAgentName(s.agent)} · {s.scope}
-                      </p>
-                      <p className="break-all text-xs text-muted-foreground">
-                        {s.path} · {s.key}
-                      </p>
-                      {s.projectOverrides?.map((override) => (
-                        <p
-                          key={`${override.path}:${override.key}`}
-                          className="mt-2 break-all text-xs text-muted-foreground"
-                        >
-                          {override.scope}
-                          {override.enabled === false
-                            ? " · 已停用"
-                            : override.enabled
-                              ? " · 已启用"
-                              : ""}
-                          {" · 项目级覆盖"}
-                          <span className="block">
-                            {override.path} · {override.key}
-                          </span>
-                        </p>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              )}
-              <Button
-                disabled={
-                  busy ||
-                  (!detail.managed && detail.sources.some((s) => s.gateway))
-                }
-                onClick={() => {
-                  setEditor({ row: detail });
-                  setDetailId(null);
-                }}
-              >
-                {detail.managed ? "编辑服务配置" : "管理此 MCP"}
-              </Button>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+  const dialogs = (
+    <>
       <ConfirmDialog
         open={!!adopt}
         onOpenChange={(open) => !open && !busy && setAdopt(null)}
@@ -880,8 +397,9 @@ function LocalMcpPage({
         onConfirm={() =>
           adopt &&
           void run(async () => {
+            const id = crypto.randomUUID();
             await mcpRequest("saveEntry", {
-              entry: { ...adopt.entry, id: crypto.randomUUID() },
+              entry: { ...adopt.entry, id },
               expectedEntry: null,
               bindingIds: [],
               sources: adopt.sources.map((source) => ({
@@ -894,6 +412,10 @@ function LocalMcpPage({
             });
             setAdopt(null);
             setFilter(null);
+            if (detail?.id === adopt.entry.id) {
+              await status.refetch();
+              show(id);
+            }
             toast.success("已托管到 MCP Hub");
           })
         }
@@ -1009,6 +531,322 @@ function LocalMcpPage({
           </div>
         </DialogContent>
       </Dialog>
+    </>
+  );
+  const pageTools = (
+    <PageTools
+      query={query}
+      onQueryChange={(v) =>
+        requestNavigation(() => {
+          setQuery(v);
+          setDetail(null);
+        })
+      }
+      placeholder="按名称或地址搜索 MCP…"
+      createLabel="添加 MCP"
+      onCreate={() => open(null)}
+    />
+  );
+  const back = () => requestNavigation(() => setDetail(null));
+  if (detail && (detail.id === null || detailRow))
+    return (
+      <>
+        {pageTools}
+        <DetailTransition key={detail.key} appear={appear}>
+          {detailRow ? (
+            <McpEntryDetail
+              row={detailRow}
+              running={running}
+              busy={busy}
+              authPending={authRequired.includes(detailRow.entry.id)}
+              test={testFor(detailRow)}
+              onBack={back}
+              onTest={() =>
+                void run(() =>
+                  detailRow.entry.mode === "gateway"
+                    ? runtime(detailRow.entry, "test")
+                    : testDirect(detailRow.entry),
+                )
+              }
+              onLogin={() => void run(() => runtime(detailRow.entry, "login"))}
+              onLogout={() =>
+                void run(async () => {
+                  await mcpRequest("logout", { id: detailRow.entry.id });
+                  toast.success("已清除本地授权");
+                })
+              }
+              onAdopt={() => setAdopt(detailRow)}
+              onSaved={(entry, result) => void saved(entry, result)}
+            />
+          ) : (
+            <McpQuickInstall
+              onBack={back}
+              onSaved={(entry, result) => void saved(entry, result)}
+            />
+          )}
+        </DetailTransition>
+        {dialogs}
+      </>
+    );
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {pageTools}
+      <DetailTransition appear={appear}>
+        <SummaryBar>
+          <SummaryFilter
+            label="筛选 MCP"
+            total={counted.length}
+            options={[
+              ...visibleMcpAgents.map((a) =>
+                agentOption({
+                  id: a.id,
+                  label: a.name,
+                  iconId: a.appId,
+                  count: count(a.id),
+                  title: `筛选 ${a.name} 已配置的 MCP`,
+                }),
+              ),
+              {
+                id: "gateway",
+                label: "网关连接",
+                count: count("gateway"),
+                title: "网关连接：托管后经 Studio 网关连接的 MCP",
+              },
+            ]}
+            selected={activeFilter}
+            onSelect={setFilter}
+          />
+          <SummaryEnd>
+            <SummaryToggle
+              pressed={managedOnly}
+              onClick={() => setManagedOnly((v) => !v)}
+              title={`已托管：已纳入 Studio 托管的 MCP，共 ${managedRows.length} 个。点击只看这些，可与左侧的筛选叠加。`}
+            >
+              已托管 {managedRows.length}
+            </SummaryToggle>
+            <SummaryAction
+              onClick={() => setBackupsOpen(true)}
+              title={`已备份：Studio 每次写入 MCP 配置前留下的备份，共 ${backups.length} 次。点击查看，可恢复或删除`}
+            >
+              已备份 {backups.length}
+            </SummaryAction>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={`${summaryPillClass} border-transparent`}
+              aria-label="MCP 网关"
+              aria-pressed={running}
+              title={running ? "点击关闭网关" : "点击开启网关"}
+              disabled={busy || status.isLoading || !!status.error}
+              onClick={() =>
+                void run(async () => {
+                  await mcpRequest(running ? "stop" : "start");
+                  toast.success(running ? "网关已关闭" : "网关已开启");
+                })
+              }
+            >
+              <span
+                className={`h-2 w-2 rounded-full ${running ? "bg-emerald-500" : "bg-muted-foreground"}`}
+              />
+              {running ? "网关已开启" : "网关已关闭"}
+              <Power className="h-4 w-4" />
+            </Button>
+          </SummaryEnd>
+        </SummaryBar>
+        {status.data?.gatewayOutdated && (
+          <p
+            role="status"
+            className="mb-3 text-sm text-amber-600 dark:text-amber-400"
+          >
+            后台网关仍是旧版本，请关闭后重新开启，以应用新的连接配置。直连管理不受影响。
+          </p>
+        )}
+        {status.isLoading && (
+          <p className="py-6 text-sm text-muted-foreground">
+            正在扫描 MCP 配置…
+          </p>
+        )}
+        {status.error && (
+          <p role="alert" className="text-destructive">
+            {String(status.error)}
+          </p>
+        )}
+        {!!status.data?.scanWarnings?.length && (
+          <details className="mb-3 rounded-lg border border-amber-500/30 p-3 text-sm">
+            <summary className="cursor-pointer">
+              部分配置未能扫描（{status.data.scanWarnings.length}）
+            </summary>
+            {status.data.scanWarnings.map((warning) => (
+              <p
+                key={warning}
+                className="mt-2 break-all text-xs text-muted-foreground"
+              >
+                {warning}
+              </p>
+            ))}
+          </details>
+        )}
+        <div className="min-h-0 flex-1 overflow-y-auto pb-6">
+          {!status.isLoading &&
+            !status.error &&
+            !catalog.length &&
+            !builtinServices.length && (
+              <EmptyState
+                icon={Plug}
+                title={
+                  allRows.length
+                    ? "当前 Agent 选择下没有可显示的 MCP"
+                    : "MCP Hub 还没有发现服务"
+                }
+                description={
+                  allRows.length
+                    ? "可在设置中开启其他 Agent，或添加服务到 Hub。"
+                    : "已扫描支持的 Agent 全局和已登记项目配置。点击添加 MCP，粘贴安装命令、网址或配置即可添加到 Hub，再到 Agent 或项目页面启用。"
+                }
+              />
+            )}
+          <ListContainer cards>
+            {filtered.map((row) => (
+              <ListItemRow
+                key={row.entry.id}
+                card
+                onPreview={() => open(row.entry.id)}
+                previewLabel={`编辑 ${row.entry.name}`}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="truncate text-sm font-medium">
+                      {row.entry.name}
+                    </span>
+                    <McpStatusBadges
+                      row={row}
+                      test={testFor(row)}
+                      authPending={authRequired.includes(row.entry.id)}
+                      running={running}
+                    />
+                    {visibleMcpAgents
+                      .map((a) => a.id)
+                      .filter((a) => hasAgent(row, a))
+                      .map((agent) => (
+                        <span
+                          key={agent}
+                          title={`${mcpAgentName(agent)} 中已配置`}
+                        >
+                          <AgentIcon agentId={mcpAppId(agent)} size="sm" />
+                        </span>
+                      ))}
+                  </div>
+                  <p className="truncate pt-0.5 text-xs text-muted-foreground">
+                    {String(
+                      row.entry.definition.url ??
+                        row.entry.definition.command ??
+                        "点击查看配置来源",
+                    )}
+                  </p>
+                </div>
+                <RowActions busy={busy}>
+                  {row.managed ? (
+                    <>
+                      {row.entry.bindings.some(
+                        (binding) => binding.original !== null,
+                      ) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          disabled={busy}
+                          title="移出 Hub 并还原"
+                          aria-label={`还原 ${row.entry.name} 到原位置`}
+                          onClick={() => {
+                            setRemove(row);
+                            setRestore(true);
+                          }}
+                        >
+                          <PackageMinus className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      disabled={
+                        busy || row.sources.some((source) => source.gateway)
+                      }
+                      title="托管到 Hub"
+                      aria-label={`托管 ${row.entry.name} 到 Hub`}
+                      onClick={() => setAdopt(row)}
+                    >
+                      <PackagePlus className="h-4 w-4" />
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    title="删除 MCP"
+                    aria-label={`删除 ${row.entry.name}`}
+                    disabled={
+                      busy ||
+                      (!row.managed &&
+                        row.sources.some((source) => source.gateway))
+                    }
+                    onClick={() => {
+                      setRemove(row);
+                      setRestore(false);
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </RowActions>
+              </ListItemRow>
+            ))}
+            {builtinServices.map((service) => (
+              <ListItemRow
+                key={`builtin:${service.path}:${service.scope}:${service.name}`}
+                card
+                className="cursor-default bg-muted/40 text-muted-foreground hover:bg-muted/40"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="truncate text-sm font-medium">
+                      {service.name}
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className="gap-1 border-border-default bg-muted text-muted-foreground"
+                    >
+                      <ShieldCheck className="h-4 w-4" />
+                      Codex 内置
+                    </Badge>
+                    <Badge variant="outline" className="text-muted-foreground">
+                      只读
+                    </Badge>
+                    <AgentIcon
+                      agentId="codex"
+                      size="sm"
+                      className="grayscale opacity-60"
+                    />
+                  </div>
+                  <p className="pt-0.5 text-xs">
+                    由 Codex App 管理 · 不支持操作 · 不计入 MCP 数量
+                  </p>
+                  <p className="truncate pt-0.5 text-xs" title={service.path}>
+                    {service.scope} · {service.path}
+                  </p>
+                </div>
+              </ListItemRow>
+            ))}
+          </ListContainer>
+          {!!catalog.length && !filtered.length && !builtinServices.length && (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              没有匹配的 MCP
+            </p>
+          )}
+        </div>
+      </DetailTransition>
+      {dialogs}
     </div>
   );
 }

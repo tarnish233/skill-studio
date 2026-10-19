@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { usePageReset } from "@/components/common/PageReset";
 import { useQuery } from "@tanstack/react-query";
 import { FolderOpen } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -122,6 +123,7 @@ function McpProjectsContent() {
   const viewAgent = mcpAgents.find((a) => a.id === viewAgentId);
   const [query, setQuery] = useState("");
   const [detail, setDetail] = useState<string | null>(null);
+  usePageReset(() => setDetail(null));
   const appear = useDetailAppear();
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<ProjectBinding | null>(null);

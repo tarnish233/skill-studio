@@ -494,8 +494,14 @@ describe.each([skillBoard, mcpBoard])("$name 项目页", (board) => {
     });
     expect(screen.getByRole("button", { name: "打开项目目录" })).toBeVisible();
     fireEvent.click(screen.getByRole("checkbox", { name: board.extra }));
-    // 有未保存的修改时先保存，Agent 图标暂时不能点
-    expect(toggle).toBeDisabled();
+    // 有未保存的修改时先保存，Agent 图标暂时不能点，悬停说明原因
+    expect(toggle).toHaveAttribute("aria-disabled", "true");
+    fireEvent.focus(toggle);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "先保存修改，再为 Agent 启停",
+    );
+    fireEvent.click(toggle);
+    expect(board.writes()).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() => expect(board.writes()).toEqual([board.saved]));
     await waitFor(() =>

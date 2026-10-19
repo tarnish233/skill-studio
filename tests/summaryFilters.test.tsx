@@ -352,8 +352,8 @@ it("MCP Hub：同一套「全部」筛选，再点一次已选中的 Agent 回�
     total: 2,
     option: "Codex 1",
     narrowed: () =>
-      expect(screen.queryByRole("button", { name: "查看 alpha" })).toBeNull(),
-    restored: () => screen.findByRole("button", { name: "查看 alpha" }),
+      expect(screen.queryByRole("button", { name: "编辑 alpha" })).toBeNull(),
+    restored: () => screen.findByRole("button", { name: "编辑 alpha" }),
   });
   expectStats("筛选 MCP", ["已托管 2", "已备份 0", "网关已关闭"]);
 });
@@ -476,9 +476,9 @@ it("MCP Hub：「已托管」同样移到右侧，开着时只看托管的，内
   fireEvent.click(codex);
   fireEvent.click(managedOnly);
   expect(managedOnly).toHaveAttribute("aria-pressed", "true");
-  expect(screen.getByRole("button", { name: "查看 beta" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "查看 gamma" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "查看 alpha" })).toBeNull();
+  expect(screen.getByRole("button", { name: "编辑 beta" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "编辑 gamma" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "编辑 alpha" })).toBeNull();
   expect(screen.queryByText("node_repl")).toBeNull();
   expect(bar.getByRole("button", { name: "全部 2" })).toBeInTheDocument();
   expect(bar.getByRole("button", { name: "Codex 1" })).toBeInTheDocument();

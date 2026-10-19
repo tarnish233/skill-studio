@@ -36,7 +36,7 @@ export function useGroupRunner(refresh: () => Promise<unknown>) {
     try {
       result = await action();
     } catch (e) {
-      failure = String(e);
+      failure = e instanceof Error ? e.message : String(e);
     }
     try {
       await refresh();

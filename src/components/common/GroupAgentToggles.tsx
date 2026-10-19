@@ -42,6 +42,7 @@ export function GroupAgentToggles({
   groupName,
   agents,
   busy,
+  locked,
   onToggle,
   reapply,
 }: {
@@ -49,6 +50,11 @@ export function GroupAgentToggles({
   agents: AgentToggleState[];
   /** 任一启停或重新应用进行中：整行禁用，不同时发多个切换 */
   busy: boolean;
+  /**
+   * 整行暂时不能操作的原因（如详情里有未保存的修改）：图标仍可聚焦、悬停看原因，
+   * 点击不生效。和 busy 不同，这不是在等待什么，不显示等待光标。
+   */
+  locked?: string;
   onToggle: (agentId: string, activate: boolean) => void;
   reapply?: ReapplyAction;
 }) {
@@ -59,9 +65,9 @@ export function GroupAgentToggles({
         reapply && (
           <AgentRowAction
             label={`${reapply.label}「${groupName}」`}
-            hint={`${reapply.label}：${reapply.targets.join("、")}`}
+            hint={`${reapply.label}：${reapply.targets.join("、")}${locked ? `；${locked}` : ""}`}
             busy={busy}
-            disabled={reapply.disabled}
+            disabled={reapply.disabled || !!locked}
             onClick={reapply.onClick}
           />
         )
@@ -71,18 +77,22 @@ export function GroupAgentToggles({
         const name = `${agent.label}${agent.note ? `（${agent.note}）` : ""}`;
         const blocked = agent.active ? undefined : agent.blocked;
         const where = agent.where ? `；写到 ${agent.where}` : "";
+        const state = agent.attention ?? (agent.active ? "已启用" : "未启用");
         return {
           agentId: agent.agentId,
           label: `为 ${agent.label} ${action}「${groupName}」${agent.note ? `（${agent.note}）` : ""}`,
-          hint: blocked
-            ? `${name}：${blocked}${where}`
-            : `${name}：${agent.attention ?? (agent.active ? "已启用" : "未启用")}，点击${action}${where}`,
+          hint: locked
+            ? `${name}：${state}；${locked}${where}`
+            : blocked
+              ? `${name}：${blocked}${where}`
+              : `${name}：${state}，点击${action}${where}`,
           tone: agent.active ? "on" : "off",
           attention: !!agent.attention,
           dimmed: agent.dimmed,
-          onClick: blocked
-            ? undefined
-            : () => onToggle(agent.agentId, !agent.active),
+          onClick:
+            locked || blocked
+              ? undefined
+              : () => onToggle(agent.agentId, !agent.active),
         };
       })}
     />

@@ -146,7 +146,7 @@ it("maps disabled Claude and new Agents to MCP statistics and clears hidden filt
   );
   fireEvent.click(await sources.findByRole("button", { name: "OpenCode 1" }));
   expect(
-    screen.queryByRole("button", { name: "查看 codex" }),
+    screen.queryByRole("button", { name: "编辑 codex" }),
   ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "隐藏测试应用" }));
   await waitFor(() =>
@@ -161,7 +161,7 @@ it("maps disabled Claude and new Agents to MCP statistics and clears hidden filt
     "aria-pressed",
     "true",
   );
-  expect(screen.getByRole("button", { name: "查看 codex" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "编辑 codex" })).toBeVisible();
 });
 
 it("hides private unmanaged MCPs but keeps shared connections and independent Hub entries", async () => {
@@ -224,26 +224,26 @@ it("hides private unmanaged MCPs but keeps shared connections and independent Hu
     </>,
   );
   expect(
-    await screen.findByRole("button", { name: "查看 Only opencode" }),
+    await screen.findByRole("button", { name: "编辑 Only opencode" }),
   ).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "隐藏测试应用" }));
   await waitFor(() =>
     expect(
-      screen.queryByRole("button", { name: "查看 Only opencode" }),
+      screen.queryByRole("button", { name: "编辑 Only opencode" }),
     ).not.toBeInTheDocument(),
   );
   for (const agent of ["grok", "claude"])
     expect(
-      screen.queryByRole("button", { name: `查看 Only ${agent}` }),
+      screen.queryByRole("button", { name: `编辑 Only ${agent}` }),
     ).not.toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "查看 Shared tools" }),
+    screen.getByRole("button", { name: "编辑 Shared tools" }),
   ).toBeVisible();
-  expect(screen.getByRole("button", { name: "查看 Hub tools" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "编辑 Hub tools" })).toBeVisible();
   expect(screen.getByRole("button", { name: "全部 2" })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "恢复测试应用" }));
   expect(
-    await screen.findByRole("button", { name: "查看 Only opencode" }),
+    await screen.findByRole("button", { name: "编辑 Only opencode" }),
   ).toBeVisible();
   expect(screen.getByRole("button", { name: "全部 5" })).toBeVisible();
 });

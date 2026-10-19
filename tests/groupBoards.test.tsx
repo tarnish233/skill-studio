@@ -34,6 +34,8 @@ interface Options {
   reorderGate?: Promise<void>;
   /** 启停时后端报告原样留下的副本 / 接入；"none" 表示后端什么都没返回 */
   untouched?: boolean | "none";
+  /** 写入 Codex 时后端报错 */
+  activateError?: string;
 }
 interface Board {
   name: string;
@@ -46,6 +48,13 @@ interface Board {
   emptyHub: RegExp;
   reordered(): string[] | undefined;
   activations(): unknown[];
+  /** 保存「前端」（Claude 与 Codex 都在用）后依次写入的两次请求 */
+  savedWrites: unknown[];
+  /** 「Git 工具」里已经不在 Hub 的那个成员，以及去掉它之后剩下的 */
+  missing: string;
+  gitRemaining: string[];
+  /** 最近一次保存的成员 */
+  savedMembers(): string[] | undefined;
   /** 停用时原样留下的那一份，在提示里应出现的字样 */
   untouchedText: string;
 }
@@ -134,6 +143,8 @@ const skillBoard: Board = {
     };
     handlers.set("get_config", () => ({ activeGroups: active }));
     handlers.set("activate_agent_group", ({ agentId, groupIds }) => {
+      if (o.activateError && agentId === "codex")
+        throw new Error(o.activateError);
       active = {
         ...active,
         [agentId]: (groupIds as string[]).map((groupId) => ({
@@ -182,6 +193,17 @@ const skillBoard: Board = {
   issue: "yuque 已被手动停用",
   emptyHub: /Skill Hub 暂无 skill/,
   untouchedText: "frontend-design（副本已被修改）",
+  savedWrites: [
+    { agentId: "claude-code", groupIds: ["g1"] },
+    { agentId: "codex", groupIds: ["g1", "g2"] },
+  ],
+  missing: "s-gone",
+  gitRemaining: ["s4"],
+  savedMembers: () =>
+    (
+      calls.filter((c) => c.command === "save_group").at(-1)?.args as
+        { skillIds: string[] } | undefined
+    )?.skillIds,
   reordered: () =>
     (
       calls.find((c) => c.command === "reorder_groups")?.args as
@@ -276,6 +298,8 @@ const mcpBoard: Board = {
     handlers.set("mcp_request", ({ method, params }) => {
       if (method === "list") return listed(o.list, status);
       if (method === "activateGroup") {
+        if (o.activateError && params.agent === "codex")
+          throw new Error(o.activateError);
         const ids = params.ids as string[];
         status = {
           ...status,
@@ -336,6 +360,15 @@ const mcpBoard: Board = {
   issue: "context7",
   emptyHub: /MCP Hub 暂无服务/,
   untouchedText: "Claude Code（/home/u/.claude.json）里的「hf-mcp-server」",
+  savedWrites: [
+    { agent: "claude", ids: ["g1"] },
+    { agent: "codex", ids: ["g1", "g2"] },
+  ],
+  missing: "gone",
+  gitRemaining: ["work"],
+  savedMembers: () =>
+    (mcpCalls("saveGroup").at(-1)?.group as { entryIds: string[] } | undefined)
+      ?.entryIds,
   reordered: () => mcpCalls("reorderGroups")[0]?.ids as string[] | undefined,
   activations: () => mcpCalls("activateGroup"),
 };
@@ -361,7 +394,7 @@ describe.each([skillBoard, mcpBoard])("$name 分组页", (board) => {
     await screen.findByRole("button", { name: "编辑 前端" });
   }
 
-  it("工具栏、卡片和弹窗用同一套文案", async () => {
+  it("工具栏、卡片和整页编辑用同一套文案", async () => {
     await open();
     expect(
       screen.getByRole("textbox", { name: "搜索分组…" }),
@@ -371,11 +404,15 @@ describe.each([skillBoard, mcpBoard])("$name 分组页", (board) => {
       screen.getByRole("button", { name: "拖拽排序 前端" }),
     ).toHaveAttribute("title", "拖拽排序（也可按空格后用方向键移动）");
     fireEvent.click(card("前端"));
-    const dialog = await screen.findByRole("dialog", { name: "编辑分组" });
+    // 在页内展开整页编辑，不是弹窗
     expect(
-      within(dialog).getByRole("textbox", { name: "分组名称" }),
+      await screen.findByRole("textbox", { name: "分组名称" }),
     ).toHaveAttribute("placeholder", "例如：前端开发");
-    expect(dialog).toHaveTextContent("已选 2 个");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      screen.getByRole("heading", { name: /^选择 \S+ · 已选 2 个$/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "返回" })).toBeInTheDocument();
   });
 
   it("读取中显示「正在读取分组…」，不会先显示没有分组", async () => {
@@ -402,8 +439,8 @@ describe.each([skillBoard, mcpBoard])("$name 分组页", (board) => {
     expect(create).toHaveLength(2);
     fireEvent.click(create[1]);
     expect(
-      await screen.findByRole("dialog", { name: "新建分组" }),
-    ).toBeInTheDocument();
+      await screen.findByRole("textbox", { name: "分组名称" }),
+    ).toHaveValue("");
   });
 
   it("成员已缺失时卡片标出，Agent 图标不能启用并说明原因", async () => {
@@ -543,29 +580,147 @@ describe.each([skillBoard, mcpBoard])("$name 分组页", (board) => {
     expect(failure).not.toHaveBeenCalled();
   });
 
-  it("编辑时已选的成员排在最前；保存出错只在弹窗里说明", async () => {
+  it("编辑时已选的成员排在最前；保存出错写在标题栏下方，修改保留", async () => {
     await open({ saveError: "已存在同名分组" });
     fireEvent.click(card("前端"));
-    const dialog = await screen.findByRole("dialog", { name: "编辑分组" });
-    const boxes = within(dialog).getAllByRole("checkbox");
+    const boxes = await screen.findAllByRole("checkbox");
     expect(
       boxes.slice(0, 2).map((box) => box.getAttribute("aria-label")),
-    ).toEqual(board.members.map((m) => `选择 ${m}`));
+    ).toEqual(board.members);
     expect(boxes[0]).toBeChecked();
     expect(boxes[1]).toBeChecked();
     expect(boxes[2]).not.toBeChecked();
-    fireEvent.click(within(dialog).getByRole("button", { name: "保存" }));
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "已存在同名分组",
+    fireEvent.click(boxes[2]);
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "保存失败，修改已保留：已存在同名分组",
     );
     expect(failure).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("checkbox")[2]).toBeChecked();
+    expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
   });
 
-  it("Hub 里还没有内容时，新建弹窗说明要先添加", async () => {
+  it("Hub 里还没有内容时，新建时说明要先添加", async () => {
     await open({ emptyHub: true });
     fireEvent.click(screen.getByRole("button", { name: "新建分组" }));
-    const dialog = await screen.findByRole("dialog", { name: "新建分组" });
-    expect(dialog).toHaveTextContent(board.emptyHub);
+    expect(await screen.findByText(board.emptyHub)).toBeInTheDocument();
+  });
+
+  it("保存即写入正在使用这个分组的 Agent，并提示写入了哪些", async () => {
+    await open();
+    fireEvent.click(card("前端"));
+    // 加一个原本不在组里的成员
+    fireEvent.click((await screen.findAllByRole("checkbox"))[2]);
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(success).toHaveBeenCalledTimes(1));
+    expect(String(success.mock.calls[0][0])).toMatch(
+      /^已保存并写入 Claude Code、Codex，请在 Agent 中重新加载/,
+    );
+    expect(board.activations()).toEqual(board.savedWrites);
+    // 留在这一页，修改已经存下
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+  });
+
+  it("没有 Agent 在用的分组，保存时只保存", async () => {
+    await open();
+    fireEvent.click(card("空分组"));
+    fireEvent.click((await screen.findAllByRole("checkbox"))[0]);
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(success).toHaveBeenCalledWith(
+        "分组已保存，可在卡片上为需要的 Agent 启用",
+      ),
+    );
+    expect(board.activations()).toEqual([]);
+  });
+
+  it("新建的分组保存后留在这一页，标题栏的 Agent 图标随即可用", async () => {
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "新建分组" }));
+    const name = await screen.findByRole("textbox", { name: "分组名称" });
+    // 还没保存：没有可以启用的分组，悬停说明要先保存
+    const pending = screen.getByRole("button", {
+      name: "为 Claude Code 启用「新分组」",
+    });
+    expect(pending).toHaveAttribute("aria-disabled", "true");
+    fireEvent.focus(pending);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "先保存分组，再为 Agent 启用",
+    );
+    fireEvent.change(name, { target: { value: "新组" } });
+    fireEvent.click(screen.getAllByRole("checkbox")[0]);
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(success).toHaveBeenCalledWith(
+        "分组已保存，可在卡片上为需要的 Agent 启用",
+      ),
+    );
+    const icon = await screen.findByRole("button", {
+      name: "为 Claude Code 启用「新组」",
+    });
+    expect(icon).toBeEnabled();
+    expect(icon).not.toHaveAttribute("aria-disabled");
+    fireEvent.click(icon);
+    await waitFor(() => expect(board.activations()).toHaveLength(1));
+    expect(screen.getByRole("textbox", { name: "分组名称" })).toHaveValue(
+      "新组",
+    );
+  });
+
+  it("有未保存的修改时，标题栏的 Agent 图标先停用；返回要确认放弃", async () => {
+    await open();
+    fireEvent.click(card("前端"));
+    const name = await screen.findByRole("textbox", { name: "分组名称" });
+    const stop = () =>
+      screen.getByRole("button", { name: "为 Claude Code 停用「前端」" });
+    expect(stop()).not.toHaveAttribute("aria-disabled");
+    fireEvent.change(name, { target: { value: "前端开发" } });
+    expect(stop()).toHaveAttribute("aria-disabled", "true");
+    fireEvent.focus(stop());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "先保存修改，再为 Agent 启停",
+    );
+    fireEvent.click(stop());
+    expect(board.activations()).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "放弃修改并离开" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "编辑 前端" }),
+    ).toBeInTheDocument();
+    expect(board.savedMembers()).toBeUndefined();
+  });
+
+  it("写入某个 Agent 失败时分组已经保存：原因写在标题栏下方，不算未保存", async () => {
+    await open({ activateError: "配置被锁定" });
+    fireEvent.click(card("前端"));
+    fireEvent.click((await screen.findAllByRole("checkbox"))[2]);
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "分组已保存，写入 Codex 时失败：配置被锁定",
+    );
+    expect(failure).not.toHaveBeenCalled();
+    expect(board.savedMembers()).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+    expect(screen.getAllByRole("checkbox")[2]).toBeChecked();
+  });
+
+  it("已缺失的成员仍列出来，取消勾选即可移除", async () => {
+    await open();
+    fireEvent.click(card("Git 工具"));
+    const gone = await screen.findByRole("checkbox", {
+      name: `已缺失：${board.missing}`,
+    });
+    expect(gone).toBeChecked();
+    fireEvent.click(gone);
+    expect(
+      screen.queryByRole("checkbox", { name: `已缺失：${board.missing}` }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(board.savedMembers()).toEqual(board.gitRemaining),
+    );
   });
 });
 
@@ -611,7 +766,7 @@ it("MCP 分组页顶部不再单独列出问题，原因写在出问题的卡片
   ).toContain("Codex");
 });
 
-it("MCP 编辑弹窗里不能选的原有配置写明原因", async () => {
+it("MCP 整页编辑里不能选的原有配置写明原因", async () => {
   mcpBoard.setup();
   status.discovered = [
     {
@@ -640,9 +795,12 @@ it("MCP 编辑弹窗里不能选的原有配置写明原因", async () => {
   mcpBoard.render();
   await screen.findByRole("button", { name: "编辑 前端" });
   fireEvent.click(screen.getByRole("button", { name: "新建分组" }));
-  const dialog = await screen.findByRole("dialog", { name: "新建分组" });
   expect(
-    within(dialog).getByRole("checkbox", { name: "选择 orphan" }),
+    await screen.findByRole("checkbox", { name: "orphan" }),
   ).toBeDisabled();
-  expect(dialog).toHaveTextContent("指向 Studio 网关的配置不能作为成员");
+  expect(
+    screen.getByText(
+      "指向 Studio 网关的配置不能作为成员，请先在 MCP Hub 添加独立配置",
+    ),
+  ).toBeInTheDocument();
 });

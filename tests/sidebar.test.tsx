@@ -2,7 +2,12 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { expect, it } from "vitest";
 import App from "@/App";
 import { renderWithProviders } from "./utils/render";
-import { claudeAgent, defaultSettings, handlers } from "./mocks/tauri";
+import {
+  claudeAgent,
+  defaultSettings,
+  handlers,
+  makeGroup,
+} from "./mocks/tauri";
 
 it("keeps sidebar navigation mounted across Agent, settings and Hub pages", async () => {
   handlers.set("list_agents", () => [claudeAgent]);
@@ -56,7 +61,7 @@ it("侧栏「分组」用四宫格图标，设置页「分组与安装」用同�
   expect(iconOf(builtin!)).toEqual(["lucide-eye"]);
 });
 
-it("leaves the MCP editor when the currently selected Hub is clicked", async () => {
+it("returns to the MCP Hub list when the currently selected Hub is clicked", async () => {
   localStorage.setItem("skill-studio-resource", "mcp");
   handlers.set("get_settings", () => ({
     ...defaultSettings(),
@@ -64,18 +69,42 @@ it("leaves the MCP editor when the currently selected Hub is clicked", async () 
   }));
   renderWithProviders(<App />);
   fireEvent.click(await screen.findByRole("button", { name: "添加 MCP" }));
-  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-    "添加 MCP",
-  );
+  expect(
+    await screen.findByLabelText("粘贴安装命令、网址或配置"),
+  ).toBeInTheDocument();
   fireEvent.click(
     within(screen.getByRole("navigation")).getByRole("button", {
       name: "Hub",
     }),
   );
+  expect(
+    screen.queryByLabelText("粘贴安装命令、网址或配置"),
+  ).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
     "MCP Hub",
   );
   expect(screen.getByPlaceholderText("按名称或地址搜索 MCP…")).toBeVisible();
+});
+
+it("clicking the current nav item closes an open group detail, after confirming unsaved changes", async () => {
+  localStorage.setItem("skill-studio-view", "groups");
+  handlers.set("list_groups", () => [makeGroup({ id: "g", name: "Dev" })]);
+  renderWithProviders(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 Dev" }));
+  fireEvent.change(await screen.findByLabelText("分组名称"), {
+    target: { value: "Dev 2" },
+  });
+  const groups = within(screen.getByRole("navigation")).getByRole("button", {
+    name: "分组",
+  });
+  fireEvent.click(groups);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "放弃修改并离开" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "编辑 Dev" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByLabelText("分组名称")).not.toBeInTheDocument();
 });
 
 it("exposes transparency only after native material setup succeeds", async () => {

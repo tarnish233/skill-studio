@@ -10,11 +10,12 @@ import {
 } from "lucide-react";
 import { McpChoiceCards } from "./McpChoiceCards";
 import { McpDefinitionFields, readDefinition } from "./McpDefinitionFields";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DetailHeader } from "@/components/common/DetailHeader";
 import { useUnsavedProject } from "@/components/common/NavigationGuard";
 import { mcpRequest } from "@/lib/api/mcp";
 import {
@@ -36,11 +37,14 @@ function emptyEntry(): ManagedMcp {
     bindings: [],
   };
 }
+/**
+ * 「添加 MCP」：在 MCP Hub 页内展开，标题栏与详情页同一套（返回、添加到 Hub）。
+ */
 export function McpQuickInstall({
-  onClose,
+  onBack,
   onSaved,
 }: {
-  onClose: () => void;
+  onBack: () => void;
   onSaved: (entry: ManagedMcp, result?: McpInstallResult) => void;
 }) {
   const [text, setText] = useState("");
@@ -67,6 +71,7 @@ export function McpQuickInstall({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState("");
+  const formId = useId();
   // Parsing resets generated IDs; only editable fields determine whether a
   // draft would be lost when navigating through the persistent sidebar.
   const [original] = useState(() =>
@@ -196,12 +201,26 @@ export function McpQuickInstall({
   }
   return (
     <form
+      id={formId}
       className="flex min-h-0 flex-1 flex-col"
       onSubmit={(e) => {
         e.preventDefault();
         void install();
       }}
     >
+      <DetailHeader
+        title="添加 MCP"
+        subtitle="粘贴安装命令、网址或配置，或从官方目录选择"
+        onBack={onBack}
+        save={{
+          form: formId,
+          pending: busy,
+          disabled: !!invalid,
+          title: "保存到 MCP Hub，之后在分组或项目里选择使用",
+          label: "添加到 Hub",
+          pendingLabel: phase || undefined,
+        }}
+      />
       <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">
         <fieldset disabled={busy} className="min-w-0 space-y-3 py-3">
           <div className="flex gap-2" role="group" aria-label="MCP 来源">
@@ -471,19 +490,6 @@ export function McpQuickInstall({
           )}
         </fieldset>
       </div>
-      <footer className="-mx-6 flex shrink-0 items-center justify-end gap-2 border-t border-border-default bg-background px-6 py-4">
-        <Button
-          type="button"
-          variant="outline"
-          disabled={busy}
-          onClick={onClose}
-        >
-          取消
-        </Button>
-        <Button type="submit" disabled={busy || !!invalid}>
-          {busy ? phase : "添加到 Hub"}
-        </Button>
-      </footer>
     </form>
   );
 }
