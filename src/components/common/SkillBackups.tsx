@@ -64,8 +64,12 @@ export function SkillBackups({ scope }: { scope: string }) {
               恢复到原位置；已有同名内容时不会覆盖。
             </DialogDescription>
           </DialogHeader>
-          <div className="max-h-96 space-y-3 overflow-y-auto">
-            {error && <p role="alert">{String(error)}</p>}
+          <div className="max-h-96 min-h-0 space-y-3 overflow-y-auto px-6 py-4">
+            {error && (
+              <p role="alert" className="text-sm text-destructive">
+                {String(error)}
+              </p>
+            )}
             {!backups.length && (
               <p className="text-sm text-muted-foreground">暂无备份</p>
             )}

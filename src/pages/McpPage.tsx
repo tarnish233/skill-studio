@@ -33,6 +33,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -501,25 +502,27 @@ function LocalMcpPage() {
         open={!!loginUrl}
         onOpenChange={(open) => !open && setLoginUrl(null)}
       >
-        <DialogContent className="gap-3 p-6">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>完成浏览器授权</DialogTitle>
+            <DialogDescription>
+              请在浏览器中完成授权。浏览器未打开时，可复制此临时链接：
+            </DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            请在浏览器中完成授权。浏览器未打开时，可复制此临时链接：
-          </p>
-          <Input aria-label="授权链接" readOnly value={loginUrl ?? ""} />
+          <div className="px-6 py-4">
+            <Input aria-label="授权链接" readOnly value={loginUrl ?? ""} />
+          </div>
         </DialogContent>
       </Dialog>
       <Dialog
         open={tools !== null}
         onOpenChange={(open) => !open && setTools(null)}
       >
-        <DialogContent className="gap-3 p-6">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>连接成功 · {tools?.length ?? 0} 个工具</DialogTitle>
           </DialogHeader>
-          <div className="max-h-80 space-y-3 overflow-auto">
+          <div className="max-h-80 min-h-0 space-y-3 overflow-y-auto px-6 py-4">
             {tools?.map((tool) => (
               <div key={tool.name}>
                 <p className="text-sm font-medium">{tool.name}</p>

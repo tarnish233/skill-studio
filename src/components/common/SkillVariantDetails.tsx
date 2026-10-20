@@ -35,7 +35,7 @@ export function SkillVariantDetails({ skill }: { skill: SkillView }) {
               的专用版。
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 overflow-y-auto px-6 pb-6 text-sm">
+          <div className="min-h-0 space-y-4 overflow-y-auto px-6 py-4 text-sm">
             <p className="break-all text-xs text-muted-foreground">
               {skill.installation?.source}
             </p>
