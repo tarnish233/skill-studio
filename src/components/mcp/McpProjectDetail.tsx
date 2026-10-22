@@ -128,6 +128,8 @@ export function McpProjectDetail({
       const untouched = await mcpRequest<McpUntouched[] | null>("saveProject", {
         projectId: project.id,
         ...value,
+        // 打开详情（或上次保存）时的样子：别处改过时后端拒绝保存，不覆盖
+        expected: saved,
         // 选中的原有配置只记下引用，不托管、不改动
         imports: catalog
           .filter((r) => !r.managed && value.entryIds.includes(r.entry.id))
@@ -344,7 +346,10 @@ export function McpProjectDetail({
                 setValue((prev) => ({ ...prev, claudeLocal: v === "local" }))
               }
             >
-              <SelectTrigger className="w-48" aria-label="Claude Code 保存位置">
+              <SelectTrigger
+                className="w-48 shrink-0"
+                aria-label="Claude Code 保存位置"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

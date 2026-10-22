@@ -181,6 +181,7 @@ fn groups_and_project_removal_restore_each_agents_original_definition() {
                 sort_order: 0,
             },
             vec![],
+            None,
         )
         .unwrap();
         groups::activate(
@@ -274,6 +275,7 @@ fn activating_groups_enables_new_direct_bindings_without_changing_hub_definition
                     sort_order: 0,
                 },
                 vec![],
+                None,
             )
             .unwrap();
             // Re-applying must retain enabled native state and the original rollback target.
@@ -368,6 +370,7 @@ fn disabled_entries_and_variable_references_remain_agent_owned() {
                 sort_order: 0,
             },
             vec![],
+            None,
         )
         .unwrap();
         let before = fs::read(&path).unwrap();

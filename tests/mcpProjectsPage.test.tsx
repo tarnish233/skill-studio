@@ -243,6 +243,56 @@ it("Claude Code 的保存位置随项目保存：读到「项目本地」，改�
       groupIds: [],
       claudeLocal: true,
       imports: [],
+      // 打开详情时的样子：别处改过时后端拒绝保存
+      expected: { entryIds: [], groupIds: [], claudeLocal: true },
+    }),
+  );
+});
+
+it("保存时别处改过：提示冲突，修改留在页面上；保存成功后以刚存的为准", async () => {
+  setup();
+  let conflict = true;
+  const answer = handlers.get("mcp_request")!;
+  handlers.set("mcp_request", (args) => {
+    if (args.method === "saveProject" && conflict)
+      throw new Error(
+        "项目已被别处修改（另一个窗口或命令行），请按最新内容重新修改",
+      );
+    return answer(args);
+  });
+  await openDetail("webapp");
+  fireEvent.click(screen.getByRole("checkbox", { name: "Work" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  expect(
+    await screen.findByText(/写入失败，修改已保留：.*项目已被别处修改/),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Work" })).toBeChecked();
+  conflict = false;
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() =>
+    expect(
+      calls.filter(
+        (c) =>
+          c.command === "mcp_request" &&
+          (c.args as { method: string }).method === "saveProject",
+      ),
+    ).toHaveLength(2),
+  );
+  fireEvent.click(screen.getByRole("checkbox", { name: "Work" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() =>
+    expect(
+      calls
+        .filter(
+          (c) =>
+            c.command === "mcp_request" &&
+            (c.args as { method: string }).method === "saveProject",
+        )
+        .map((c) => (c.args as { params: unknown }).params)
+        .at(-1),
+    ).toMatchObject({
+      entryIds: [],
+      expected: { entryIds: ["m1"], groupIds: [], claudeLocal: false },
     }),
   );
 });

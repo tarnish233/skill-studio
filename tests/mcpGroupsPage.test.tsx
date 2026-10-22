@@ -25,7 +25,7 @@ const entry = {
   bindings: [],
 };
 // 分组不归属某个 Agent：名称和成员只保存一次，是否对某个 Agent 生效由
-// activeGroups 里各自的记录独立决定（见下面 beforeEach 的 activateGroup mock）。
+// activeGroups 里各自的记录独立决定（见下面 beforeEach 的 setGroup mock）。
 const group = {
   id: "g1",
   name: "开发",
@@ -36,14 +36,17 @@ const methods = () =>
   calls
     .filter((c) => c.command === "mcp_request")
     .map((c) => (c.args as { method: string }).method);
-const activations = () =>
+const mcpCalls = (method: string) =>
   calls
     .filter(
       (c) =>
         c.command === "mcp_request" &&
-        (c.args as { method: string }).method === "activateGroup",
+        (c.args as { method: string }).method === method,
     )
-    .map((c) => (c.args as { params: unknown }).params);
+    .map((c) => (c.args as { params: Record<string, unknown> }).params);
+/** 每次启停只带这一个分组 */
+const activations = () => mcpCalls("setGroup");
+const reapplies = () => mcpCalls("reapplyGroups");
 function card(name: string) {
   return screen.getByText(name).closest('[class*="rounded-xl"]') as HTMLElement;
 }
@@ -70,18 +73,31 @@ beforeEach(() => {
           params.group,
         ],
       };
-    if (method === "activateGroup") {
+    if (method === "setGroup") {
+      // 后端在锁内按最新的启用记录增减这一个分组
+      const agent = params.agent as string;
+      const current = (status.activeGroups?.[agent] ?? []).filter(
+        (g) => g.groupId !== params.groupId,
+      );
+      const ids = [
+        ...current,
+        ...(params.enabled
+          ? [
+              {
+                groupId: params.groupId as string,
+                entries: [entry],
+                bindings: [],
+              },
+            ]
+          : []),
+      ];
       const next = { ...status.activeGroups };
-      const ids = params.ids as string[];
-      if (ids.length)
-        next[params.agent as string] = ids.map((id) => ({
-          groupId: id,
-          entries: [entry],
-          bindings: [],
-        }));
-      else delete next[params.agent as string];
+      if (ids.length) next[agent] = ids;
+      else delete next[agent];
       status = { ...status, activeGroups: next };
+      return [];
     }
+    if (method === "reapplyGroups") return [];
     return null;
   });
 });
@@ -111,17 +127,9 @@ it("shows a shared MCP group once, and each Agent's icon toggles only that Agent
   );
   expect(methods()).not.toContain("start");
   expect(calls.some((c) => c.command === "activate_agent_group")).toBe(false);
-  expect(
-    calls
-      .filter(
-        (c) =>
-          c.command === "mcp_request" &&
-          (c.args as any).method === "activateGroup",
-      )
-      .map((c) => (c.args as any).params),
-  ).toEqual([
-    { agent: "claude", ids: ["g1"] },
-    { agent: "claude", ids: [] },
+  expect(activations()).toEqual([
+    { agent: "claude", groupId: "g1", enabled: true },
+    { agent: "claude", groupId: "g1", enabled: false },
   ]);
 });
 it("lets two Agents activate the same shared group independently", async () => {
@@ -136,17 +144,9 @@ it("lets two Agents activate the same shared group independently", async () => {
     within(card("开发")).getByRole("button", { name: "为 Codex 启用「开发」" }),
   );
   await waitFor(() =>
-    expect(
-      calls
-        .filter(
-          (c) =>
-            c.command === "mcp_request" &&
-            (c.args as any).method === "activateGroup",
-        )
-        .map((c) => (c.args as any).params),
-    ).toEqual([
-      { agent: "claude", ids: ["g1"] },
-      { agent: "codex", ids: ["g1"] },
+    expect(activations()).toEqual([
+      { agent: "claude", groupId: "g1", enabled: true },
+      { agent: "codex", groupId: "g1", enabled: true },
     ]),
   );
   // 两个 Agent 的图标都停在"已启用"，互不覆盖
@@ -174,12 +174,15 @@ it("saving writes the group to the Agents already using it, and the Agent icon s
   fireEvent.click(screen.getByRole("button", { name: "编辑 开发" }));
   fireEvent.click(await screen.findByRole("checkbox", { name: "Two" }));
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
-  await waitFor(() =>
-    expect(activations()).toEqual([{ agent: "claude", ids: ["g1"] }]),
-  );
+  await waitFor(() => expect(reapplies()).toEqual([{ agent: "claude" }]));
   expect(methods().indexOf("saveGroup")).toBeLessThan(
-    methods().indexOf("activateGroup"),
+    methods().indexOf("reapplyGroups"),
   );
+  // 带上打开编辑时的样子，别处改过时后端拒绝保存
+  expect(mcpCalls("saveGroup")[0]).toMatchObject({
+    group: { id: "g1", entryIds: ["one", "two"] },
+    expected: { name: "开发", entryIds: ["one"] },
+  });
   // 留在整页编辑里：标题栏的图标照样能停用
   const stop = await screen.findByRole("button", {
     name: "为 Claude Code 停用「开发」",
@@ -188,8 +191,7 @@ it("saving writes the group to the Agents already using it, and the Agent icon s
   fireEvent.click(stop);
   await waitFor(() =>
     expect(activations()).toEqual([
-      { agent: "claude", ids: ["g1"] },
-      { agent: "claude", ids: [] },
+      { agent: "claude", groupId: "g1", enabled: false },
     ]),
   );
 });
@@ -208,7 +210,9 @@ it("keeps the stop action when an active member is gone and re-applying cannot s
     screen.getByRole("button", { name: "为 Claude Code 停用「开发」" }),
   );
   await waitFor(() =>
-    expect(activations()).toEqual([{ agent: "claude", ids: [] }]),
+    expect(activations()).toEqual([
+      { agent: "claude", groupId: "g1", enabled: false },
+    ]),
   );
 });
 it("hides Agents whose management is off, but keeps a stop-only icon while one still uses the group", async () => {
@@ -236,7 +240,9 @@ it("hides Agents whose management is off, but keeps a stop-only icon while one s
   expect(screen.getByRole("button", { name: "删除 开发" })).toBeDisabled();
   fireEvent.click(stop);
   await waitFor(() =>
-    expect(activations()).toEqual([{ agent: "claude", ids: [] }]),
+    expect(activations()).toEqual([
+      { agent: "claude", groupId: "g1", enabled: false },
+    ]),
   );
 });
 it("records discovered MCP references without adopting or activating on save", async () => {
@@ -281,9 +287,11 @@ it("records discovered MCP references without adopting or activating on save", a
       imports: [
         { id: "scanned", definition: { type: "stdio", command: "scan" } },
       ],
+      // 新建的分组没有可核对的旧样子
+      expected: null,
     },
   });
-  expect(methods()).not.toContain("activateGroup");
+  expect(methods()).not.toContain("setGroup");
 });
 it("does not duplicate Hub entries when group activation changes the native enabled field", () => {
   const binding = {
@@ -334,7 +342,7 @@ it("shows only group cards: no tabs and no Agent picker, single MCPs are added f
   );
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(methods()).not.toContain("saveEntry");
-  expect(methods()).not.toContain("activateGroup");
+  expect(methods()).not.toContain("setGroup");
 });
 
 it("keeps reference identity and original definition after deployment changes scan order", () => {
@@ -425,7 +433,9 @@ it("switches to one Agent's view with its own MCP count and a single enable butt
     screen.getByRole("button", { name: "为 Codex 启用「开发」" }),
   );
   await waitFor(() =>
-    expect(activations()).toEqual([{ agent: "codex", ids: ["g1"] }]),
+    expect(activations()).toEqual([
+      { agent: "codex", groupId: "g1", enabled: true },
+    ]),
   );
 });
 
@@ -437,16 +447,6 @@ it("stacks two MCP groups for one Agent instead of replacing the first", async (
     entryIds: ["one"],
     sortOrder: 1,
   });
-  const activations = () =>
-    calls
-      .filter(
-        (c) =>
-          c.command === "mcp_request" &&
-          (c.args as { method: string }).method === "activateGroup",
-      )
-      .map(
-        (c) => (c.args as { params: { agent: string; ids: string[] } }).params,
-      );
   await open();
   fireEvent.click(
     within(card("开发")).getByRole("button", {
@@ -454,7 +454,9 @@ it("stacks two MCP groups for one Agent instead of replacing the first", async (
     }),
   );
   await waitFor(() =>
-    expect(activations()).toEqual([{ agent: "claude", ids: ["g1"] }]),
+    expect(activations()).toEqual([
+      { agent: "claude", groupId: "g1", enabled: true },
+    ]),
   );
   fireEvent.click(
     within(card("文档")).getByRole("button", {
@@ -464,7 +466,8 @@ it("stacks two MCP groups for one Agent instead of replacing the first", async (
   await waitFor(() =>
     expect(activations().at(-1)).toEqual({
       agent: "claude",
-      ids: ["g1", "g2"],
+      groupId: "g2",
+      enabled: true,
     }),
   );
   // 两个分组都停在"已启用"，胶囊显示叠加数量
@@ -491,8 +494,13 @@ it("stacks two MCP groups for one Agent instead of replacing the first", async (
     }),
   );
   await waitFor(() =>
-    expect(activations().at(-1)).toEqual({ agent: "claude", ids: ["g2"] }),
+    expect(activations().at(-1)).toEqual({
+      agent: "claude",
+      groupId: "g1",
+      enabled: false,
+    }),
   );
+  expect(status.activeGroups?.claude?.map((g) => g.groupId)).toEqual(["g2"]);
   expect(
     within(card("文档")).getByRole("button", {
       name: "为 Claude Code 停用「文档」",
@@ -509,4 +517,65 @@ it("整张 MCP 分组卡片可点：点卡片在页内展开编辑，不再有�
   expect(
     await screen.findByRole("button", { name: "编辑 开发" }),
   ).toBeInTheDocument();
+});
+
+it("启停只告诉后端这一个分组：别处刚启用、页面还没刷新出来的分组不会被撤掉", async () => {
+  status.groups!.push({ ...group, id: "g2", name: "文档", sortOrder: 1 });
+  await open();
+  const enable = within(card("开发")).getByRole("button", {
+    name: "为 Claude Code 启用「开发」",
+  });
+  // 命令行这时为 Claude Code 启用了「文档」，页面还没收到刷新
+  status = {
+    ...status,
+    activeGroups: {
+      claude: [{ groupId: "g2", entries: [entry], bindings: [] }],
+    },
+  };
+  fireEvent.click(enable);
+  await waitFor(() =>
+    expect(status.activeGroups?.claude?.map((g) => g.groupId)).toEqual([
+      "g2",
+      "g1",
+    ]),
+  );
+  expect(methods()).not.toContain("activateGroup");
+});
+
+it("保存时别处改过：提示冲突，修改留在页面上；保存成功后以刚存的为准", async () => {
+  const second = {
+    ...entry,
+    id: "two",
+    name: "Two",
+    definition: { type: "stdio", command: "two" },
+  };
+  status.entries = [entry, second];
+  let conflict = true;
+  const answer = handlers.get("mcp_request")!;
+  handlers.set("mcp_request", (args) => {
+    if (args.method === "saveGroup" && conflict)
+      throw new Error(
+        "分组已被别处修改（另一个窗口或命令行），请按最新内容重新修改",
+      );
+    return answer(args);
+  });
+  await open();
+  fireEvent.click(screen.getByRole("button", { name: "编辑 开发" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Two" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "保存失败，修改已保留：分组已被别处修改",
+  );
+  expect(screen.getByRole("checkbox", { name: "Two" })).toBeChecked();
+  conflict = false;
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(mcpCalls("saveGroup")).toHaveLength(2));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Work" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() =>
+    expect(mcpCalls("saveGroup").at(-1)).toMatchObject({
+      group: { id: "g1", entryIds: ["two"] },
+      expected: { name: "开发", entryIds: ["one", "two"] },
+    }),
+  );
 });

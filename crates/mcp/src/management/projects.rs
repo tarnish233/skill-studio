@@ -37,6 +37,32 @@ pub struct Input {
     pub group_ids: Vec<String>,
     pub claude_local: bool,
 }
+/// 打开详情时项目的成员与设置：保存前核对，别处（另一个窗口、命令行）改过就不覆盖
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Snapshot {
+    #[serde(default)]
+    pub entry_ids: Vec<String>,
+    #[serde(default)]
+    pub group_ids: Vec<String>,
+    #[serde(default)]
+    pub claude_local: bool,
+}
+impl Snapshot {
+    /// 成员顺序不算修改；还没有记录的项目等同于什么都没选
+    fn matches(&self, project: Option<&Project>) -> bool {
+        let set = |ids: &[String]| {
+            ids.iter()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let empty = Project::default();
+        let project = project.unwrap_or(&empty);
+        set(&self.entry_ids) == set(&project.entry_ids)
+            && set(&self.group_ids) == set(&project.group_ids)
+            && self.claude_local == project.claude_local
+    }
+}
 
 /// 这个项目要写进某个 Agent 的哪份配置
 struct Destination {
@@ -164,7 +190,9 @@ fn switch(
 }
 
 /// 保存成员和设置，并立即重新写入已启用的 Agent（与 Skill 项目「保存即写入」一致）。
-/// 成员清空时，已启用的 Agent 一并撤回。返回原样留下的接入。
+/// 成员清空时，已启用的 Agent 一并撤回。返回原样留下的接入。`expected` 是打开详情时的
+/// 成员与设置，与托管状态里的不同说明别处刚改过，拒绝保存以免覆盖
+#[allow(clippy::too_many_arguments)]
 pub fn save(
     dir: &Path,
     id: &str,
@@ -172,6 +200,7 @@ pub fn save(
     imports: Vec<Entry>,
     overrides: &HashMap<String, PathBuf>,
     executable: &Path,
+    expected: Option<&Snapshot>,
 ) -> Result<Vec<Untouched>> {
     if id.is_empty() {
         bail!("缺少项目");
@@ -179,6 +208,12 @@ pub fn save(
     let _lock = lock(dir)?;
     let mut catalog = read_unlocked(dir)?;
     ensure_active(&catalog)?;
+    if expected.is_some_and(|expected| !expected.matches(catalog.projects.get(id))) {
+        bail!(
+            "项目{}",
+            skill_studio_core::services::store::CHANGED_ELSEWHERE
+        );
+    }
     let mut project = catalog.projects.get(id).cloned().unwrap_or_default();
     let dedup = |ids: Vec<String>| {
         let mut seen = HashSet::new();
@@ -259,6 +294,26 @@ pub fn remove(dir: &Path, id: &str) -> Result<()> {
     match catalog.projects.get(id) {
         None => return Ok(()),
         Some(project) if !project.active.is_empty() => {
+            bail!("请先停用项目里所有 Agent 的 MCP")
+        }
+        Some(_) => {}
+    }
+    catalog.projects.remove(id);
+    commit(dir, BTreeMap::new(), &catalog)
+}
+
+/// 删除项目本身时清掉它的 MCP 记录；还有 Agent 在用时先停用。MCP 管理关闭期间接入已经
+/// 还原成原来的配置，记录直接删掉，重新开启时也就不会写回这个已删除的项目
+pub fn forget(dir: &Path, id: &str) -> Result<()> {
+    // 从没用过 MCP 托管：不会有这个项目的记录，也不建任何文件
+    if !dir.join("catalog.json").exists() && !dir.join("management-transaction.json").exists() {
+        return Ok(());
+    }
+    let _lock = lock(dir)?;
+    let mut catalog = read_unlocked(dir)?;
+    match catalog.projects.get(id) {
+        None => return Ok(()),
+        Some(project) if !catalog.suspended && !project.active.is_empty() => {
             bail!("请先停用项目里所有 Agent 的 MCP")
         }
         Some(_) => {}

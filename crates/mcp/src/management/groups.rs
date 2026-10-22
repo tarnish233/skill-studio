@@ -27,7 +27,45 @@ pub struct ActiveGroup {
     pub entries: Vec<Entry>,
     pub bindings: Vec<Binding>,
 }
-pub fn save_group(dir: &Path, mut group: Group, imports: Vec<Entry>) -> Result<()> {
+/// 打开编辑时分组的样子：保存前核对，别处（另一个窗口、命令行）改过就不覆盖
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupSnapshot {
+    pub name: String,
+    pub entry_ids: Vec<String>,
+}
+impl GroupSnapshot {
+    /// 名称前后的空格和成员顺序不算修改
+    fn matches(&self, group: &Group) -> bool {
+        let set = |ids: &[String]| {
+            ids.iter()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        self.name.trim() == group.name && set(&self.entry_ids) == set(&group.entry_ids)
+    }
+}
+/// 正在使用这个分组的 Agent，按固定顺序
+fn agents_using(catalog: &Catalog, id: &str) -> Vec<&'static str> {
+    crate::agents::IDS
+        .iter()
+        .copied()
+        .filter(|agent| {
+            catalog
+                .active_groups
+                .get(*agent)
+                .is_some_and(|records| records.iter().any(|g| g.group_id == id))
+        })
+        .collect()
+}
+/// 保存分组的名称和成员。`expected` 是打开编辑时的样子，与托管状态里的不同说明别处刚改过，
+/// 拒绝保存以免覆盖；新建时为 `None`
+pub fn save_group(
+    dir: &Path,
+    mut group: Group,
+    imports: Vec<Entry>,
+    expected: Option<&GroupSnapshot>,
+) -> Result<()> {
     group.name = group.name.trim().into();
     if group.name.is_empty() || group.id.is_empty() {
         bail!("请填写分组名称");
@@ -35,12 +73,35 @@ pub fn save_group(dir: &Path, mut group: Group, imports: Vec<Entry>) -> Result<(
     let _lock = lock(dir)?;
     let mut catalog = read_unlocked(dir)?;
     ensure_active(&catalog)?;
+    if let Some(expected) = expected {
+        let Some(current) = catalog.groups.iter().find(|g| g.id == group.id) else {
+            bail!("分组已被别处删除");
+        };
+        if !expected.matches(current) {
+            bail!(
+                "分组{}",
+                skill_studio_core::services::store::CHANGED_ELSEWHERE
+            );
+        }
+    }
     if catalog
         .groups
         .iter()
         .any(|g| g.name == group.name && g.id != group.id)
     {
         bail!("已存在同名分组");
+    }
+    // 空分组不能启用：正在用的分组被清空时先让用户停用，避免「存下了、写入又失败」的半截状态
+    if group.entry_ids.is_empty() {
+        let using = agents_using(&catalog, &group.id);
+        if !using.is_empty() {
+            let names: Vec<&str> = using.iter().map(|a| crate::agents::name(a)).collect();
+            bail!(
+                "分组「{}」正在 {} 上使用，清空成员前请先为这些 Agent 停用",
+                group.name,
+                names.join("、")
+            );
+        }
     }
     // Ignore references submitted in the group payload; only server-rescanned imports
     // or previously saved references can supply filesystem locations.
@@ -114,8 +175,79 @@ pub fn activate(
 ) -> Result<Vec<Untouched>> {
     crate::agents::validate(agent_id)?;
     let _lock = lock(dir)?;
-    let mut catalog = read_unlocked(dir)?;
+    let catalog = read_unlocked(dir)?;
     ensure_active(&catalog)?;
+    activate_locked(dir, catalog, agent_id, ids, path, executable)
+}
+
+/// 这个 Agent 当前叠加的分组，按启用顺序
+pub fn active_ids(catalog: &Catalog, agent_id: &str) -> Vec<String> {
+    catalog
+        .active_groups
+        .get(agent_id)
+        .map(|records| records.iter().map(|g| g.group_id.clone()).collect())
+        .unwrap_or_default()
+}
+
+/// 为一个 Agent 启用或停用一个分组，它叠加的其他分组不变；已经是目标状态时什么也不写。
+/// 在锁内按最新的启用记录计算，不会撤掉别处（另一个窗口、命令行）刚做的启用。
+/// `path` 只在启用后还有分组要部署时才用到，由 `path` 回调按需解析
+pub fn set_active(
+    dir: &Path,
+    agent_id: &str,
+    group_id: &str,
+    enabled: bool,
+    path: impl FnOnce() -> Result<PathBuf>,
+    executable: &Path,
+) -> Result<Vec<Untouched>> {
+    crate::agents::validate(agent_id)?;
+    let _lock = lock(dir)?;
+    let catalog = read_unlocked(dir)?;
+    ensure_active(&catalog)?;
+    let mut ids = active_ids(&catalog, agent_id);
+    if ids.iter().any(|id| id == group_id) == enabled {
+        return Ok(vec![]);
+    }
+    if enabled {
+        ids.push(group_id.to_string());
+    } else {
+        ids.retain(|id| id != group_id);
+    }
+    let path = if ids.is_empty() {
+        PathBuf::new()
+    } else {
+        path()?
+    };
+    activate_locked(dir, catalog, agent_id, &ids, &path, executable)
+}
+
+/// 按最新成员重新写入这个 Agent 叠加的全部分组（应用修改）；没有启用的分组时什么也不写
+pub fn reapply(
+    dir: &Path,
+    agent_id: &str,
+    path: impl FnOnce() -> Result<PathBuf>,
+    executable: &Path,
+) -> Result<Vec<Untouched>> {
+    crate::agents::validate(agent_id)?;
+    let _lock = lock(dir)?;
+    let catalog = read_unlocked(dir)?;
+    ensure_active(&catalog)?;
+    let ids = active_ids(&catalog, agent_id);
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let path = path()?;
+    activate_locked(dir, catalog, agent_id, &ids, &path, executable)
+}
+
+fn activate_locked(
+    dir: &Path,
+    mut catalog: Catalog,
+    agent_id: &str,
+    ids: &[String],
+    path: &Path,
+    executable: &Path,
+) -> Result<Vec<Untouched>> {
     let mut groups = vec![];
     let mut seen_groups = HashSet::new();
     for id in ids {

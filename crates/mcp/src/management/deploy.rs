@@ -232,7 +232,7 @@ pub(super) fn deploy(
         let mut installed = if entry.mode == "gateway" {
             gateway_server(entry)?;
             native::for_agent(
-                &json!({"type":"stdio","command":executable,"args":["--mcp-client",entry.id,dir]}),
+                &json!({"type":"stdio","command":gateway_command(executable)?,"args":["--mcp-client",entry.id,dir]}),
                 agent_id,
             )?
         } else {

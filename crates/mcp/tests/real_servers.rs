@@ -195,9 +195,9 @@ async fn official_servers_full_lifecycle() -> Result<()> {
     management::save(&dir, memory.clone(), vec![], &executable, None)?;
     let filesystem = entry("real-filesystem", filesystem_definition);
     management::save(&dir, filesystem.clone(), vec![], &executable, None)?;
-    groups::save_group(&dir, group("memory", &["real-memory"]), vec![])?;
-    groups::save_group(&dir, group("files", &["real-filesystem"]), vec![])?;
-    groups::save_group(&dir, group("codex", &["real-memory"]), vec![])?;
+    groups::save_group(&dir, group("memory", &["real-memory"]), vec![], None)?;
+    groups::save_group(&dir, group("files", &["real-filesystem"]), vec![], None)?;
+    groups::save_group(&dir, group("codex", &["real-memory"]), vec![], None)?;
     groups::activate(
         &dir,
         "claude",
@@ -238,6 +238,7 @@ async fn official_servers_full_lifecycle() -> Result<()> {
         &dir,
         group("files", &["real-filesystem", "real-memory"]),
         vec![],
+        None,
     )?;
     assert_eq!(std::fs::read(&claude)?, before_edit);
     groups::activate(&dir, "claude", &["files".to_string()], &claude, &executable)?;

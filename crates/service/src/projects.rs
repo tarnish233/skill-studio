@@ -186,7 +186,13 @@ pub fn update_project(
 
 /// 删除项目绑定。只删元数据，已写进项目目录的 skill 不动 ——
 /// 那些文件可能已经提交进 git 了，替用户决定删除是越权。
+/// 它的 MCP 记录一并清掉；还有 Agent 在用项目的 MCP 时拒绝，免得项目没了、写进去的 MCP
+/// 却再也没有地方停用
 pub fn delete_project(state: &AppState, project_id: String) -> Result<(), String> {
+    if !state.config().projects.iter().any(|p| p.id == project_id) {
+        return Err(Error::NotFound(format!("项目 {project_id}")).into());
+    }
+    crate::mcp::projects::forget(state, &project_id)?;
     state
         .mutate(|_, config| {
             let before = config.projects.len();

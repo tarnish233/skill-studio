@@ -256,6 +256,8 @@ const mcpCalls = (method: string) =>
     )
     .map((c) => (c.args as { params: Record<string, unknown> }).params);
 let status: ManagementStatus;
+/** 每次写入后这个 Agent 叠加的全部分组（后端按最新状态算出） */
+let mcpWrites: { agent: string; ids: string[] }[] = [];
 const mcpBoard: Board = {
   name: "MCP",
   setup(o = {}) {
@@ -312,23 +314,40 @@ const mcpBoard: Board = {
         },
       },
     };
+    mcpWrites = [];
+    // 与后端一致：启停与重新应用都按当时的启用记录算出这个 Agent 的全部分组再写入
+    const enabledIds = (agent: string) =>
+      (status.activeGroups?.[agent] ?? []).map((g) => g.groupId);
     handlers.set("mcp_request", ({ method, params }) => {
       if (method === "list") return listed(o.list, status);
-      if (method === "activateGroup") {
-        if (o.activateError && params.agent === "codex")
+      if (method === "setGroup" || method === "reapplyGroups") {
+        const agent = params.agent as string;
+        const current = enabledIds(agent);
+        if (
+          method === "setGroup" &&
+          current.includes(params.groupId as string) === params.enabled
+        )
+          return [];
+        const ids =
+          method === "reapplyGroups"
+            ? current
+            : params.enabled
+              ? [...current, params.groupId as string]
+              : current.filter((id) => id !== params.groupId);
+        if (o.activateError && agent === "codex")
           throw new Error(o.activateError);
-        const ids = params.ids as string[];
         status = {
           ...status,
           activeGroups: {
             ...status.activeGroups,
-            [params.agent as string]: ids.map((groupId) => ({
+            [agent]: ids.map((groupId) => ({
               groupId,
               entries: [],
               bindings: [],
             })),
           },
         };
+        mcpWrites.push({ agent, ids });
         if (o.untouched === "none") return null;
         return o.untouched
           ? [
@@ -387,7 +406,7 @@ const mcpBoard: Board = {
     (mcpCalls("saveGroup").at(-1)?.group as { entryIds: string[] } | undefined)
       ?.entryIds,
   reordered: () => mcpCalls("reorderGroups")[0]?.ids as string[] | undefined,
-  activations: () => mcpCalls("activateGroup"),
+  activations: () => mcpWrites,
 };
 
 const card = (name: string) =>

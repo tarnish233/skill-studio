@@ -10,6 +10,7 @@ skill-studio-mcp = { path = "../mcp" }
 serde.workspace = true
 serde_json.workspace = true
 log.workspace = true
+anyhow.workspace = true
 uuid = { version = "1.11", features = ["v4"] }
 [dev-dependencies]
 tempfile.workspace = true

@@ -4,17 +4,48 @@ use crate::{
     native,
 };
 use anyhow::{bail, Context, Result};
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use skill_studio_core::fs::atomic;
+use skill_studio_core::services::store::{lock_file, CONFIG_BUSY};
 use std::{
     collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
 };
 
-#[derive(Clone, Serialize, Deserialize)]
+/// 只读查看时遇到没写完的 MCP 写入：不读半截的状态
+pub const PENDING: &str =
+    "MCP 有一项写入还没完成，请先打开 Skill Studio 完成恢复（或运行任一修改命令），再查看";
+
+/// 网关模式的接入由桌面应用的可执行文件转发；命令行在找不到桌面应用的地方（如服务器上）
+/// 只能管理 Agent 直连的 MCP
+pub const GATEWAY_NEEDS_APP: &str =
+    "网关模式的 MCP 由 Skill Studio 桌面应用转发，这里找不到桌面应用；请在 Skill Studio 里操作";
+
+/// 等别的进程改完托管状态的上限，与配置锁一致。命令行按自己的等待上限改写
+static LOCK_WAIT_MS: AtomicU64 = AtomicU64::new(30_000);
+
+/// 调整等锁上限（命令行的 `SKILL_STUDIO_LOCK_WAIT_MS`，以及测试）
+pub fn set_lock_wait(wait: Duration) {
+    LOCK_WAIT_MS.store(wait.as_millis() as u64, Ordering::Relaxed);
+}
+
+fn lock_wait() -> Duration {
+    Duration::from_millis(LOCK_WAIT_MS.load(Ordering::Relaxed))
+}
+
+/// 网关接入要写进 Agent 配置的命令：桌面应用的可执行文件。空路径表示这里没有桌面应用
+fn gateway_command(executable: &Path) -> Result<&Path> {
+    if executable.as_os_str().is_empty() {
+        bail!(GATEWAY_NEEDS_APP);
+    }
+    Ok(executable)
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Entry {
     pub id: String,
@@ -186,12 +217,36 @@ fn lock(dir: &Path) -> Result<std::fs::File> {
         .read(true)
         .write(true)
         .open(dir.join("management.lock"))?;
-    f.lock_exclusive()?;
+    // 等别的进程改完，最多等到上限：不让界面或命令行无限期卡住
+    if !lock_file(&f, lock_wait(), true) {
+        bail!(CONFIG_BUSY);
+    }
     recover(dir)?;
     Ok(f)
 }
 pub fn read(dir: &Path) -> Result<Catalog> {
     let _lock = lock(dir)?;
+    read_unlocked(dir)
+}
+/// 只读地读出托管状态：不建目录、不建锁文件、不恢复中断的写入，用于只查看的场景
+/// （命令行的查看命令，以及只允许读的 Agent 沙箱）。锁文件在时拿共享锁，等正在写的
+/// 进程写完；写到一半退出留下的记录不替它恢复，报 [`PENDING`]
+pub fn read_only(dir: &Path) -> Result<Catalog> {
+    let path = dir.join("management.lock");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .or_else(|_| std::fs::File::open(&path))
+        .ok();
+    if let Some(file) = &lock {
+        if !lock_file(file, lock_wait(), false) {
+            bail!(CONFIG_BUSY);
+        }
+    }
+    if dir.join("management-transaction.json").exists() {
+        bail!(PENDING);
+    }
     read_unlocked(dir)
 }
 fn read_unlocked(dir: &Path) -> Result<Catalog> {
@@ -491,8 +546,7 @@ pub fn save(
         };
         native::check_activation(&text, &target.agent, &target.key)?;
         let value = if entry.mode == "gateway" {
-            let mut adapter =
-                json!({"type":"stdio","command":executable,"args":["--mcp-client",entry.id,dir]});
+            let mut adapter = json!({"type":"stdio","command":gateway_command(executable)?,"args":["--mcp-client",entry.id,dir]});
             if entry.definition["enabled"].as_bool() == Some(false) && target.agent != "claude" {
                 adapter["enabled"] = json!(false);
             }
@@ -907,6 +961,9 @@ fn recover(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "management/shared_tests.rs"]
+mod shared_tests;
 #[cfg(test)]
 #[path = "management_tests.rs"]
 mod tests;

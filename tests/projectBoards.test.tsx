@@ -292,12 +292,14 @@ const mcpBoard: Board = {
   reapplyClaude: { projectId: "p1", agent: "claude", enabled: true },
   issue: "hf-mcp-server",
   extra: "context7",
+  // 带上打开时的成员与设置，别处改过就不覆盖
   saved: {
     projectId: "p1",
     entryIds: ["hf", "ctx"],
     groupIds: ["g1"],
     claudeLocal: false,
     imports: [],
+    expected: { entryIds: ["hf"], groupIds: ["g1"], claudeLocal: false },
   },
   reload: "请在 Agent 中重新加载 MCP",
   otherSide: "请先在 Skill 项目里停用所有 Agent",

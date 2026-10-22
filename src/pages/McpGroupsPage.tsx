@@ -174,11 +174,6 @@ function LocalGroups() {
       issue: status.data?.groupIssues?.[mcpId]?.[g.id],
     };
   }
-  const switching = (mcpId: string, ids: string[], success: string) =>
-    run(
-      () => mcpRequest<McpUntouched[]>("activateGroup", { agent: mcpId, ids }),
-      { success, notice: untouchedMcpNote },
-    );
 
   const keyword = query.trim().toLowerCase();
   const visible = groups.filter((g) =>
@@ -247,30 +242,32 @@ function LocalGroups() {
       viewAgentId: viewAgent?.id,
     });
   }
-  const toggle = (g: McpGroup, agentId: string, on: boolean) => {
-    const mcpId = mcpAgentId(agentId);
-    void switching(
-      mcpId,
-      on
-        ? [...activeIds(mcpId), g.id]
-        : activeIds(mcpId).filter((id) => id !== g.id),
-      `${on ? "分组已启用" : "分组已停用"}，${RELOAD}`,
+  /** 只启停这一个分组：这个 Agent 叠加的其他分组由后端按最新状态保留，不会撤掉别处刚做的启用 */
+  const toggle = (g: McpGroup, agentId: string, on: boolean) =>
+    void run(
+      () =>
+        mcpRequest<McpUntouched[]>("setGroup", {
+          agent: mcpAgentId(agentId),
+          groupId: g.id,
+          enabled: on,
+        }),
+      {
+        success: `${on ? "分组已启用" : "分组已停用"}，${RELOAD}`,
+        notice: untouchedMcpNote,
+      },
     );
-  };
+  /** 按最新成员重新写入这个 Agent 叠加的全部分组 */
+  const reapplyAgent = async (agentId: string) =>
+    (await mcpRequest<McpUntouched[] | null>("reapplyGroups", {
+      agent: mcpAgentId(agentId),
+    })) ?? [];
   const reapply = (agentIds: string[]) =>
     void run(
       async () => {
         // 依次重新应用：遇到第一个失败就停下报错
         const untouched: McpUntouched[] = [];
-        for (const agentId of agentIds) {
-          const mcpId = mcpAgentId(agentId);
-          untouched.push(
-            ...((await mcpRequest<McpUntouched[] | null>("activateGroup", {
-              agent: mcpId,
-              ids: activeIds(mcpId),
-            })) ?? []),
-          );
-        }
+        for (const agentId of agentIds)
+          untouched.push(...(await reapplyAgent(agentId)));
         return untouched;
       },
       { success: `修改已应用，${RELOAD}`, notice: untouchedMcpNote },
@@ -278,10 +275,12 @@ function LocalGroups() {
   /**
    * 保存名称和成员，再依次重新写入正在使用这个分组的 Agent（与项目详情一致）。
    * 分组已经存下、写入某个 Agent 失败时，修改不丢：卡片和标题栏会显示「有待应用修改」。
+   * `opened` 是打开编辑（或上次保存）时的样子，别处改过时后端拒绝保存，不覆盖。
    */
   async function save(
     id: string | null,
     draft: GroupDraft,
+    opened: GroupDraft | null,
   ): Promise<GroupSaveResult> {
     const stored = groups.find((g) => g.id === id);
     const group: McpGroup = {
@@ -305,18 +304,16 @@ function LocalGroups() {
               definition: r.entry.definition,
               sourceIds: r.sources.map((source) => source.id),
             })),
+          expected:
+            stored && opened
+              ? { name: opened.name, entryIds: opened.memberIds }
+              : null,
         });
         outcome.saved = true;
         const untouched: McpUntouched[] = [];
         for (const agent of targets) {
-          const mcpId = mcpAgentId(agent.id);
           try {
-            untouched.push(
-              ...((await mcpRequest<McpUntouched[] | null>("activateGroup", {
-                agent: mcpId,
-                ids: activeIds(mcpId),
-              })) ?? []),
-            );
+            untouched.push(...(await reapplyAgent(agent.id)));
           } catch (e) {
             throw new Error(
               `分组已保存，写入 ${agent.displayName} 时失败：${e instanceof Error ? e.message : String(e)}`,
@@ -419,7 +416,7 @@ function LocalGroups() {
             onToggle={(agentId, on) => toggle(current, agentId, on)}
             onReapply={reapply}
             onBack={() => requestNavigation(() => setDetail(null))}
-            onSave={(draft) => save(detail.id, draft)}
+            onSave={(draft, opened) => save(detail.id, draft, opened)}
           />
         </DetailTransition>
         {deleteDialog}
