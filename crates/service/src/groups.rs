@@ -49,14 +49,49 @@ fn uuid_v4() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// 打开编辑时分组的样子：保存前核对，别处（另一个窗口、命令行）改过就不覆盖
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupSnapshot {
+    pub name: String,
+    pub skill_ids: Vec<String>,
+}
+
+impl GroupSnapshot {
+    /// 名称前后的空格和成员顺序不算修改
+    fn matches(&self, group: &Group) -> bool {
+        let set = |ids: &[String]| {
+            ids.iter()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        self.name.trim() == group.name && set(&self.skill_ids) == set(&group.skill_ids)
+    }
+}
+
+/// 保存分组的名称和成员。`expected` 是打开编辑时的样子，与配置里的不同说明别处刚改过，
+/// 拒绝保存以免覆盖；新建时为 `None`
 pub fn save_group(
     state: &AppState,
     group_id: Option<String>,
     name: String,
     skill_ids: Vec<String>,
+    expected: Option<GroupSnapshot>,
 ) -> Result<Group, String> {
     state
         .mutate(|studio, config| {
+            if let (Some(id), Some(expected)) = (&group_id, &expected) {
+                let current = config
+                    .group(id)
+                    .ok_or_else(|| Error::Other("分组已被别处删除".into()))?;
+                if !expected.matches(current) {
+                    // 不加「无效输入」前缀：界面显示「保存失败，修改已保留：分组已被别处修改…」
+                    return Err(Error::Other(format!(
+                        "分组{}",
+                        crate::state::CHANGED_ELSEWHERE
+                    )));
+                }
+            }
             studio.save_group(config, group_id.unwrap_or_else(uuid_v4), &name, skill_ids)
         })
         .map_err(Into::into)
@@ -71,4 +106,24 @@ pub fn activate_agent_groups(
     state
         .activate_agent_groups(&agent_id, &group_ids)
         .map_err(Into::into)
+}
+
+/// 为一个 Agent 启用或停用一个分组，它叠加的其他分组不变；已经是目标状态时什么也不做
+pub fn set_agent_group(
+    state: &AppState,
+    agent_id: String,
+    group_id: String,
+    enabled: bool,
+) -> Result<Vec<UntouchedCopy>, String> {
+    state
+        .set_agent_group(&agent_id, &group_id, enabled)
+        .map_err(Into::into)
+}
+
+/// 按最新的启用记录重新写入这个 Agent 叠加的全部分组（应用修改）
+pub fn reapply_agent_groups(
+    state: &AppState,
+    agent_id: String,
+) -> Result<Vec<UntouchedCopy>, String> {
+    state.reapply_agent_groups(&agent_id).map_err(Into::into)
 }

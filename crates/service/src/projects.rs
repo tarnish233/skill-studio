@@ -314,6 +314,35 @@ pub fn set_project_enabled(
         .map_err(Into::into)
 }
 
+/// 为一个 Agent 启用或停用项目，成员用已保存的；已经是目标状态时什么也不做
+pub fn set_project_agent(
+    state: &AppState,
+    project_id: String,
+    agent_id: String,
+    enabled: bool,
+) -> Result<LinkReport, String> {
+    state
+        .set_project_agent(&project_id, &agent_id, enabled)
+        .map_err(Into::into)
+}
+
+/// 按已保存的成员重新写入项目已启用的全部 Agent（应用修改）
+pub fn reapply_project(state: &AppState, project_id: String) -> Result<LinkReport, String> {
+    state.reapply_project(&project_id).map_err(Into::into)
+}
+
+/// 保存成员并写入已启用的 Agent；`expected` 是打开详情时的成员，别处改过就不覆盖
+pub fn save_project(
+    state: &AppState,
+    project_id: String,
+    members: crate::state::ProjectMembers,
+    expected: Option<crate::state::ProjectMembers>,
+) -> Result<LinkReport, String> {
+    state
+        .save_project(&project_id, members, expected)
+        .map_err(Into::into)
+}
+
 pub fn reorder_projects(
     state: &AppState,
     project_ids: Vec<String>,
@@ -365,11 +394,14 @@ mod project_order_tests {
 pub fn list_skill_backups(
     state: &AppState,
 ) -> Result<Vec<skill_studio_core::services::skill_files::SkillBackup>, String> {
-    state.ensure_writable().map_err(String::from)?;
-    state
-        .studio()
-        .migrate_project_backups(&state.config())
-        .map_err(String::from)?;
+    state.ensure_loaded().map_err(String::from)?;
+    // 旧版本留下的备份目录在可写时顺带迁移；只读时只列出
+    if state.ensure_writable().is_ok() {
+        state
+            .studio()
+            .migrate_project_backups(&state.config())
+            .map_err(String::from)?;
+    }
     state
         .studio()
         .skill_backups()

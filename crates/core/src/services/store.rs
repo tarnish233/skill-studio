@@ -4,6 +4,7 @@
 //! `backups/`，并且写入本身走 `atomic_write`（tmp + fsync + rename）。
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use super::transaction::Transaction;
 use crate::error::{Error, Result};
@@ -12,6 +13,66 @@ use crate::models::config::{AppConfig, CONFIG_VERSION};
 
 /// 备份文件名前缀
 const BACKUP_PREFIX: &str = "config-";
+
+/// 会连带改写 config.json 的事务记录。写到一半退出时留在磁盘上，下次加载时回滚或补完
+const JOURNALS: &[&str] = &[
+    "registration.json",
+    "migration.json",
+    "skill-files.json",
+    "group-switch.json",
+    "skill-unregister.json",
+    "manual-policy.json",
+    "project-write.json",
+];
+
+/// 等不到配置锁时的提示。命令行据此区分「稍后重试即可」与其他失败
+pub const CONFIG_BUSY: &str = "另一个程序（命令行或另一个 Skill Studio）正在修改配置，请稍后重试";
+
+/// 保存时发现别处（另一个窗口、命令行）刚改过：不覆盖。命令行据此按最新内容重试。
+/// Skill 与 MCP 的分组、项目共用这一句，前面加上「分组」「项目」
+pub const CHANGED_ELSEWHERE: &str = "已被别处修改（另一个窗口或命令行），请按最新内容重新修改";
+
+/// 跨进程的配置锁：桌面应用、命令行、远程辅助程序都在改配置前拿独占锁，读的时候拿
+/// 共享锁。随文件句柄关闭而释放，进程退出或崩溃也会释放
+pub struct ConfigLock {
+    _file: std::fs::File,
+}
+
+/// 反复尝试加锁直到超时。文件系统不支持文件锁时放行，只记一条警告：宁可失去跨进程
+/// 互斥，也不能让所有写入都失败
+fn acquire(
+    file: &std::fs::File,
+    wait: Duration,
+    try_lock: fn(&std::fs::File) -> std::io::Result<()>,
+) -> bool {
+    let contended = fs2::lock_contended_error().raw_os_error();
+    let deadline = Instant::now() + wait;
+    loop {
+        match try_lock(file) {
+            Ok(()) => return true,
+            Err(e)
+                if e.raw_os_error() == contended || e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => {
+                log::warn!("配置锁不可用，跳过跨进程互斥: {e}");
+                return true;
+            }
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// 给一个已打开的锁文件加跨进程锁，最多等 `wait`；等不到返回 false。规则与配置锁相同：
+/// 文件系统不支持文件锁时放行。供 MCP 托管状态这类各自有锁文件的数据共用
+pub fn lock_file(file: &std::fs::File, wait: Duration, exclusive: bool) -> bool {
+    if exclusive {
+        acquire(file, wait, fs2::FileExt::try_lock_exclusive)
+    } else {
+        acquire(file, wait, fs2::FileExt::try_lock_shared)
+    }
+}
 
 /// 配置读写的落点。测试里指向临时目录，运行时指向 `~/.skill-studio`。
 #[derive(Debug, Clone)]
@@ -56,21 +117,62 @@ impl Store {
     /// 解析失败**不**静默回落到默认值 —— 那会让用户的分组凭空消失。
     /// 直接报错，由上层提示用户去 `backups/` 找回。
     pub fn load(&self) -> Result<AppConfig> {
-        super::transaction::recover(&self.dir.join("registration.json"))?;
-        super::transaction::recover(&self.dir.join("migration.json"))?;
-        super::transaction::recover(&self.dir.join("skill-files.json"))?;
-        super::transaction::recover(&self.dir.join("group-switch.json"))?;
-        super::transaction::recover(&self.dir.join("skill-unregister.json"))?;
-        super::transaction::recover(&self.dir.join("manual-policy.json"))?;
-        super::transaction::recover(&self.dir.join("project-write.json"))?;
-        let path = self.config_path();
-        match atomic::read_json_file::<AppConfig>(&path)? {
-            Some(mut config) => {
-                self.migrate(&mut config)?;
-                Ok(config)
-            }
-            None => Ok(AppConfig::default()),
+        for journal in JOURNALS {
+            super::transaction::recover(&self.dir.join(journal))?;
         }
+        Ok(self.read()?.unwrap_or_default())
+    }
+
+    /// 只读地读出配置：不恢复中断的事务，也不写任何文件。文件不存在时返回 `None`。
+    pub fn read(&self) -> Result<Option<AppConfig>> {
+        let Some(mut config) = atomic::read_json_file::<AppConfig>(&self.config_path())? else {
+            return Ok(None);
+        };
+        self.migrate(&mut config)?;
+        Ok(Some(config))
+    }
+
+    /// 有没有未完成的事务：另一个进程正在写，或上次写到一半退出
+    pub fn pending_transactions(&self) -> bool {
+        JOURNALS
+            .iter()
+            .any(|journal| self.dir.join(journal).exists())
+    }
+
+    pub fn lock_path(&self) -> PathBuf {
+        self.dir.join("config.json.lock")
+    }
+
+    /// 改配置前拿独占锁，等别的进程写完，最多等 `wait`。
+    pub fn lock_exclusive(&self, wait: Duration) -> Result<ConfigLock> {
+        std::fs::create_dir_all(&self.dir).map_err(|e| Error::io(&self.dir, e))?;
+        let path = self.lock_path();
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(|e| Error::io(&path, e))?;
+        if !acquire(&file, wait, fs2::FileExt::try_lock_exclusive) {
+            // 不加「无效输入」前缀：这不是输入的问题，界面和命令行都原样显示这句
+            return Err(Error::Other(CONFIG_BUSY.into()));
+        }
+        Ok(ConfigLock { _file: file })
+    }
+
+    /// 读配置时拿共享锁，等正在写的进程写完，最多等 `wait`。只打开已存在的锁文件——
+    /// 读的一方从不创建文件；目录只读或等不到时返回 `None`，调用方照常读：写入是原子
+    /// 替换，读到的总是完整的一份。
+    pub fn lock_shared(&self, wait: Duration) -> Option<ConfigLock> {
+        let path = self.lock_path();
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .or_else(|_| std::fs::File::open(&path))
+            .ok()?;
+        acquire(&file, wait, fs2::FileExt::try_lock_shared).then_some(ConfigLock { _file: file })
     }
 
     /// v2 added optional Agent ownership and active combinations; v4 dropped that

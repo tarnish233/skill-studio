@@ -144,6 +144,49 @@ pub async fn set_project_enabled(
 }
 
 #[tauri::command(rename_all = "camelCase")]
+pub async fn set_project_agent(
+    state: State<'_, AppState>,
+    project_id: String,
+    agent_id: String,
+    enabled: bool,
+) -> Result<LinkReport, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        skill_studio_service::projects::set_project_agent(&state, project_id, agent_id, enabled)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn reapply_project(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<LinkReport, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        skill_studio_service::projects::reapply_project(&state, project_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn save_project(
+    state: State<'_, AppState>,
+    project_id: String,
+    members: skill_studio_service::state::ProjectMembers,
+    expected: Option<skill_studio_service::state::ProjectMembers>,
+) -> Result<LinkReport, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        skill_studio_service::projects::save_project(&state, project_id, members, expected)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command(rename_all = "camelCase")]
 pub async fn reorder_projects(
     state: State<'_, AppState>,
     project_ids: Vec<String>,

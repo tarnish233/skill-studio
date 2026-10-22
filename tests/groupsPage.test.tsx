@@ -19,6 +19,16 @@ import {
 } from "./mocks/tauri";
 import { renderWithProviders } from "./utils/render";
 
+/** 分组页启停与重新应用发出的命令 */
+const SWITCHES = [
+  "set_agent_group",
+  "reapply_agent_groups",
+  "activate_agent_group",
+];
+const switched = () => calls.some((c) => SWITCHES.includes(c.command));
+const setCalls = () =>
+  calls.filter((c) => c.command === "set_agent_group").map((c) => c.args);
+
 function setup() {
   handlers.set("list_agents", () => [claudeAgent, codexAgent]);
   handlers.set("scan_skills", () => [
@@ -44,9 +54,10 @@ it("creates a shared draft and saves the full rapid selection without activating
       groupId: null,
       name: "Dev",
       skillIds: ["a", "b"],
+      expected: null,
     }),
   );
-  expect(calls.some((c) => c.command === "activate_agent_group")).toBe(false);
+  expect(switched()).toBe(false);
 });
 it("分组卡片给出组内 token 体量，空组不显示这个徽标", async () => {
   handlers.set("list_agents", () => [claudeAgent, codexAgent]);
@@ -111,9 +122,9 @@ it("shows every shared group at once, and each Agent's icon only activates that 
     screen.getByRole("button", { name: "为 Codex 启用「Codex group」" }),
   );
   await waitFor(() =>
-    expect(
-      calls.find((c) => c.command === "activate_agent_group")?.args,
-    ).toEqual({ agentId: "codex", groupIds: ["c"] }),
+    expect(setCalls()).toEqual([
+      { agentId: "codex", groupId: "c", enabled: true },
+    ]),
   );
 });
 it("failed saves keep the editable draft, and going back discards it only after confirming", async () => {
@@ -152,28 +163,37 @@ it("pending changes get their own apply button, and the Agent icon still stops t
     },
   }));
   // 新成员在 Codex 上不可用：后端拒绝重新应用，但停用照常成功
-  handlers.set("activate_agent_group", (args) => {
-    if (args.groupIds.length)
-      throw new Error("Beta 在此 Agent 中不可用或被手动停用");
+  handlers.set("reapply_agent_groups", () => {
+    throw new Error("Beta 在此 Agent 中不可用或被手动停用");
   });
   const activations = () =>
     calls
-      .filter((c) => c.command === "activate_agent_group")
-      .map((c) => c.args);
+      .filter((c) => SWITCHES.includes(c.command))
+      .map((c) => ({
+        command: c.command,
+        ...(c.args as Record<string, unknown>),
+      }));
   renderWithProviders(<GroupsPage />);
   expect(await screen.findByText("有待应用修改")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "删除 Dev" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "应用修改「Dev」" }));
   await waitFor(() =>
-    expect(activations()).toEqual([{ agentId: "codex", groupIds: ["c"] }]),
+    expect(activations()).toEqual([
+      { command: "reapply_agent_groups", agentId: "codex" },
+    ]),
   );
   const stop = screen.getByRole("button", { name: "为 Codex 停用「Dev」" });
   await waitFor(() => expect(stop).not.toBeDisabled());
   fireEvent.click(stop);
   await waitFor(() =>
     expect(activations()).toEqual([
-      { agentId: "codex", groupIds: ["c"] },
-      { agentId: "codex", groupIds: [] },
+      { command: "reapply_agent_groups", agentId: "codex" },
+      {
+        command: "set_agent_group",
+        agentId: "codex",
+        groupId: "c",
+        enabled: false,
+      },
     ]),
   );
 });
@@ -239,9 +259,7 @@ it.each([false, true])(
           screen.getAllByRole("button", { name: /拖拽排序/ })[0],
         ).toHaveAccessibleName(fail ? "拖拽排序 First" : "拖拽排序 Other"),
       );
-      expect(calls.some((c) => c.command === "activate_agent_group")).toBe(
-        false,
-      );
+      expect(switched()).toBe(false);
     } finally {
       rect.mockRestore();
     }
@@ -259,8 +277,8 @@ it("uses the same Agent icon to activate and stop a group after status refresh",
       ? { codex: [{ groupId: "c", skillIds: ["a"], entries: [] }] }
       : {},
   }));
-  handlers.set("activate_agent_group", (args) => {
-    active = args.groupIds.length > 0;
+  handlers.set("set_agent_group", (args) => {
+    active = args.enabled;
   });
   renderWithProviders(<GroupsPage />);
   fireEvent.click(
@@ -275,13 +293,9 @@ it("uses the same Agent icon to activate and stop a group after status refresh",
   ).toBeNull();
   fireEvent.click(stop);
   await screen.findByRole("button", { name: "为 Codex 启用「Dev」" });
-  expect(
-    calls
-      .filter((c) => c.command === "activate_agent_group")
-      .map((c) => c.args),
-  ).toEqual([
-    { agentId: "codex", groupIds: ["c"] },
-    { agentId: "codex", groupIds: [] },
+  expect(setCalls()).toEqual([
+    { agentId: "codex", groupId: "c", enabled: true },
+    { agentId: "codex", groupId: "c", enabled: false },
   ]);
 });
 
@@ -305,7 +319,7 @@ it("keeps a consistent card until both activation config and skill status finish
       ? pendingSkills
       : [makeSkill({ id: "a", agents: { codex: agentState("source", true) } })],
   );
-  handlers.set("activate_agent_group", () => {
+  handlers.set("set_agent_group", () => {
     active = true;
   });
   renderWithProviders(<GroupsPage />);
@@ -375,9 +389,9 @@ it("hides Agents whose management is off, but keeps a stop-only icon while one s
   expect(screen.getByRole("button", { name: "删除 Dev" })).toBeDisabled();
   fireEvent.click(stop);
   await waitFor(() =>
-    expect(
-      calls.find((c) => c.command === "activate_agent_group")?.args,
-    ).toEqual({ agentId: "codex", groupIds: [] }),
+    expect(setCalls()).toEqual([
+      { agentId: "codex", groupId: "c", enabled: false },
+    ]),
   );
 });
 
@@ -386,7 +400,7 @@ it("disables every Agent icon while any switch is in progress", async () => {
   handlers.set("list_groups", () => [
     makeGroup({ id: "c", name: "Dev", skillIds: ["a"] }),
   ]);
-  handlers.set("activate_agent_group", () => new Promise(() => {}));
+  handlers.set("set_agent_group", () => new Promise(() => {}));
   renderWithProviders(<GroupsPage />);
   fireEvent.click(
     await screen.findByRole("button", { name: "为 Codex 启用「Dev」" }),
@@ -493,8 +507,15 @@ it("switches to one Agent's view: that Agent's buttons only, its own stats, and 
       ]),
     );
   handlers.set("get_config", () => ({ activeGroups: records() }));
-  handlers.set("activate_agent_group", (args) => {
-    active = { ...active, [args.agentId]: args.groupIds };
+  // 与后端一致：只改这一个分组，其余按当时的启用记录保留
+  handlers.set("set_agent_group", (args) => {
+    const ids = active[args.agentId] ?? [];
+    active = {
+      ...active,
+      [args.agentId]: args.enabled
+        ? [...ids, args.groupId]
+        : ids.filter((id) => id !== args.groupId),
+    };
   });
   renderWithProviders(<GroupsPage />);
   fireEvent.click(await viewChip("Codex 1"));
@@ -515,10 +536,13 @@ it("switches to one Agent's view: that Agent's buttons only, its own stats, and 
     screen.getByRole("button", { name: "为 Codex 启用「Other」" }),
   );
   await waitFor(() =>
-    expect(
-      calls.filter((c) => c.command === "activate_agent_group").at(-1)?.args,
-    ).toEqual({ agentId: "codex", groupIds: ["c", "o"] }),
+    expect(setCalls().at(-1)).toEqual({
+      agentId: "codex",
+      groupId: "o",
+      enabled: true,
+    }),
   );
+  expect(active.codex).toEqual(["c", "o"]);
   // 叠加后两张卡片都是"停用"，胶囊的数字跟着变
   await viewChip("Codex 2");
   expect(
@@ -526,10 +550,13 @@ it("switches to one Agent's view: that Agent's buttons only, its own stats, and 
   ).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "为 Codex 停用「Dev」" }));
   await waitFor(() =>
-    expect(
-      calls.filter((c) => c.command === "activate_agent_group").at(-1)?.args,
-    ).toEqual({ agentId: "codex", groupIds: ["o"] }),
+    expect(setCalls().at(-1)).toEqual({
+      agentId: "codex",
+      groupId: "c",
+      enabled: false,
+    }),
   );
+  expect(active.codex).toEqual(["o"]);
 });
 
 it("remembers the Agent view after leaving the page, and 全部 brings back the icon rows", async () => {
@@ -574,8 +601,8 @@ it("applies pending changes for the selected Agent from its view", async () => {
   );
   await waitFor(() =>
     expect(
-      calls.find((c) => c.command === "activate_agent_group")?.args,
-    ).toEqual({ agentId: "codex", groupIds: ["c"] }),
+      calls.find((c) => c.command === "reapply_agent_groups")?.args,
+    ).toEqual({ agentId: "codex" }),
   );
 });
 
@@ -604,8 +631,15 @@ it("stacks two groups for one Agent from the 全部 view, and stopping one keeps
       ]),
     );
   handlers.set("get_config", () => ({ activeGroups: records() }));
-  handlers.set("activate_agent_group", (args) => {
-    active = { ...active, [args.agentId]: args.groupIds };
+  // 与后端一致：只改这一个分组，其余按当时的启用记录保留
+  handlers.set("set_agent_group", (args) => {
+    const ids = active[args.agentId] ?? [];
+    active = {
+      ...active,
+      [args.agentId]: args.enabled
+        ? [...ids, args.groupId]
+        : ids.filter((id) => id !== args.groupId),
+    };
   });
   renderWithProviders(<GroupsPage />);
   // 两个分组各点一次：两次都变成「已启用」，而不是互相顶掉
@@ -615,18 +649,17 @@ it("stacks two groups for one Agent from the 全部 view, and stopping one keeps
   await screen.findByRole("button", { name: "为 Codex 停用「X」" });
   fireEvent.click(screen.getByRole("button", { name: "为 Codex 启用「Y」" }));
   await screen.findByRole("button", { name: "为 Codex 停用「Y」" });
-  await waitFor(() =>
-    expect(
-      calls.filter((c) => c.command === "activate_agent_group").at(-1)?.args,
-    ).toEqual({ agentId: "codex", groupIds: ["x", "y"] }),
-  );
-  // 停用 X 只发一次含 Y 的列表，共用的 Beta 不受影响
+  expect(active.codex).toEqual(["x", "y"]);
+  // 停用 X 只停这一个，Y 和共用的 Beta 不受影响
   fireEvent.click(screen.getByRole("button", { name: "为 Codex 停用「X」" }));
   await waitFor(() =>
-    expect(
-      calls.filter((c) => c.command === "activate_agent_group").at(-1)?.args,
-    ).toEqual({ agentId: "codex", groupIds: ["y"] }),
+    expect(setCalls().at(-1)).toEqual({
+      agentId: "codex",
+      groupId: "x",
+      enabled: false,
+    }),
   );
+  expect(active.codex).toEqual(["y"]);
   expect(
     await screen.findByRole("button", { name: "为 Codex 停用「Y」" }),
   ).toBeInTheDocument();
@@ -665,9 +698,125 @@ it("整张分组卡片可点：点卡片在页内展开编辑，卡片上的图�
     await screen.findByRole("button", { name: "为 Codex 启用「Dev」" }),
   );
   await waitFor(() =>
-    expect(
-      calls.find((c) => c.command === "activate_agent_group")?.args,
-    ).toEqual({ agentId: "codex", groupIds: ["c"] }),
+    expect(setCalls()).toEqual([
+      { agentId: "codex", groupId: "c", enabled: true },
+    ]),
   );
   expect(screen.queryByLabelText("分组名称")).not.toBeInTheDocument();
+});
+
+it("启停只告诉后端这一个分组：别处刚启用、页面还没刷新出来的分组不会被撤掉", async () => {
+  setup();
+  handlers.set("list_groups", () => [
+    makeGroup({ id: "c", name: "Dev", skillIds: ["a"] }),
+    makeGroup({ id: "o", name: "Other", skillIds: ["b"] }),
+  ]);
+  let active: string[] = [];
+  handlers.set("get_config", () => ({
+    activeGroups: {
+      codex: active.map((groupId) => ({ groupId, skillIds: [], entries: [] })),
+    },
+  }));
+  handlers.set("set_agent_group", (args) => {
+    active = args.enabled
+      ? [...active, args.groupId]
+      : active.filter((id) => id !== args.groupId);
+    return [];
+  });
+  renderWithProviders(<GroupsPage />);
+  const enable = await screen.findByRole("button", {
+    name: "为 Codex 启用「Dev」",
+  });
+  // 命令行这时为 Codex 启用了 Other，页面还没收到刷新
+  active = ["o"];
+  fireEvent.click(enable);
+  await waitFor(() => expect(active).toEqual(["o", "c"]));
+  expect(calls.some((c) => c.command === "activate_agent_group")).toBe(false);
+});
+
+it("保存时带上打开编辑时的样子：别处改过就提示，修改留在页面上；保存成功后以刚存的为准", async () => {
+  setup();
+  handlers.set("list_groups", () => [
+    makeGroup({ id: "c", name: "Dev", skillIds: ["a"] }),
+  ]);
+  let conflict = true;
+  handlers.set("save_group", (args) => {
+    if (conflict)
+      throw new Error(
+        "分组已被别处修改（另一个窗口或命令行），请按最新内容重新修改",
+      );
+    return makeGroup({
+      id: args.groupId,
+      name: args.name,
+      skillIds: args.skillIds,
+    });
+  });
+  const saves = () =>
+    calls.filter((c) => c.command === "save_group").map((c) => c.args);
+  renderWithProviders(<GroupsPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 Dev" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Beta" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "保存失败，修改已保留：分组已被别处修改",
+  );
+  expect(saves()).toEqual([
+    {
+      groupId: "c",
+      name: "Dev",
+      skillIds: ["a", "b"],
+      expected: { name: "Dev", skillIds: ["a"] },
+    },
+  ]);
+  expect(screen.getByRole("checkbox", { name: "Beta" })).toBeChecked();
+
+  conflict = false;
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(saves()).toHaveLength(2));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Alpha" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() =>
+    expect(saves().at(-1)).toEqual({
+      groupId: "c",
+      name: "Dev",
+      skillIds: ["b"],
+      expected: { name: "Dev", skillIds: ["a", "b"] },
+    }),
+  );
+});
+
+it("正在使用的分组不能清空成员：说明先停用，改动留在页面上", async () => {
+  setup();
+  handlers.set("list_groups", () => [
+    makeGroup({ id: "c", name: "Dev", skillIds: ["a"] }),
+  ]);
+  handlers.set("get_config", () => ({
+    activeGroups: {
+      codex: [{ groupId: "c", skillIds: ["a"], entries: [] }],
+    },
+  }));
+  handlers.set("save_group", (args) => {
+    if ((args.skillIds as string[]).length === 0)
+      throw new Error(
+        "分组「Dev」正在 Codex 上使用，清空成员前请先为这些 Agent 停用",
+      );
+    return makeGroup({
+      id: args.groupId,
+      name: args.name,
+      skillIds: args.skillIds as string[],
+    });
+  });
+  renderWithProviders(<GroupsPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 Dev" }));
+  fireEvent.click(await screen.findByRole("checkbox", { name: "Alpha" }));
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "清空成员前请先为这些 Agent 停用",
+  );
+  // 拒绝时什么都没保存：未勾选的草稿留着，返回或重新保存都能继续
+  expect(screen.getByRole("checkbox", { name: "Alpha" })).not.toBeChecked();
+  expect(
+    calls.filter((c) => c.command === "save_group").at(-1)?.args,
+  ).toMatchObject({ skillIds: [] });
+  expect(screen.getByRole("button", { name: "保存" })).not.toBeDisabled();
 });

@@ -915,3 +915,53 @@ fn groups_stack_with_shared_members_and_stop_one_at_a_time() {
     assert!(!env.codex_skills().join("shared").exists());
     assert!(!c.active_groups.contains_key("codex"));
 }
+
+#[test]
+#[serial]
+fn clearing_the_last_member_of_a_group_in_use_is_refused_until_it_is_stopped() {
+    let env = Env::new();
+    let studio = env.studio();
+    let mut c = studio.load_config().unwrap();
+    let id = make(&env, &studio, &mut c, "a", &["one"]);
+    studio
+        .activate_agent_groups(&mut c, "codex", std::slice::from_ref(&id))
+        .unwrap();
+
+    let error = studio
+        .save_group(&mut c, id.clone(), "a", vec![])
+        .unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("Codex"), "{message}");
+    assert!(
+        message.contains("清空成员前请先为这些 Agent 停用"),
+        "{message}"
+    );
+    // 拒绝时什么都不改：成员和启用记录都还在
+    assert_eq!(c.group(&id).unwrap().skill_ids.len(), 1);
+    assert_eq!(c.active_groups_of("codex").len(), 1);
+
+    // 先停用，就能清空
+    studio.activate_agent_groups(&mut c, "codex", &[]).unwrap();
+    studio.save_group(&mut c, id.clone(), "a", vec![]).unwrap();
+    assert!(c.group(&id).unwrap().skill_ids.is_empty());
+}
+
+#[test]
+#[serial]
+fn the_agents_named_when_refusing_to_clear_a_group_follow_the_fixed_order() {
+    let env = Env::new();
+    let studio = env.studio();
+    let mut c = studio.load_config().unwrap();
+    let id = make(&env, &studio, &mut c, "a", &["one"]);
+    studio
+        .activate_agent_groups(&mut c, "codex", std::slice::from_ref(&id))
+        .unwrap();
+    studio
+        .activate_agent_groups(&mut c, "claude-code", std::slice::from_ref(&id))
+        .unwrap();
+    let message = studio
+        .save_group(&mut c, id, "a", vec![])
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains("Claude Code、Codex"), "{message}");
+}

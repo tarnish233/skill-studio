@@ -186,15 +186,11 @@ function GroupsContent() {
       viewAgentId: viewAgent?.id,
     });
   }
+  // 只传这一个分组和 Agent：后端按最新的启用记录计算，不会撤掉别处（另一个窗口、
+  // 命令行）刚启用、这里还没刷新出来的分组
   const toggle = (g: Group, agentId: string, on: boolean) =>
     void switching(
-      () =>
-        groupsApi.activate(
-          agentId,
-          on
-            ? [...activeIds(agentId), g.id]
-            : activeIds(agentId).filter((id) => id !== g.id),
-        ),
+      () => groupsApi.enable(agentId, g.id, on),
       `${on ? "分组已启用" : "分组已停用"}，${RELOAD}`,
     );
   const reapply = (agentIds: string[]) =>
@@ -202,9 +198,7 @@ function GroupsContent() {
       // 依次写：遇到第一个失败就停下报错，已经成功的保持生效
       const untouched: UntouchedCopy[] = [];
       for (const agentId of agentIds)
-        untouched.push(
-          ...((await groupsApi.activate(agentId, activeIds(agentId))) ?? []),
-        );
+        untouched.push(...((await groupsApi.reapply(agentId)) ?? []));
       return untouched;
     }, `修改已应用，${RELOAD}`);
   /**
@@ -214,6 +208,7 @@ function GroupsContent() {
   async function save(
     id: string | null,
     draft: GroupDraft,
+    opened: GroupDraft | null,
   ): Promise<GroupSaveResult> {
     const targets = id
       ? agents.filter((a) => activeIds(a.id).includes(id))
@@ -221,15 +216,17 @@ function GroupsContent() {
     const outcome: { id: string | null; error?: string } = { id: null };
     await run(
       async () => {
-        const group = await groupsApi.save(id, draft.name, draft.memberIds);
+        const group = await groupsApi.save(
+          id,
+          draft.name,
+          draft.memberIds,
+          opened && { name: opened.name, skillIds: opened.memberIds },
+        );
         outcome.id = group.id;
         const untouched: UntouchedCopy[] = [];
         for (const agent of targets) {
           try {
-            untouched.push(
-              ...((await groupsApi.activate(agent.id, activeIds(agent.id))) ??
-                []),
-            );
+            untouched.push(...((await groupsApi.reapply(agent.id)) ?? []));
           } catch (e) {
             throw new Error(
               `分组已保存，写入 ${agent.displayName} 时失败：${e instanceof Error ? e.message : String(e)}`,
@@ -424,7 +421,7 @@ function GroupsContent() {
             onToggle={(agentId, on) => toggle(current, agentId, on)}
             onReapply={reapply}
             onBack={() => requestNavigation(() => setDetail(null))}
-            onSave={(draft) => save(detail.id, draft)}
+            onSave={(draft, opened) => save(detail.id, draft, opened)}
           />
         </DetailTransition>
         {deleteDialog}

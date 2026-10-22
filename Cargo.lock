@@ -4326,6 +4326,7 @@ dependencies = [
 name = "skill-studio-service"
 version = "0.6.8"
 dependencies = [
+ "fs2",
  "log",
  "serde",
  "serde_json",

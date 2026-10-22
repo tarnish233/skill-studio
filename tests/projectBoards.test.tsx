@@ -100,23 +100,41 @@ const skillBoard: Board = {
     ];
     if (o.empty) projects = [];
     handlers.set("list_projects", () => listed(o.list, projects));
-    handlers.set("apply_project", ({ projectId, selection }) => {
-      projects = projects.map((p) =>
-        p.id === projectId
-          ? {
-              ...p,
-              ...selection,
-              deployments: selection.agentIds.map((agentId: string) => ({
-                agentId,
-                skillIds: ["s1", "s2"],
-                stale: false,
-                issue: null,
-              })),
-            }
-          : p,
-      );
-      return { success: [], failed: [] };
+    // 与后端一致：写入哪些 Agent 按当时的部署算，成员按当时保存的
+    const deploy = (p: ProjectBinding, agentIds: string[]) => ({
+      ...p,
+      deployments: agentIds.map((agentId) => ({
+        agentId,
+        skillIds: ["s1", "s2"],
+        stale: false,
+        issue: null,
+      })),
     });
+    const deployed = (p: ProjectBinding) =>
+      (p.deployments ?? []).map((d) => d.agentId);
+    const update = (
+      id: string,
+      change: (p: ProjectBinding) => ProjectBinding,
+    ) => {
+      projects = projects.map((p) => (p.id === id ? change(p) : p));
+      return { success: [], failed: [] };
+    };
+    handlers.set("set_project_agent", ({ projectId, agentId, enabled }) =>
+      update(projectId, (p) =>
+        deploy(
+          p,
+          enabled
+            ? [...deployed(p), agentId]
+            : deployed(p).filter((a) => a !== agentId),
+        ),
+      ),
+    );
+    handlers.set("reapply_project", ({ projectId }) =>
+      update(projectId, (p) => deploy(p, deployed(p))),
+    );
+    handlers.set("save_project", ({ projectId, members }) =>
+      update(projectId, (p) => deploy({ ...p, ...members }, deployed(p))),
+    );
     handlers.set("delete_project", ({ projectId }) => {
       projects = projects.filter((p) => p.id !== projectId);
       return null;
@@ -145,46 +163,28 @@ const skillBoard: Board = {
     );
   },
   render: () => renderWithProviders(<ProjectsPage />),
+  // 启停只传这个项目和 Agent，应用修改只传项目：其余由后端按最新状态计算
   writes: () =>
-    calls.filter((c) => c.command === "apply_project").map((c) => c.args),
-  enableCodex: {
-    projectId: "p1",
-    selection: {
-      agentIds: ["claude-code", "codex"],
-      skillIds: ["s1"],
-      groupIds: ["g1"],
-      linkMode: "copy",
-    },
-  },
-  // 先为 Codex 启用了：停用 Claude Code 后只剩 Codex
-  stopClaude: {
-    projectId: "p1",
-    selection: {
-      agentIds: ["codex"],
-      skillIds: ["s1"],
-      groupIds: ["g1"],
-      linkMode: "copy",
-    },
-  },
-  reapplyClaude: {
-    projectId: "p1",
-    selection: {
-      agentIds: ["claude-code"],
-      skillIds: ["s1"],
-      groupIds: ["g1"],
-      linkMode: "copy",
-    },
-  },
+    calls
+      .filter((c) =>
+        [
+          "set_project_agent",
+          "reapply_project",
+          "save_project",
+          "apply_project",
+        ].includes(c.command),
+      )
+      .map((c) => c.args),
+  enableCodex: { projectId: "p1", agentId: "codex", enabled: true },
+  stopClaude: { projectId: "p1", agentId: "claude-code", enabled: false },
+  reapplyClaude: { projectId: "p1" },
   issue: "pdf-tools 的副本已被修改",
   extra: "yuque",
+  // 写入哪些 Agent 由后端按当前部署确定；带上打开时的成员，别处改过就不覆盖
   saved: {
     projectId: "p1",
-    selection: {
-      agentIds: ["claude-code"],
-      skillIds: ["s1", "s3"],
-      groupIds: ["g1"],
-      linkMode: "copy",
-    },
+    members: { skillIds: ["s1", "s3"], groupIds: ["g1"], linkMode: "copy" },
+    expected: { skillIds: ["s1"], groupIds: ["g1"], linkMode: "copy" },
   },
   reload: "请在 Agent 中重新加载 skill 或新开会话",
   otherSide: "请先在 MCP 项目里停用所有 Agent",

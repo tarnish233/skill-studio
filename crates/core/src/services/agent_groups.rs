@@ -30,6 +30,22 @@ impl Studio {
         if config.groups.iter().any(|g| g.name == name && g.id != id) {
             return Err(Error::invalid("已存在同名分组"));
         }
+        // 空分组不能启用；正在用的分组被清空时，先让用户停用，避免「已经存下、写入又失败」的半截状态
+        if skill_ids.is_empty() {
+            let using = config.agents_using_group(&id);
+            // 按 Agent 的固定顺序列出，提示文案才稳定
+            let names: Vec<&str> = crate::models::agent::AGENTS
+                .iter()
+                .filter(|agent| using.contains(&agent.id))
+                .map(|agent| agent.display_name)
+                .collect();
+            if !names.is_empty() {
+                return Err(Error::invalid(format!(
+                    "分组「{name}」正在 {} 上使用，清空成员前请先为这些 Agent 停用",
+                    names.join("、")
+                )));
+            }
+        }
         let mut seen = HashSet::new();
         let skill_ids: Vec<_> = skill_ids
             .into_iter()

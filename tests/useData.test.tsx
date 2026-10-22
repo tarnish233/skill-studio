@@ -96,6 +96,66 @@ describe("useSkills 的扫描时机", () => {
   });
 });
 
+describe("Studio 之外的改动", () => {
+  function listenAll() {
+    const listeners = new Map<string, (e: { payload: unknown }) => void>();
+    vi.mocked(listen).mockImplementation(async (name, cb) => {
+      listeners.set(name, cb as (e: { payload: unknown }) => void);
+      return () => {};
+    });
+    return listeners;
+  }
+  function client() {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    for (const key of [
+      queryKeys.groups,
+      queryKeys.projects,
+      queryKeys.settings,
+      queryKeys.config,
+      queryKeys.skills,
+      queryKeys.agents,
+      queryKeys.agentProbe,
+      ["mcp", "local"],
+    ])
+      qc.setQueryData(key, []);
+    return qc;
+  }
+  const stale = (qc: QueryClient, key: readonly unknown[]) =>
+    qc.getQueryState(key)?.isInvalidated ?? false;
+
+  it("别的进程改了配置：分组、项目、设置、skill 和 MCP 状态都重新读取，不重新探测 Agent 命令行", async () => {
+    const listeners = listenAll();
+    const qc = client();
+    renderHook(() => useSkillsAutoRefresh(), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(listeners.has("config-changed")).toBe(true));
+    act(() => listeners.get("config-changed")!({ payload: null }));
+    for (const key of [
+      queryKeys.groups,
+      queryKeys.projects,
+      queryKeys.settings,
+      queryKeys.config,
+      queryKeys.skills,
+      queryKeys.agents,
+      ["mcp", "local"],
+    ])
+      expect(stale(qc, key), JSON.stringify(key)).toBe(true);
+    expect(stale(qc, queryKeys.agentProbe)).toBe(false);
+  });
+
+  it("MCP 托管状态变了：只重新读取 MCP 状态，不等 30 秒的轮询", async () => {
+    const listeners = listenAll();
+    const qc = client();
+    renderHook(() => useSkillsAutoRefresh(), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(listeners.has("mcp-changed")).toBe(true));
+    act(() => listeners.get("mcp-changed")!({ payload: null }));
+    expect(stale(qc, ["mcp", "local"])).toBe(true);
+    expect(stale(qc, queryKeys.groups)).toBe(false);
+    expect(stale(qc, queryKeys.skills)).toBe(false);
+  });
+});
+
 it("defers data refresh after an Agent visibility change but refreshes on next navigation", async () => {
   let settings = defaultSettings();
   handlers.set("get_settings", () => settings);

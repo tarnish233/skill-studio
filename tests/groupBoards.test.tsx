@@ -68,6 +68,8 @@ const listed = <T,>(list: Options["list"], value: T) =>
       ? Promise.reject(list)
       : value;
 
+/** Skill 分组页每次写入后，这个 Agent 叠加的全部分组（后端算出的结果） */
+let skillWrites: { agentId: string; groupIds: string[] }[] = [];
 const skillBoard: Board = {
   name: "Skill",
   setup(o = {}) {
@@ -142,16 +144,19 @@ const skillBoard: Board = {
       ],
     };
     handlers.set("get_config", () => ({ activeGroups: active }));
-    handlers.set("activate_agent_group", ({ agentId, groupIds }) => {
+    skillWrites = [];
+    // 与后端一致：启停与重新应用都按当时的启用记录算出这个 Agent 的全部分组再写入
+    const write = (agentId: string, groupIds: string[]) => {
       if (o.activateError && agentId === "codex")
         throw new Error(o.activateError);
       active = {
         ...active,
-        [agentId]: (groupIds as string[]).map((groupId) => ({
+        [agentId]: groupIds.map((groupId) => ({
           groupId,
           skillIds: groups.find((g) => g.id === groupId)!.skillIds,
         })),
       };
+      skillWrites.push({ agentId, groupIds });
       if (o.untouched === "none") return null;
       return o.untouched
         ? [
@@ -164,7 +169,22 @@ const skillBoard: Board = {
             },
           ]
         : [];
+    };
+    const enabledIds = (agentId: string) =>
+      (active[agentId] ?? []).map((g) => g.groupId);
+    handlers.set("set_agent_group", ({ agentId, groupId, enabled }) => {
+      const ids = enabledIds(agentId as string);
+      if (ids.includes(groupId as string) === enabled) return [];
+      return write(
+        agentId as string,
+        enabled
+          ? [...ids, groupId as string]
+          : ids.filter((id) => id !== groupId),
+      );
     });
+    handlers.set("reapply_agent_groups", ({ agentId }) =>
+      write(agentId as string, enabledIds(agentId as string)),
+    );
     handlers.set("save_group", ({ groupId, name, skillIds }) => {
       if (o.saveError) throw new Error(o.saveError);
       const group = makeGroup({ id: groupId ?? "new", name, skillIds });
@@ -209,10 +229,7 @@ const skillBoard: Board = {
       calls.find((c) => c.command === "reorder_groups")?.args as
         { groupIds: string[] } | undefined
     )?.groupIds,
-  activations: () =>
-    calls
-      .filter((c) => c.command === "activate_agent_group")
-      .map((c) => c.args),
+  activations: () => skillWrites,
 };
 
 const mcp = (

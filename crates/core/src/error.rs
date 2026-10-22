@@ -88,6 +88,13 @@ impl Error {
     }
 }
 
+impl Error {
+    /// 等不到跨进程的配置锁：稍后重试即可，不是这次操作本身的问题
+    pub fn is_config_busy(&self) -> bool {
+        matches!(self, Error::Other(message) if message.contains(crate::services::store::CONFIG_BUSY))
+    }
+}
+
 impl From<Error> for String {
     fn from(err: Error) -> Self {
         err.to_string()

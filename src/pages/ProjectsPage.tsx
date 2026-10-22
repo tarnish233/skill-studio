@@ -204,32 +204,15 @@ function ProjectsContent() {
       labels: PROJECT_CARD_LABELS("skill"),
     });
   }
-  /** 只改这个项目写进哪些 Agent：成员用已保存的 */
-  const write = (p: ProjectBinding, agentIds: string[]) =>
-    projectsApi
-      .apply(p.id, {
-        agentIds,
-        skillIds: p.skillIds,
-        groupIds: p.groupIds,
-        linkMode: p.linkMode,
-      })
-      .then(checked);
+  // 只传这个项目和 Agent，成员用已保存的：后端按最新状态计算，不会撤掉别处（另一个
+  // 窗口、命令行）刚为其他 Agent 做的启用，也不会用这里还没刷新的成员覆盖
   const toggle = (p: ProjectBinding, agentId: string, on: boolean) =>
-    void run(
-      () =>
-        write(
-          p,
-          on
-            ? [...activeIds(p), agentId]
-            : activeIds(p).filter((id) => id !== agentId),
-        ),
-      {
-        success: `${on ? "项目已启用" : "项目已停用"}，${RELOAD}`,
-        notice: (report) => untouchedSkillNote(report.untouched),
-      },
-    );
+    void run(() => projectsApi.setAgent(p.id, agentId, on).then(checked), {
+      success: `${on ? "项目已启用" : "项目已停用"}，${RELOAD}`,
+      notice: (report) => untouchedSkillNote(report.untouched),
+    });
   const reapply = (p: ProjectBinding) =>
-    void run(() => write(p, activeIds(p)), {
+    void run(() => projectsApi.reapply(p.id).then(checked), {
       success: `修改已写入，${RELOAD}`,
       notice: (report) => untouchedSkillNote(report.untouched),
     });
@@ -570,12 +553,8 @@ function ProjectDetail({
     setWriting(true);
     setError(null);
     try {
-      const report = checked(
-        await projectsApi.apply(project.id, {
-          ...value,
-          agentIds: activeAgents,
-        }),
-      );
+      // 写入哪些 Agent 由后端按当前部署确定；打开时的成员用来核对别处是否改过
+      const report = checked(await projectsApi.save(project.id, value, saved));
       setSaved(value);
       await qc.invalidateQueries();
       const done = activeAgents.length

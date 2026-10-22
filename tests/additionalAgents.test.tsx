@@ -125,15 +125,9 @@ it.each(skillOnlyAgents)(
     );
     fireEvent.click(icon);
     await waitFor(() =>
-      expect(calls.find((c) => c.command === "apply_project")?.args).toEqual({
-        projectId: "p1",
-        selection: {
-          agentIds: [agent.id],
-          skillIds: ["demo"],
-          groupIds: [],
-          linkMode: "copy",
-        },
-      }),
+      expect(
+        calls.find((c) => c.command === "set_project_agent")?.args,
+      ).toEqual({ projectId: "p1", agentId: agent.id, enabled: true }),
     );
   },
 );
@@ -173,6 +167,7 @@ it.each(skillOnlyAgents)(
         groupId: null,
         name: "Dev",
         skillIds: ["demo"],
+        expected: null,
       }),
     );
     // 新建的分组保存后留在整页编辑里，保存按钮回到不可点

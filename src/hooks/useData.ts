@@ -136,8 +136,10 @@ export function useAppVersion() {
 }
 
 /**
- * 用户在 Studio 之外改动了 skill 目录时刷新。
- * 后端 watcher 已做 400ms 去抖，这里直接失效即可。
+ * Studio 之外的改动出现时刷新：
+ * - skills-changed：skill 目录变了（后端 watcher 已做 400ms 去抖）
+ * - config-changed：别的进程（命令行、另一个 Skill Studio）改了配置，分组、项目、设置都可能变了
+ * - mcp-changed：MCP 托管状态变了，不必等 30 秒一次的轮询
  */
 export function useSkillsAutoRefresh() {
   const target = useTarget();
@@ -145,6 +147,27 @@ export function useSkillsAutoRefresh() {
   useTauriEvent("skills-changed", () => {
     if (target.id !== "local") return;
     void qc.invalidateQueries({ queryKey: queryKeys.skills });
+  });
+  useTauriEvent("config-changed", () => {
+    if (target.id !== "local") return;
+    for (const queryKey of [
+      queryKeys.skills,
+      queryKeys.groups,
+      queryKeys.projects,
+      queryKeys.settings,
+      queryKeys.config,
+      queryKeys.backups,
+      queryKeys.skillBackups,
+      queryKeys.hubBackups,
+      ["mcp", "local"],
+    ])
+      void qc.invalidateQueries({ queryKey });
+    // Agent 目录覆盖、退出管理都在配置里；不重新探测各 Agent 的命令行
+    void qc.invalidateQueries({ queryKey: queryKeys.agents, exact: true });
+  });
+  useTauriEvent("mcp-changed", () => {
+    if (target.id !== "local") return;
+    void qc.invalidateQueries({ queryKey: ["mcp", "local"] });
   });
   useEffect(() => {
     if (target.id === "local" || !target.connected) return;

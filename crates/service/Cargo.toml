@@ -14,3 +14,4 @@ uuid = { version = "1.11", features = ["v4"] }
 [dev-dependencies]
 tempfile.workspace = true
 serial_test = "3"
+fs2 = "0.4.3"

@@ -30,6 +30,11 @@ describe("remote target routing", () => {
       "delete_hub_backups",
       "read_skill_document",
       "register_skills",
+      "set_agent_group",
+      "reapply_agent_groups",
+      "set_project_agent",
+      "reapply_project",
+      "save_project",
     ]) {
       expect(await invoke(method, { sample: 1 })).toEqual({
         serverId: "node2",

@@ -114,7 +114,7 @@ it("选过 Agent 但还没写入的项目显示为未启用；为另一个 Agent
       skillIds: ["a"],
     }),
   ]);
-  handlers.set("apply_project", () => ({ success: [], failed: [] }));
+  handlers.set("set_project_agent", () => ({ success: [], failed: [] }));
   renderWithProviders(<ProjectsPage />);
   // 胶囊上的数字是启用了这个 Agent 的项目数
   expect(await screen.findByRole("button", { name: "Codex 1" })).toBeVisible();
@@ -126,15 +126,12 @@ it("选过 Agent 但还没写入的项目显示为未启用；为另一个 Agent
   fireEvent.click(
     screen.getByRole("button", { name: "为 Claude Code 启用「Draft」" }),
   );
+  // 只告诉后端这一个 Agent：写入哪些由后端按实际部署计算，选过没写入的 Codex 不会顺带写入
   await waitFor(() =>
-    expect(calls.find((c) => c.command === "apply_project")?.args).toEqual({
+    expect(calls.find((c) => c.command === "set_project_agent")?.args).toEqual({
       projectId: "draft",
-      selection: {
-        agentIds: ["claude-code"],
-        skillIds: ["a"],
-        groupIds: [],
-        linkMode: "copy",
-      },
+      agentId: "claude-code",
+      enabled: true,
     }),
   );
 });

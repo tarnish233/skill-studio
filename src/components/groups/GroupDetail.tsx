@@ -71,7 +71,11 @@ export function GroupDetail({
   onToggle: (agentId: string, activate: boolean) => void;
   onReapply: (agentIds: string[]) => void;
   onBack: () => void;
-  onSave: (draft: GroupDraft) => Promise<GroupSaveResult>;
+  /** `opened`：打开编辑（或上次保存）时的样子，新建时为 null；用于核对别处是否改过 */
+  onSave: (
+    draft: GroupDraft,
+    opened: GroupDraft | null,
+  ) => Promise<GroupSaveResult>;
 }) {
   const [value, setValue] = useState<GroupDraft>(() => ({
     name: group?.name ?? "",
@@ -109,7 +113,7 @@ export function GroupDetail({
     setSaving(true);
     setError(null);
     const draft = value;
-    const result = await onSave(draft);
+    const result = await onSave(draft, isNew ? null : saved);
     if (result.saved) setSaved(draft);
     if (result.error) setError(result.error);
     setSaving(false);

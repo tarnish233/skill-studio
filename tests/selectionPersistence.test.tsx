@@ -21,7 +21,8 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-const updates = () => calls.filter((c) => c.command === "apply_project");
+const updates = () => calls.filter((c) => c.command === "save_project");
+type Members = { skillIds: string[]; groupIds: string[]; linkMode: string };
 
 it("shows repository skills without adding them to Hub bindings", async () => {
   handlers.set("list_projects", () => [makeProject()]);
@@ -129,10 +130,10 @@ it("keeps selections local and saves once, writing the Agents already enabled", 
   ]);
   const first = deferred<unknown>();
   let count = 0;
-  handlers.set("apply_project", async (args) => {
+  handlers.set("save_project", async (args) => {
     count++;
     if (count === 1) await first.promise;
-    project = { ...project, ...args.selection };
+    project = { ...project, ...args.members };
     return { success: [], failed: [] };
   });
   renderWithProviders(<ProjectsPage />);
@@ -148,14 +149,13 @@ it("keeps selections local and saves once, writing the Agents already enabled", 
 
   await waitFor(() => expect(updates()).toHaveLength(1));
   await act(async () => first.resolve({}));
-  await waitFor(() =>
-    expect(calls.filter((c) => c.command === "apply_project")).toHaveLength(1),
-  );
-  const last = (updates().at(-1)!.args as { selection: typeof project })
-    .selection;
-  expect(last.skillIds).toEqual(["a", "b"]);
-  expect(last.agentIds).toEqual(["claude-code", "codex"]);
-  expect(last.groupIds).toEqual(["g1", "g2"]);
+  await waitFor(() => expect(updates()).toHaveLength(1));
+  // 写入哪些 Agent 由后端按当前部署确定；带上打开时的成员，别处改过就不覆盖
+  expect(updates().at(-1)!.args).toEqual({
+    projectId: "p1",
+    members: { skillIds: ["a", "b"], groupIds: ["g1", "g2"], linkMode: "copy" },
+    expected: { skillIds: [], groupIds: [], linkMode: "copy" },
+  });
 });
 
 it("preserves the draft after a failed save, blocks apply, and retries the latest selection", async () => {
@@ -167,10 +167,10 @@ it("preserves the draft after a failed save, blocks apply, and retries the lates
   ]);
   const first = deferred<unknown>();
   let count = 0;
-  handlers.set("apply_project", async (args) => {
+  handlers.set("save_project", async (args) => {
     count++;
     if (count === 1) await first.promise;
-    project = { ...project, ...args.selection };
+    project = { ...project, ...args.members };
     return { success: [], failed: [] };
   });
   renderWithProviders(<ProjectsPage />);
@@ -188,9 +188,10 @@ it("preserves the draft after a failed save, blocks apply, and retries the lates
 
   fireEvent.click(screen.getByRole("button", { name: "保存" }));
   await waitFor(() => expect(updates()).toHaveLength(2));
-  expect(
-    (updates()[1].args as { selection: typeof project }).selection.skillIds,
-  ).toEqual(["a", "b"]);
+  expect((updates()[1].args as { members: Members }).members.skillIds).toEqual([
+    "a",
+    "b",
+  ]);
 });
 
 it("confirms unsaved navigation, supports cancel and discard without saving", async () => {
@@ -223,8 +224,8 @@ it("does not prompt after successful write", async () => {
   let project = makeProject({ agentIds: ["codex"] });
   handlers.set("list_projects", () => [project]);
   handlers.set("scan_skills", () => [makeSkill({ id: "a", name: "Alpha" })]);
-  handlers.set("apply_project", (args) => {
-    project = { ...project, ...args.selection };
+  handlers.set("save_project", (args) => {
+    project = { ...project, ...args.members };
     return { success: [], failed: [] };
   });
   renderWithProviders(<ProjectsPage />);

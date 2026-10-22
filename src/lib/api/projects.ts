@@ -6,6 +6,13 @@ import type {
   TokenEstimate,
 } from "@/types";
 
+/** 项目成员：单独选的 skill、绑定的分组与写入方式 */
+export interface ProjectMembers {
+  skillIds: string[];
+  groupIds: string[];
+  linkMode: LinkMode;
+}
+
 export interface ProjectLocalSkill {
   tokens?: TokenEstimate;
   disabled: boolean;
@@ -45,6 +52,29 @@ export const projectsApi = {
   },
   async setEnabled(projectId: string, enabled: boolean): Promise<LinkReport> {
     return await invoke("set_project_enabled", { projectId, enabled });
+  },
+  /** 为一个 Agent 启用或停用项目，成员用已保存的；后端按最新状态计算，不影响其他 Agent */
+  async setAgent(
+    projectId: string,
+    agentId: string,
+    enabled: boolean,
+  ): Promise<LinkReport> {
+    return await invoke("set_project_agent", { projectId, agentId, enabled });
+  },
+  /** 按已保存的成员重新写入项目已启用的全部 Agent（应用修改） */
+  async reapply(projectId: string): Promise<LinkReport> {
+    return await invoke("reapply_project", { projectId });
+  },
+  /**
+   * 保存成员并写入项目已启用的 Agent（由后端按当前部署确定），还没启用时只保存。
+   * `expected` 是打开详情时的成员：别处改过就拒绝保存，不覆盖
+   */
+  async save(
+    projectId: string,
+    members: ProjectMembers,
+    expected: ProjectMembers | null,
+  ): Promise<LinkReport> {
+    return await invoke("save_project", { projectId, members, expected });
   },
   async reorder(projectIds: string[]): Promise<ProjectBinding[]> {
     return await invoke("reorder_projects", { projectIds });

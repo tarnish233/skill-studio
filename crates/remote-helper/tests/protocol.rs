@@ -497,3 +497,65 @@ fn uploaded_skill_is_installed_and_paths_cannot_escape_staging() {
         .join(".skill-studio/skills/upload-check/SKILL.md")
         .is_file());
 }
+
+/// 真正的两个进程：辅助程序和本进程里的「桌面应用」同时改同一份配置
+#[test]
+fn helper_and_desktop_writing_the_same_config_keep_each_others_changes() {
+    use skill_studio_core::services::store::Store;
+    use skill_studio_service::{groups, state::AppState};
+    let home = fixture();
+    // 桌面这边的 Agent 目录也要落在测试目录里
+    std::env::set_var(skill_studio_core::fs::paths::TEST_HOME_ENV, home.path());
+    let dir = home.path().join(".skill-studio");
+    let desktop = AppState::bootstrap(Store::new(dir.clone())).unwrap();
+    let mut helper = Session::start(home.path(), true);
+    let saved = helper.call(
+        "save_group",
+        json!({"groupId": null, "name": "服务器上建的", "skillIds": []}),
+    );
+    assert!(saved.get("error").is_none(), "{saved}");
+    groups::save_group(&desktop, None, "桌面建的".into(), vec![], None).unwrap();
+
+    let mut mine: Vec<_> = groups::list_groups(&desktop)
+        .unwrap()
+        .into_iter()
+        .map(|g| g.name)
+        .collect();
+    mine.sort();
+    assert_eq!(mine, ["服务器上建的", "桌面建的"]);
+    let listed = helper.call("list_groups", json!({}));
+    let mut theirs: Vec<_> = listed["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["name"].as_str().unwrap().to_string())
+        .collect();
+    theirs.sort();
+    assert_eq!(theirs, mine);
+
+    // 桌面正拿着配置锁时，辅助程序的写入要等它写完
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(dir.join("config.json.lock"))
+        .unwrap();
+    fs2::FileExt::lock_exclusive(&lock).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let waiting = std::thread::spawn(move || {
+        let result = helper.call(
+            "save_group",
+            json!({"groupId": null, "name": "等锁后建的", "skillIds": []}),
+        );
+        tx.send(()).unwrap();
+        result
+    });
+    assert!(rx
+        .recv_timeout(std::time::Duration::from_millis(500))
+        .is_err());
+    drop(lock);
+    rx.recv_timeout(std::time::Duration::from_secs(20)).unwrap();
+    let result = waiting.join().unwrap();
+    assert!(result.get("error").is_none(), "{result}");
+    assert_eq!(groups::list_groups(&desktop).unwrap().len(), 3);
+    std::env::remove_var(skill_studio_core::fs::paths::TEST_HOME_ENV);
+}

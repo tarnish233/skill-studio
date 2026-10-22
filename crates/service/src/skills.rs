@@ -69,7 +69,7 @@ pub fn release_from_hub(state: &AppState, skill_id: String) -> Result<Skill, Str
 /// 纳入托管、移出 Hub 时保存的完整备份。恢复模式下不列：配置没加载，判断不了哪份
 /// 仍被引用，宁可不列，也不能把还原要用的那份标成可删。
 pub fn list_hub_backups(state: &AppState) -> Result<Vec<HubBackup>, String> {
-    state.ensure_writable().map_err(String::from)?;
+    state.ensure_loaded().map_err(String::from)?;
     let config = state.config();
     state.studio().hub_backups(&config).map_err(Into::into)
 }

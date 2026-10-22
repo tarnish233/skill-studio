@@ -64,7 +64,35 @@ describe("groupsApi", () => {
     await groupsApi.save(null, "前端", ["b", "a"]);
     expect(lastCall()).toEqual({
       command: "save_group",
-      args: { groupId: null, name: "前端", skillIds: ["b", "a"] },
+      args: {
+        groupId: null,
+        name: "前端",
+        skillIds: ["b", "a"],
+        expected: null,
+      },
+    });
+  });
+
+  it("save 编辑时带上打开时的样子，供后端核对别处是否改过", async () => {
+    await groupsApi.save("g1", "前端", ["a"], { name: "前端", skillIds: [] });
+    expect(lastCall().args).toEqual({
+      groupId: "g1",
+      name: "前端",
+      skillIds: ["a"],
+      expected: { name: "前端", skillIds: [] },
+    });
+  });
+
+  it("enable 只传这一个分组和 Agent；reapply 只传 Agent", async () => {
+    await groupsApi.enable("codex", "g1", true);
+    expect(lastCall()).toEqual({
+      command: "set_agent_group",
+      args: { agentId: "codex", groupId: "g1", enabled: true },
+    });
+    await groupsApi.reapply("codex");
+    expect(lastCall()).toEqual({
+      command: "reapply_agent_groups",
+      args: { agentId: "codex" },
     });
   });
 
@@ -80,6 +108,33 @@ describe("groupsApi", () => {
 });
 
 describe("projectsApi", () => {
+  it("setAgent 只传项目和 Agent；reapply 只传项目；save 带上打开时的成员", async () => {
+    await projectsApi.setAgent("p1", "codex", false);
+    expect(lastCall()).toEqual({
+      command: "set_project_agent",
+      args: { projectId: "p1", agentId: "codex", enabled: false },
+    });
+    await projectsApi.reapply("p1");
+    expect(lastCall()).toEqual({
+      command: "reapply_project",
+      args: { projectId: "p1" },
+    });
+    const members = {
+      skillIds: ["a"],
+      groupIds: [],
+      linkMode: "copy" as const,
+    };
+    await projectsApi.save("p1", members, { ...members, skillIds: [] });
+    expect(lastCall()).toEqual({
+      command: "save_project",
+      args: {
+        projectId: "p1",
+        members,
+        expected: { skillIds: [], groupIds: [], linkMode: "copy" },
+      },
+    });
+  });
+
   it("update 只传要改的字段，其余为 null", async () => {
     await projectsApi.update("p1", { agentIds: ["codex"] });
     expect(lastCall()).toEqual({
