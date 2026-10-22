@@ -133,6 +133,42 @@ jobs:
       - name: Build
         run: pnpm exec tauri build ${{ matrix.args }}
 
+      # 命令行程序随 .app 一起安装（Homebrew 链成 skill-studio）：必须是两种架构都能跑的通用版
+      - name: Verify bundled command line
+        if: runner.os == 'macOS'
+        run: |
+          cli="target/universal-apple-darwin/release/bundle/macos/Skill Studio.app/Contents/MacOS/skill-studio-cli"
+          archs="$(lipo -archs "$cli")"
+          echo "skill-studio-cli: $archs"
+          [[ "$archs" == *arm64* && "$archs" == *x86_64* ]]
+          "$cli" --version
+
+      - name: Verify the command line is inside the Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          test -x target/release/skill-studio-cli
+          target/release/skill-studio-cli --version
+          deb="$(ls target/release/bundle/deb/*.deb | head -n 1)"
+          dpkg-deb -c "$deb" | grep -E 'usr/bin/skill-studio-cli$'
+
+      - name: Verify the command line is inside the Windows packages
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cli = "target/release/skill-studio-cli.exe"
+          if (-not (Test-Path $cli)) { throw "命令行程序没有编出来" }
+          & $cli --version
+          $msi = Get-ChildItem "target/release/bundle/msi/*.msi" | Select-Object -First 1
+          if (-not $msi) { throw "没有找到 msi" }
+          # 路径里有空格，先复制到无空格的临时位置再解包
+          Copy-Item $msi.FullName "$env:RUNNER_TEMP/ss.msi"
+          $out = Join-Path $env:RUNNER_TEMP "ss-msi"
+          $p = Start-Process msiexec.exe -ArgumentList "/a", "$env:RUNNER_TEMP\ss.msi", "/qn", "TARGETDIR=$out" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "解包 msi 失败：$($p.ExitCode)" }
+          $found = Get-ChildItem $out -Recurse -Filter skill-studio-cli.exe
+          if (-not $found) { throw "msi 里没有 skill-studio-cli.exe" }
+          Write-Host "msi 里找到：$($found.FullName)"
+
       - name: Collect artifacts
         shell: bash
         run: |

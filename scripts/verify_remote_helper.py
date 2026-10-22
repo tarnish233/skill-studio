@@ -25,7 +25,7 @@ def remote_python(host, source):
 
 class Session:
     def __init__(self, host, binary, home=None, writable=False):
-        args = [binary]
+        args = [binary, "serve"]
         if home:
             args += ["--sandbox-home", home]
         if writable:

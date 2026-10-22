@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod cli;
 pub mod groups;
 pub mod projects;
 pub mod remote;
@@ -8,6 +9,7 @@ pub mod window;
 pub use remote::*;
 
 pub use agents::*;
+pub use cli::*;
 pub use groups::*;
 pub use projects::*;
 pub use settings::*;

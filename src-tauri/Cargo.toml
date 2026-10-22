@@ -22,6 +22,8 @@ swift-rs = { version = "1.0.8", features = ["build"] }
 skill-studio-mcp = { path = "../crates/mcp" }
 skill-studio-service = { path = "../crates/service" }
 skill-studio-core = { path = "../crates/core" }
+# 命令行（src/bin/skill-studio-cli.rs）：Tauri 打包时会把同一个包里的可执行文件一起带上
+skill-studio-cli = { path = "../crates/cli" }
 
 tauri      = { version = "2.8.2", features = ["protocol-asset", "image-png", "macos-private-api"] }
 serde      = { workspace = true }

@@ -7,7 +7,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useQuery } from "@tanstack/react-query";
-import { it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { managementApi } from "@/lib/api/mcpManagement";
 import { NAVIGATION_STALE_TIME } from "@/lib/queryKeys";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -309,4 +309,84 @@ it("keeps Agent buttons and focus stable while saving and rolls back failed chan
     calls.filter((c) => c.command === "list_agents").map((c) => c.args),
   ).toEqual([{ skipCliProbe: true }, { skipCliProbe: false }]);
   expect(calls.filter((c) => c.command === "get_config_dir")).toHaveLength(1);
+});
+
+describe("关于 › 命令行工具", () => {
+  const clipboard = () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    return writeText;
+  };
+  async function openAbout() {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    await user.click(await screen.findByRole("tab", { name: "关于" }));
+    return user;
+  }
+
+  it("Homebrew 链接好之后：说明终端和 Agent 能直接运行，并能复制示例命令", async () => {
+    handlers.set("get_cli_info", () => ({
+      bundled: "/Applications/Skill Studio.app/Contents/MacOS/skill-studio-cli",
+      command: "skill-studio",
+      location: "/opt/homebrew/bin/skill-studio",
+      stable: true,
+    }));
+    const user = await openAbout();
+    // user-event 会换上自己的剪贴板，所以在它之后再装
+    const writeText = clipboard();
+    expect(
+      await screen.findByText(/终端和 Agent 可以直接运行 skill-studio/),
+    ).toBeVisible();
+    expect(screen.getByText("/opt/homebrew/bin/skill-studio")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "复制示例命令" }));
+    expect(writeText).toHaveBeenCalledWith("skill-studio status");
+  });
+
+  it("还没放进 PATH：给出 App 自带程序的链接命令，路径带引号可直接运行", async () => {
+    handlers.set("get_cli_info", () => ({
+      bundled: "/Applications/Skill Studio.app/Contents/MacOS/skill-studio-cli",
+      command: null,
+      location: null,
+      stable: true,
+    }));
+    const user = await openAbout();
+    const writeText = clipboard();
+    const line =
+      'ln -s "/Applications/Skill Studio.app/Contents/MacOS/skill-studio-cli" /usr/local/bin/skill-studio';
+    expect(await screen.findByText(line)).toBeVisible();
+    expect(screen.getByText(/用 Homebrew 安装或升级/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "复制" }));
+    expect(writeText).toHaveBeenCalledWith(line);
+  });
+
+  it("从 AppImage 运行时不给链接命令，说明临时挂载点不能长期链接", async () => {
+    handlers.set("get_cli_info", () => ({
+      bundled: "/tmp/.mount_skill0/usr/bin/skill-studio-cli",
+      command: null,
+      location: null,
+      stable: false,
+    }));
+    const user = await openAbout();
+    await user.click(await screen.findByRole("tab", { name: "关于" }));
+    expect(await screen.findByText(/当前是从 AppImage 运行的/)).toBeVisible();
+    expect(screen.queryByText(/^ln -s/)).toBeNull();
+  });
+
+  it("这个版本没有附带命令行程序时不显示", async () => {
+    handlers.set("get_cli_info", () => ({
+      bundled: null,
+      command: null,
+      location: null,
+      stable: false,
+    }));
+    await openAbout();
+    expect(await screen.findByText("Agent 与项目")).toBeVisible();
+    await waitFor(() =>
+      expect(calls.some((c) => c.command === "get_cli_info")).toBe(true),
+    );
+    expect(screen.queryByText("命令行工具")).toBeNull();
+  });
 });

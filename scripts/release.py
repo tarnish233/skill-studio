@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REPO = "tarnish233/skill-studio"
 PACKAGES = {
     "skill-studio",
+    "skill-studio-cli",
     "skill-studio-core",
     "skill-studio-mcp",
     "skill-studio-remote",
@@ -34,7 +35,17 @@ def version(value):
     return value
 
 
+def workspace_packages(root):
+    """工作区里每个成员的包名：新加的 crate 没进 PACKAGES 时，set-version 不会改它的锁版本，
+    CI 的 --locked 构建就会失败，所以在这里先拦下"""
+    members = tomllib.loads((root / "Cargo.toml").read_text()).get("workspace", {}).get("members", [])
+    return {tomllib.loads((root / member / "Cargo.toml").read_text())["package"]["name"] for member in members}
+
+
 def versions(root):
+    missing = workspace_packages(root) - PACKAGES
+    if missing:
+        raise ValueError(f"PACKAGES 缺少工作区成员：{', '.join(sorted(missing))}")
     values = {
         file: json.loads((root / file).read_text())["version"]
         for file in ("package.json", "src-tauri/tauri.conf.json")

@@ -460,7 +460,11 @@ pub fn connect<R: tauri::Runtime>(
         .map(|h| format!(" --sandbox-home {}", shell_quote(h)))
         .unwrap_or_default();
     let mut cmd = ssh(&profile, &askpass)?;
-    cmd.arg(format!("exec {remote_path} --allow-writes{sandbox}"));
+    // 远程组件就是 Skill Studio 命令行：顺手链接成 ~/.skill-studio/bin/skill-studio，在服务器上
+    // 也能直接用（链接失败不影响连接）
+    cmd.arg(format!(
+        "ln -sfn {remote_path} \"$HOME/.skill-studio/bin/skill-studio\" 2>/dev/null; exec {remote_path} serve --allow-writes{sandbox}"
+    ));
     let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

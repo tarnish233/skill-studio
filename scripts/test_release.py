@@ -21,8 +21,8 @@ class ReleaseTests(unittest.TestCase):
         (self.root / 'Cargo.lock').write_text(''.join(
             f'[[package]]\nname = "{name}"\nversion = "0.1.2"\n'
             for name in (
-                'skill-studio', 'skill-studio-core', 'skill-studio-mcp', 'skill-studio-remote',
-                'skill-studio-service', 'dependency')))
+                'skill-studio', 'skill-studio-cli', 'skill-studio-core', 'skill-studio-mcp',
+                'skill-studio-remote', 'skill-studio-service', 'dependency')))
         (self.root / 'CHANGELOG.md').write_text('## v0.1.2\nFixed bugs.\n## v0.1.1\nOlder.\n')
 
     def assets(self):
@@ -38,6 +38,14 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(set(r.versions(self.root).values()), {'0.1.3'})
         self.assertIn('name = "dependency"\nversion = "0.1.2"', (self.root / 'Cargo.lock').read_text())
         with self.assertRaises(ValueError):
+            r.verify(self.root)
+
+    def test_every_workspace_crate_is_versioned(self):
+        (self.root / 'crates/new').mkdir(parents=True)
+        (self.root / 'crates/new/Cargo.toml').write_text('[package]\nname = "skill-studio-new"\n')
+        (self.root / 'Cargo.toml').write_text(
+            '[workspace]\nmembers = ["crates/new"]\n[workspace.package]\nversion = "0.1.2"\n')
+        with self.assertRaisesRegex(ValueError, 'skill-studio-new'):
             r.verify(self.root)
 
     def test_invalid_version_does_not_write(self):

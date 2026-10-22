@@ -1,0 +1,24 @@
+[package]
+name = "skill-studio-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Skill Studio 命令行：给 Agent 和脚本用"
+
+[dependencies]
+skill-studio-core = { path = "../core" }
+skill-studio-mcp = { path = "../mcp" }
+skill-studio-service = { path = "../service" }
+clap = { version = "4.5", features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid = { version = "1", features = ["v4"] }
+fs2 = "0.4.3"
+tempfile.workspace = true
+dunce = "1"
+tokio = { version = "1", features = ["rt", "time"] }
+
+[dev-dependencies]
+serial_test = "3"

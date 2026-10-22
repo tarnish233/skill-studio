@@ -43,6 +43,7 @@ AppImage 需先在文件属性中允许作为程序执行，再双击打开。
 - **项目配置**：为每个项目选择 Agent 和 Skills，让不同项目使用各自的配置。
 - **远程服务器**：读取 SSH config，选择 Linux 服务器后管理它的 Skills、分组、项目与备份；MCP Hub 只读展示服务器已有 MCP，在名称后标注所属 Agent。支持密钥、密码和跳板机连接。
 - **备份与恢复**：支持配置备份和已删除 Skill 的恢复；提供浅色、深色与跟随系统外观。
+- **命令行**：随应用一起安装命令行程序（Homebrew 安装时链接为 `skill-studio`），Agent 和脚本可以查看、管理 Skill 与 MCP 的 Hub、分组与项目，改动实时出现在应用里；连接过的服务器上也能直接用。[用法](#命令行)
 
 ## 支持的 Skill 目录
 
@@ -83,6 +84,29 @@ Codex、OpenCode、Pi 和 Grok Build 同时扫描共享目录 `~/.agents/skills`
 远程管理可在「设置 → 服务器」中启用并添加连接。切换到服务器后，Skills、项目、目录和备份均属于该服务器；切回「本机」即可继续本地管理。
 
 远程 MCP 仅展示已有配置，不提供托管、编辑、删除、登录或网关操作。更新应用后，已有服务器连接需重新连接以加载新组件。
+
+## 命令行
+
+用 Homebrew 安装或升级时会同时装好 `skill-studio` 命令；Linux 的 deb 装好后是 `skill-studio-cli`，Windows 在安装目录里有 `skill-studio-cli.exe`，其他情况可在「设置 → 关于 → 命令行工具」查看位置。它和应用共用同一份配置，适合交给 Agent 或脚本：
+
+```sh
+skill-studio status                                   # 总览：Agent、分组与启用情况、项目、MCP、需要检查的问题
+skill-studio groups create 笔记 --skills obsidian-markdown,json-canvas
+skill-studio groups enable 笔记 --agent codex          # 为 Codex 启用，与它已启用的其他分组叠加
+skill-studio projects add . --skills pdf-tools         # 「.」表示当前目录所在的项目，保存即写入已启用的 Agent
+skill-studio --json skills list --agent claude-code    # 输出 JSON
+
+skill-studio mcp add github --env GITHUB_TOKEN=xxx -- npx -y @modelcontextprotocol/server-github
+skill-studio mcp add context7 --url https://mcp.context7.com/mcp
+skill-studio mcp groups create 常用 --mcp github,context7
+skill-studio mcp groups enable 常用 --agent claude,codex
+skill-studio mcp projects add . --mcp context7 --claude local   # Claude Code 写到只给自己用的项目配置
+skill-studio mcp set github --env GITHUB_TOKEN=新的令牌            # 改完用 mcp groups apply 写进已启用的 Agent
+```
+
+查看类命令只读，不写任何文件，在只允许读的 Agent 沙箱里也能用；输出里的 MCP 定义会隐藏密钥（环境变量、请求头、网址参数）。删除分组、移除项目、删除 MCP 要加 `--yes` 确认。和应用同时修改时会等对方写完，不会互相覆盖。退出码：0 成功，1 操作失败，2 用法错误，3 找不到或名称有歧义，4 别的程序正在修改（重试即可），5 需要 `--yes` 确认。运行 `skill-studio --help` 查看全部命令。
+
+MCP 的连接测试、网关启停和浏览器授权只在应用里做；网关模式的 MCP 要在装有应用的电脑上才能写进 Agent。应用连接过的服务器上，同一个命令行在 `~/.skill-studio/bin/skill-studio`，可以把这个目录加进 `PATH`。
 
 ## 许可证
 

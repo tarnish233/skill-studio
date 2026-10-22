@@ -77,6 +77,7 @@ export async function invoke<T>(
   const destination = target;
   const desktop = [
     "get_app_version",
+    "get_cli_info",
     "set_window_theme",
     "search_catalog_skills",
   ];

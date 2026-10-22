@@ -56,6 +56,7 @@ pub fn run() {
             commands::destroy_native_page_tools,
             commands::get_init_error,
             commands::get_app_version,
+            commands::get_cli_info,
             // agent
             commands::list_agents,
             // skill

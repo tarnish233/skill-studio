@@ -45,6 +45,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AgentIcon } from "@/components/common/AgentIcon";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { SettingCard, SettingsSection } from "@/components/common/SettingCard";
+import { CommandLineCard } from "@/components/common/CommandLineCard";
 import { projectsApi, settingsApi, systemApi } from "@/lib/api";
 import {
   useAgents,
@@ -550,6 +551,7 @@ export function SettingsPage() {
                 icon={<FolderCog />}
                 description="在 Agent 中切换 skill 分组，为项目选择独立的 skill 组合。手动安装的 skill 按通用设置保留或暂时停用。"
               />
+              <CommandLineCard />
             </SettingsSection>
           </TabsContent>
         </div>

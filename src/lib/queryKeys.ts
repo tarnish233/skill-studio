@@ -16,4 +16,6 @@ export const queryKeys = {
   hubBackups: ["hub-backups"] as const,
   mcpBackups: ["mcp-backups"] as const,
   version: ["version"] as const,
+  /** 本机命令行程序的位置 */
+  cliInfo: ["cli-info"] as const,
 };

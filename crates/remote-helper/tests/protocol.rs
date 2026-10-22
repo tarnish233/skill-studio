@@ -11,7 +11,7 @@ struct Session {
 impl Session {
     fn start(home: &std::path::Path, writable: bool) -> Self {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_skill-studio-remote"));
-        cmd.arg("--sandbox-home").arg(home);
+        cmd.arg("serve").arg("--sandbox-home").arg(home);
         if writable {
             cmd.arg("--allow-writes");
         }
@@ -558,4 +558,47 @@ fn helper_and_desktop_writing_the_same_config_keep_each_others_changes() {
     assert!(result.get("error").is_none(), "{result}");
     assert_eq!(groups::list_groups(&desktop).unwrap().len(), 3);
     std::env::remove_var(skill_studio_core::fs::paths::TEST_HOME_ENV);
+}
+
+/// 服务器上装的就是命令行：同一个程序不带 serve 时按命令行工作，与桌面应用连接时
+/// 用的是同一个主目录和配置
+#[test]
+fn the_server_build_is_the_command_line_too() {
+    let home = fixture();
+    let version = Command::new(env!("CARGO_BIN_EXE_skill-studio-remote"))
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(version.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout).trim(),
+        format!("skill-studio {}", env!("CARGO_PKG_VERSION"))
+    );
+    {
+        let mut session = Session::start(home.path(), true);
+        let result = session.call(
+            "save_group",
+            json!({"groupId": null, "name": "服务器分组", "skillIds": [], "expected": null}),
+        );
+        assert!(result.get("error").is_none(), "{result}");
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_skill-studio-remote"))
+        .args(["--json", "groups", "list"])
+        .env("SKILL_STUDIO_TEST_HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let groups: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(groups[0]["name"], "服务器分组");
+    // 不认识的协议参数：报错退出，不会当成命令行去解析
+    let bad = Command::new(env!("CARGO_BIN_EXE_skill-studio-remote"))
+        .args(["serve", "--nosuch"])
+        .output()
+        .unwrap();
+    assert_eq!(bad.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("未知参数"));
 }

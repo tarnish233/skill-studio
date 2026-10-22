@@ -49,7 +49,15 @@ jobs:
           if release['draft'] or release['prerelease'] or (tag and release['tag_name'] != tag):
               raise SystemExit('Expected a published stable release')
           path = Path('Casks/skill-studio.rb')
-          path.write_text(update_cask(path.read_text(), release, download_hash))
+          text = update_cask(path.read_text(), release, download_hash)
+          # 命令行随 App 一起安装：skill-studio 链到 .app 里的 skill-studio-cli
+          app = '  app "Skill Studio.app"\n'
+          binary = '  binary "#{appdir}/Skill Studio.app/Contents/MacOS/skill-studio-cli", target: "skill-studio"\n'
+          if binary not in text:
+              if text.count(app) != 1:
+                  raise SystemExit('Expected one app stanza in the Cask')
+              text = text.replace(app, app + binary)
+          path.write_text(text)
           PY
       - name: Validate and push update
         run: |
