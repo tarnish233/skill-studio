@@ -118,6 +118,14 @@ fn roots(state: &AppState) -> Vec<PathBuf> {
         .flat_map(|a| a.resolved_global_roots(&config.settings.agent_dir_overrides))
         .collect();
     roots.push(state.studio().store().hub_dir(&config));
+    // 项目级 skill 也可能被命令行、git pull 或另一个进程改写；不监听的话，
+    // 项目本地 skill 列表只能等重新进入页面才更新。
+    roots.extend(
+        config
+            .projects
+            .iter()
+            .flat_map(|project| AGENTS.iter().filter_map(|a| a.project_root(&project.root))),
+    );
     roots
 }
 
@@ -264,6 +272,31 @@ mod tests {
         let next = desired_directories(std::slice::from_ref(&hub));
         assert!(next.contains(&hub.join("skill/scripts").canonicalize().unwrap()));
     }
+    #[test]
+    fn project_skill_directories_are_watched() {
+        use skill_studio_core::{models::project::ProjectBinding, services::store::Store};
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().join(".skill-studio"));
+        let state = AppState::bootstrap(store).unwrap();
+        let root = temp.path().join("repo");
+        let skill = root.join(".claude/skills/mine");
+        std::fs::create_dir_all(&skill).unwrap();
+        state
+            .mutate(|_, config| {
+                config
+                    .projects
+                    .push(ProjectBinding::new("p".into(), "repo".into(), root.clone()));
+                Ok(())
+            })
+            .unwrap();
+
+        let dirs = desired_directories(&roots(&state));
+        assert!(
+            dirs.contains(&skill.canonicalize().unwrap()),
+            "项目里的 skill 目录也要监听"
+        );
+    }
+
     #[test]
     #[cfg(unix)]
     fn external_sources_are_watched_but_internal_cycles_are_not_traversed() {

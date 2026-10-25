@@ -297,8 +297,9 @@ impl Store {
         files
     }
 
-    /// 删除一份配置备份。只接受 `backups/` 下的 `config-*.json`。
-    pub fn delete_backup(&self, backup: &Path) -> Result<()> {
+    /// 备份路径必须是 `backups/` 下的普通 `config-*.json` 文件。
+    /// 不要求文件存在：删除可以幂等，读取时再报「找不到」。
+    fn ensure_backup_path(&self, backup: &Path, action: &str) -> Result<()> {
         let named = backup
             .file_name()
             .and_then(|n| n.to_str())
@@ -307,8 +308,14 @@ impl Store {
             .parent()
             .is_some_and(|p| paths::paths_alias(p, &self.backups_dir()));
         if !named || !inside || backup.symlink_metadata().is_ok_and(|m| !m.is_file()) {
-            return Err(Error::invalid("只能删除配置备份"));
+            return Err(Error::invalid(format!("只能{action}配置备份")));
         }
+        Ok(())
+    }
+
+    /// 删除一份配置备份。只接受 `backups/` 下的 `config-*.json`。
+    pub fn delete_backup(&self, backup: &Path) -> Result<()> {
+        self.ensure_backup_path(backup, "删除")?;
         match std::fs::remove_file(backup) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -317,6 +324,7 @@ impl Store {
     }
 
     pub fn read_backup(&self, backup: &Path) -> Result<AppConfig> {
+        self.ensure_backup_path(backup, "读取")?;
         let mut restored: AppConfig = atomic::read_json_file(backup)?
             .ok_or_else(|| Error::NotFound(backup.display().to_string()))?;
         self.migrate(&mut restored)?;
@@ -466,6 +474,32 @@ mod tests {
     }
 
     #[test]
+    fn reading_a_backup_accepts_only_config_backups() {
+        let (t, s) = store();
+        let cfg = AppConfig::default();
+        s.save(&cfg).unwrap();
+        s.save(&cfg).unwrap();
+        let backups = s.list_backups();
+        assert_eq!(s.read_backup(&backups[0]).unwrap().version, CONFIG_VERSION);
+
+        for other in [
+            s.config_path(),
+            t.path().join("config-elsewhere.json"),
+            s.backups_dir().join("notes.json"),
+        ] {
+            std::fs::write(&other, "{}").unwrap();
+            assert!(s.read_backup(&other).is_err(), "{}", other.display());
+        }
+        #[cfg(unix)]
+        {
+            let link = s.backups_dir().join("config-link.json");
+            std::os::unix::fs::symlink(s.config_path(), &link).unwrap();
+            assert!(s.read_backup(&link).is_err());
+            assert!(s.restore_backup(&link).is_err());
+        }
+    }
+
+    #[test]
     fn backup_keep_zero_disables_backups() {
         let (_t, s) = store();
         let mut cfg = AppConfig::default();
@@ -496,9 +530,14 @@ mod tests {
     #[test]
     fn restore_missing_backup_errors() {
         let (_t, s) = store();
+        // 任意路径先被拦住，不会读配置目录以外的 JSON
         let err = s
             .restore_backup(Path::new("/nope/backup.json"))
             .unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)), "{err}");
+        // 合法位置里已经不见的备份仍然是「找不到」
+        let missing = s.backups_dir().join("config-19990101-000000.000.json");
+        let err = s.restore_backup(&missing).unwrap_err();
         assert!(matches!(err, Error::NotFound(_)), "{err}");
     }
 

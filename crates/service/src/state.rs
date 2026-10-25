@@ -894,7 +894,12 @@ mod tests {
             })
             .unwrap();
         let before = std::fs::read(state.studio().store().config_path()).unwrap();
-        let backup = dir.path().join("restore.json");
+        let backup = state
+            .studio()
+            .store()
+            .backups_dir()
+            .join("config-test-restore.json");
+        std::fs::create_dir_all(backup.parent().unwrap()).unwrap();
         let mut restored = state.config().clone();
         restored.version = u32::MAX;
         std::fs::write(&backup, serde_json::to_vec(&restored).unwrap()).unwrap();
