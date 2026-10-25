@@ -83,6 +83,12 @@ export type CatalogInstallResult =
   | { status: "installed"; skill: Skill }
   | { status: "selectionRequired"; candidates: CatalogCandidate[] };
 
+/** 本地目录导入的结果；changed 为 false 说明 Hub 里已经是同一份内容 */
+export interface LocalImportResult {
+  skill: Skill;
+  changed: boolean;
+}
+
 export interface SkillView extends Skill {
   installation?: {
     source: string;

@@ -679,6 +679,16 @@ pub fn remove(dir: &Path, id: &str, restore: bool) -> Result<Removal> {
         release(&mut files, b, &next, &mut removal)?;
     }
     catalog.entries.retain(|e| e.id != id);
+    // 删除是明确的：把未部署的保存引用一并清理，别留下点开就报「已缺失」的分组/项目。
+    // 正在部署的引用在上面已经拒绝，所以这里不会改变任何 Agent 的现有配置。
+    for group in &mut catalog.groups {
+        group.entry_ids.retain(|entry_id| entry_id != id);
+        group.references.retain(|reference| reference.id != id);
+    }
+    for project in catalog.projects.values_mut() {
+        project.entry_ids.retain(|entry_id| entry_id != id);
+        project.references.retain(|reference| reference.id != id);
+    }
     commit(dir, files, &catalog)?;
     Ok(removal)
 }

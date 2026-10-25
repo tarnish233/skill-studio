@@ -559,6 +559,108 @@ fn local_skills_are_imported_into_the_hub_and_writes_are_logged() {
 
 #[test]
 #[serial]
+fn reimporting_a_changed_local_skill_updates_the_hub_copy_without_overwriting_edits() {
+    let home = Home::new();
+    let source = home.skill(".", "mine");
+    let first = home.json(&["skills", "import", "~/mine"]);
+    assert_eq!(first.code, 0, "{}", first.err);
+    assert_eq!(first.json()["changed"], true);
+
+    // 原目录没变：明确回答「没有变化」，不能一律报成功
+    let unchanged = home.json(&["skills", "import", "~/mine"]);
+    assert_eq!(unchanged.code, 0, "{}", unchanged.err);
+    assert_eq!(unchanged.json()["changed"], false, "{}", unchanged.out);
+
+    // 原目录更新了，Hub 副本还没被用户改过：跟着更新
+    std::fs::write(
+        source.join("SKILL.md"),
+        "---\nname: mine\ndescription: v2\n---\n\nv2\n",
+    )
+    .unwrap();
+    let updated = home.json(&["skills", "import", "~/mine"]);
+    assert_eq!(updated.code, 0, "{}", updated.err);
+    assert_eq!(updated.json()["changed"], true);
+    assert!(
+        std::fs::read_to_string(home.path(".skill-studio/skills/mine/SKILL.md"))
+            .unwrap()
+            .contains("v2")
+    );
+
+    // 用户改过 Hub 副本：不覆盖他的修改
+    std::fs::write(
+        home.path(".skill-studio/skills/mine/SKILL.md"),
+        "---\nname: mine\n---\n\nmine\n",
+    )
+    .unwrap();
+    std::fs::write(
+        source.join("SKILL.md"),
+        "---\nname: mine\ndescription: v3\n---\n\nv3\n",
+    )
+    .unwrap();
+    let refused = home.json(&["skills", "import", "~/mine"]);
+    assert_ne!(refused.code, 0, "{}", refused.out);
+    assert!(refused.err.contains("已被修改"), "{}", refused.err);
+    assert!(
+        std::fs::read_to_string(home.path(".skill-studio/skills/mine/SKILL.md"))
+            .unwrap()
+            .contains("mine")
+    );
+}
+
+#[test]
+#[serial]
+fn retrying_an_enable_after_a_failed_write_reports_pending_work() {
+    let home = Home::new();
+    home.hub("alpha");
+    home.hub("beta");
+    home.ok(&["groups", "create", "笔记", "-s", "alpha"]);
+    home.ok(&["groups", "enable", "笔记", "-a", "codex"]);
+    // 目标位置已有用户自己的 beta：成员能存下，写入会失败
+    home.skill(".codex/skills", "beta");
+    let failed = home.run(&["groups", "add", "笔记", "beta"]);
+    assert_eq!(failed.code, 1, "{}{}", failed.out, failed.err);
+
+    // 重跑：分组确实没变，但要说清楚 Codex 上还欠着写入
+    let retry = home.json(&["groups", "enable", "笔记", "-a", "codex"]);
+    assert_eq!(retry.code, 0, "{}", retry.err);
+    let value = retry.json();
+    assert_eq!(value["changed"], false);
+    assert_eq!(value["pending"], true, "{value}");
+    let message = value["message"].as_str().unwrap();
+    assert!(message.contains("待应用修改"), "{message}");
+    assert!(message.contains("groups apply"), "{message}");
+}
+
+#[test]
+#[serial]
+fn retrying_a_project_enable_after_a_group_change_reports_pending_work() {
+    let home = Home::new();
+    home.hub("alpha");
+    home.hub("beta");
+    home.ok(&["groups", "create", "笔记", "-s", "alpha"]);
+    let root = home.path("work/app");
+    std::fs::create_dir_all(&root).unwrap();
+    let root_arg = root.to_string_lossy().into_owned();
+    home.ok(&["projects", "create", &root_arg]);
+    home.ok(&["projects", "add", "app", "--groups", "笔记"]);
+    home.ok(&["projects", "enable", "app", "-a", "claude-code"]);
+    // 绑定的分组加了成员：项目部署落后，处于「有待应用修改」
+    home.ok(&["groups", "add", "笔记", "beta"]);
+    let listed = home.json(&["projects", "list"]).json();
+    assert_eq!(listed[0]["pending"], true, "{listed}");
+
+    let retry = home.json(&["projects", "enable", "app", "-a", "claude-code"]);
+    assert_eq!(retry.code, 0, "{}", retry.err);
+    let value = retry.json();
+    assert_eq!(value["changed"], false);
+    assert_eq!(value["pending"], true, "{value}");
+    let message = value["message"].as_str().unwrap();
+    assert!(message.contains("待应用修改"), "{message}");
+    assert!(message.contains("projects apply"), "{message}");
+}
+
+#[test]
+#[serial]
 fn viewing_commands_never_leave_a_lock_file_behind() {
     let home = Home::new();
     home.hub("alpha");

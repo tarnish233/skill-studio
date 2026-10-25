@@ -382,3 +382,98 @@ fn gateway_connections_need_the_desktop_app() {
     groups::set_active(&env.dir, "codex", "d", true, || Ok(path), Path::new("")).unwrap();
     assert!(env.deployed("codex", "alpha"));
 }
+
+#[test]
+fn removing_an_entry_clears_saved_group_and_project_members() {
+    let env = Env::new();
+    groups::save_group(&env.dir, group("g", &["alpha"]), vec![], None).unwrap();
+    let root = env.root.path().join("work");
+    std::fs::create_dir_all(&root).unwrap();
+    projects::save(
+        &env.dir,
+        "p",
+        projects::Input {
+            root,
+            entry_ids: vec!["alpha".into()],
+            group_ids: vec!["g".into()],
+            claude_local: false,
+        },
+        vec![],
+        &std::collections::HashMap::new(),
+        Path::new("/app"),
+        None,
+    )
+    .unwrap();
+
+    remove(&env.dir, "alpha", false).unwrap();
+    let catalog = read(&env.dir).unwrap();
+    assert!(catalog.groups[0].entry_ids.is_empty());
+    assert!(catalog.projects["p"].entry_ids.is_empty());
+    assert_eq!(catalog.projects["p"].group_ids, ["g"]);
+}
+
+#[test]
+fn removing_a_group_clears_project_bindings_that_are_not_deployed() {
+    let env = Env::new();
+    groups::save_group(&env.dir, group("g", &["alpha"]), vec![], None).unwrap();
+    let root = env.root.path().join("work");
+    std::fs::create_dir_all(&root).unwrap();
+    let overrides = std::collections::HashMap::new();
+    projects::save(
+        &env.dir,
+        "p",
+        projects::Input {
+            root,
+            entry_ids: vec![],
+            group_ids: vec!["g".into()],
+            claude_local: false,
+        },
+        vec![],
+        &overrides,
+        Path::new("/app"),
+        None,
+    )
+    .unwrap();
+
+    groups::remove_group(&env.dir, "g").unwrap();
+    let catalog = read(&env.dir).unwrap();
+    assert!(catalog.groups.is_empty());
+    assert!(catalog.projects["p"].group_ids.is_empty());
+}
+
+#[test]
+fn removing_a_group_a_project_is_using_is_refused_until_it_is_stopped() {
+    let env = Env::new();
+    groups::save_group(&env.dir, group("g", &["alpha"]), vec![], None).unwrap();
+    let root = env.root.path().join("work");
+    std::fs::create_dir_all(&root).unwrap();
+    let codex = env.root.path().join("home/codex");
+    std::fs::create_dir_all(&codex).unwrap();
+    let overrides = std::collections::HashMap::from([("codex".to_string(), codex)]);
+    projects::save(
+        &env.dir,
+        "p",
+        projects::Input {
+            root,
+            entry_ids: vec![],
+            group_ids: vec!["g".into()],
+            claude_local: false,
+        },
+        vec![],
+        &overrides,
+        Path::new("/app"),
+        None,
+    )
+    .unwrap();
+    projects::activate(&env.dir, "p", "codex", true, &overrides, Path::new("/app")).unwrap();
+
+    let error = groups::remove_group(&env.dir, "g").unwrap_err().to_string();
+    assert!(error.contains("项目"), "{error}");
+    let catalog = read(&env.dir).unwrap();
+    assert_eq!(catalog.groups.len(), 1);
+    assert_eq!(catalog.projects["p"].group_ids, ["g"]);
+
+    projects::activate(&env.dir, "p", "codex", false, &overrides, Path::new("/app")).unwrap();
+    groups::remove_group(&env.dir, "g").unwrap();
+    assert!(read(&env.dir).unwrap().projects["p"].group_ids.is_empty());
+}

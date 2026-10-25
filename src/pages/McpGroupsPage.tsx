@@ -364,7 +364,7 @@ function LocalGroups() {
         if (!open) setDeleting(null);
       }}
       title={`删除分组「${deleting?.name ?? ""}」`}
-      description="只删除分组记录，不删除 MCP Hub 中的服务。"
+      description="只删除分组记录，不删除 MCP Hub 中的服务。项目里绑定的这个分组会一并移出；已有 Agent 启用时需先在项目里停用。"
       confirmText="删除"
       pending={busy}
       onConfirm={() =>

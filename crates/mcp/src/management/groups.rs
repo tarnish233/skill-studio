@@ -138,8 +138,36 @@ pub fn remove_group(dir: &Path, id: &str) -> Result<()> {
     {
         bail!("请先停用分组");
     }
-    if !catalog.groups.iter().any(|g| g.id == id) {
-        bail!("分组不存在");
+    let group = catalog
+        .groups
+        .iter()
+        .find(|g| g.id == id)
+        .cloned()
+        .context("分组不存在")?;
+    // 项目里已经部署了这个分组的成员时不能直接删：那会把「项目还绑着它」变成下一次
+    // 打开项目才发现的错误。尚未部署的项目只保存了绑定，跟着清掉即可。
+    let deployed: Vec<String> = catalog
+        .projects
+        .iter()
+        .filter(|(_, project)| {
+            project.group_ids.iter().any(|group_id| group_id == id)
+                && project.active.values().any(|deployment| {
+                    deployment
+                        .entries
+                        .iter()
+                        .any(|entry| group.entry_ids.contains(&entry.id))
+                })
+        })
+        .map(|(project_id, _)| project_id.clone())
+        .collect();
+    if !deployed.is_empty() {
+        bail!(
+            "项目 {} 正在使用这个分组，请先在项目里停用",
+            deployed.join("、")
+        );
+    }
+    for project in catalog.projects.values_mut() {
+        project.group_ids.retain(|group_id| group_id != id);
     }
     catalog.groups.retain(|g| g.id != id);
     commit(dir, BTreeMap::new(), &catalog)

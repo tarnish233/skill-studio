@@ -453,43 +453,78 @@ pub fn prepare_catalog_archive_variants(
 }
 
 impl Studio {
+    /// 本地目录导入：内容没变时返回未变化；Hub 副本没被用户改过时跟着更新；
+    /// 用户改过就拒绝覆盖。
+    pub fn import_local_skill(
+        &self,
+        config: &mut AppConfig,
+        prepared: &PreparedSkill,
+    ) -> Result<ImportOutcome> {
+        validate_prepared(prepared)?;
+        if !prepared.source.starts_with("local:") {
+            return Err(Error::invalid("不是本地 skill 来源"));
+        }
+        let hub = self.store().hub_dir(config);
+        let roots: Vec<_> = crate::models::agent::AGENTS
+            .iter()
+            .flat_map(|a| a.resolved_global_roots(&config.settings.agent_dir_overrides))
+            .collect();
+        linker::ensure_distinct_roots(&hub, &roots)?;
+        let target = hub.join(&prepared.skill_id);
+        let id = skill_id_for(&target);
+        scanner::validate_sync_source(&prepared.directory)?;
+        let hash = scanner::dir_content_hash(&prepared.directory)?;
+
+        if target.symlink_metadata().is_ok() {
+            let record = config
+                .skill_installations
+                .get(&id)
+                .filter(|record| same_installation(record, prepared))
+                .ok_or_else(|| Error::invalid("Hub 已有同名 skill，未覆盖现有内容"))?
+                .clone();
+            let current = scanner::dir_content_hash(&target)?;
+            if current == hash {
+                return Ok(ImportOutcome {
+                    skill: self.installed_view(config, &id)?,
+                    changed: false,
+                });
+            }
+            if current != record.content_hash {
+                return Err(Error::invalid(format!(
+                    "Hub 里的「{}」已被修改，未覆盖；请先移出 Hub 再重新导入",
+                    prepared.skill_id
+                )));
+            }
+            let mut next = config.clone();
+            next.skill_installations
+                .insert(id.clone(), installation(prepared, &hash));
+            let skill =
+                self.install_prepared(config, prepared, &id, &target, &hub, &hash, next, true)?;
+            return Ok(ImportOutcome {
+                skill,
+                changed: true,
+            });
+        }
+
+        let mut next = config.clone();
+        next.skill_installations
+            .insert(id.clone(), installation(prepared, &hash));
+        let skill =
+            self.install_prepared(config, prepared, &id, &target, &hub, &hash, next, false)?;
+        Ok(ImportOutcome {
+            skill,
+            changed: true,
+        })
+    }
+
     pub fn install_catalog_skill(
         &self,
         config: &mut AppConfig,
         prepared: &PreparedSkill,
     ) -> Result<Skill> {
-        if let Some(source) = prepared.source.strip_prefix("local:") {
-            if !Path::new(source).is_absolute()
-                || prepared.skill_id.is_empty()
-                || prepared.skill_id.starts_with('.')
-                || prepared.skill_id.contains(['/', '\\', ':'])
-                || Path::new(&prepared.skill_id).components().count() != 1
-            {
-                return Err(Error::invalid("本地 skill 路径无效"));
-            }
-        } else {
-            validate_coordinates(&prepared.source, &prepared.skill_id)?;
-        }
-        let mut keys = std::collections::HashSet::new();
-        for variant in &prepared.variants {
-            if !keys.insert(&variant.key)
-                || super::variants::repository_key(&variant.repository_path).as_deref()
-                    != Some(&variant.key)
-            {
-                return Err(Error::invalid("Skill 变体来源或标识无效"));
-            }
-            let payload = super::variants::payload(&prepared.directory, &variant.key)?;
-            scanner::validate_sync_source(&payload)?;
-            if scanner::parse_frontmatter(&payload.join("SKILL.md")).malformed
-                || scanner::dir_content_hash(&payload)? != variant.content_hash
-            {
-                return Err(Error::invalid("Skill 变体内容校验失败"));
-            }
-        }
-        if prepared.variants.is_empty()
-            && prepared.directory.join(super::variants::DIRECTORY).exists()
-        {
-            return Err(Error::invalid("变体安装包缺少来源记录，请从仓库重新安装"));
+        validate_prepared(prepared)?;
+        if prepared.source.starts_with("local:") {
+            return Ok(self.import_local_skill(config, prepared)?.skill);
         }
         let hub = self.store().hub_dir(config);
         let roots: Vec<_> = crate::models::agent::AGENTS
@@ -500,57 +535,58 @@ impl Studio {
         let target = hub.join(&prepared.skill_id);
         let id = skill_id_for(&target);
         if target.symlink_metadata().is_ok() {
-            if config.skill_installations.get(&id).is_some_and(|r| {
-                r.source == prepared.source
-                    && r.skill_id == prepared.skill_id
-                    && r.repository_path == prepared.repository_path
-                    && r.variants
-                        .iter()
-                        .map(|v| (&v.key, &v.repository_path))
-                        .eq(prepared
-                            .variants
-                            .iter()
-                            .map(|v| (&v.key, &v.repository_path)))
-            }) {
-                if let Some(view) = self
-                    .scan_skills(config)?
-                    .into_iter()
-                    .find(|v| v.skill.id == id && v.diagnostics.is_empty())
-                {
-                    return Ok(view.skill);
-                }
+            if config
+                .skill_installations
+                .get(&id)
+                .is_some_and(|record| same_installation(record, prepared))
+            {
+                return self.installed_view(config, &id);
             }
             return Err(Error::invalid("Hub 已有同名 skill，未覆盖现有内容"));
         }
         scanner::validate_sync_source(&prepared.directory)?;
         let hash = scanner::dir_content_hash(&prepared.directory)?;
         let mut next = config.clone();
-        next.skill_installations.insert(
-            id.clone(),
-            SkillInstallation {
-                source: prepared.source.clone(),
-                skill_id: prepared.skill_id.clone(),
-                repository_path: prepared.repository_path.clone(),
-                installed_at: linker::now_secs(),
-                content_hash: hash.clone(),
-                variants: prepared.variants.clone(),
-            },
-        );
+        next.skill_installations
+            .insert(id.clone(), installation(prepared, &hash));
+        self.install_prepared(config, prepared, &id, &target, &hub, &hash, next, false)
+    }
+
+    fn installed_view(&self, config: &AppConfig, id: &str) -> Result<Skill> {
+        self.scan_skills(config)?
+            .into_iter()
+            .find(|view| view.skill.id == id && view.diagnostics.is_empty())
+            .map(|view| view.skill)
+            .ok_or_else(|| Error::invalid("Hub 已有同名 skill，未覆盖现有内容"))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn install_prepared(
+        &self,
+        config: &mut AppConfig,
+        prepared: &PreparedSkill,
+        id: &str,
+        target: &Path,
+        hub: &Path,
+        hash: &str,
+        next: AppConfig,
+        replace: bool,
+    ) -> Result<Skill> {
         let mut tx = Transaction::begin(self.store().dir().join("migration.json"))?;
         let operation = (|| -> Result<Skill> {
-            fs::create_dir_all(&hub).map_err(|e| Error::io(&hub, e))?;
-            if target.symlink_metadata().is_ok() {
+            fs::create_dir_all(hub).map_err(|e| Error::io(hub, e))?;
+            if !replace && target.symlink_metadata().is_ok() {
                 return Err(Error::invalid("Hub 已有同名 skill，未覆盖现有内容"));
             }
-            tx.reserve(&target)?;
-            linker::copy_tree(&prepared.directory, &target)?;
-            if scanner::dir_content_hash(&target)? != hash {
+            tx.reserve(target)?;
+            linker::copy_tree(&prepared.directory, target)?;
+            if scanner::dir_content_hash(target)? != hash {
                 return Err(Error::invalid("安装内容校验失败"));
             }
             let skill = self
                 .scan_skills(&next)?
                 .into_iter()
-                .find(|v| v.skill.id == id)
+                .find(|view| view.skill.id == id)
                 .ok_or_else(|| Error::invalid("安装后无法识别 skill"))?
                 .skill;
             self.store().reserve_config(&mut tx, &next)?;
@@ -570,6 +606,75 @@ impl Studio {
             }
         }
     }
+}
+
+fn same_installation(record: &SkillInstallation, prepared: &PreparedSkill) -> bool {
+    record.source == prepared.source
+        && record.skill_id == prepared.skill_id
+        && record.repository_path == prepared.repository_path
+        && record
+            .variants
+            .iter()
+            .map(|v| (&v.key, &v.repository_path))
+            .eq(prepared
+                .variants
+                .iter()
+                .map(|v| (&v.key, &v.repository_path)))
+}
+
+fn installation(prepared: &PreparedSkill, hash: &str) -> SkillInstallation {
+    SkillInstallation {
+        source: prepared.source.clone(),
+        skill_id: prepared.skill_id.clone(),
+        repository_path: prepared.repository_path.clone(),
+        installed_at: linker::now_secs(),
+        content_hash: hash.to_string(),
+        variants: prepared.variants.clone(),
+    }
+}
+
+fn validate_prepared(prepared: &PreparedSkill) -> Result<()> {
+    if let Some(source) = prepared.source.strip_prefix("local:") {
+        if !Path::new(source).is_absolute()
+            || prepared.skill_id.is_empty()
+            || prepared.skill_id.starts_with('.')
+            || prepared.skill_id.contains(['/', '\\', ':'])
+            || Path::new(&prepared.skill_id).components().count() != 1
+        {
+            return Err(Error::invalid("本地 skill 路径无效"));
+        }
+    } else {
+        validate_coordinates(&prepared.source, &prepared.skill_id)?;
+    }
+    let mut keys = std::collections::HashSet::new();
+    for variant in &prepared.variants {
+        if !keys.insert(&variant.key)
+            || super::variants::repository_key(&variant.repository_path).as_deref()
+                != Some(&variant.key)
+        {
+            return Err(Error::invalid("Skill 变体来源或标识无效"));
+        }
+        let payload = super::variants::payload(&prepared.directory, &variant.key)?;
+        scanner::validate_sync_source(&payload)?;
+        if scanner::parse_frontmatter(&payload.join("SKILL.md")).malformed
+            || scanner::dir_content_hash(&payload)? != variant.content_hash
+        {
+            return Err(Error::invalid("Skill 变体内容校验失败"));
+        }
+    }
+    if prepared.variants.is_empty() && prepared.directory.join(super::variants::DIRECTORY).exists()
+    {
+        return Err(Error::invalid("变体安装包缺少来源记录，请从仓库重新安装"));
+    }
+    Ok(())
+}
+
+/// 本地导入的结果：`changed` 为 false 说明 Hub 里已经是同一份内容。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportOutcome {
+    pub skill: Skill,
+    pub changed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

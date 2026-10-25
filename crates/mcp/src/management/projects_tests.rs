@@ -216,9 +216,10 @@ fn a_hub_entry_an_active_project_uses_cannot_be_deleted() {
     assert!(crate::management::remove(&env.dir, "alpha", false).is_err());
     env.activate("codex", false).unwrap();
     crate::management::remove(&env.dir, "alpha", false).unwrap();
-    // 成员已缺失：不能再启用
+    // 删除时一并清掉未部署的成员，不再留下「已缺失」的引用
+    assert!(read(&env.dir).unwrap().projects["p1"].entry_ids.is_empty());
     let error = env.activate("codex", true).unwrap_err().to_string();
-    assert!(error.contains("已缺失"), "{error}");
+    assert!(error.contains("还没有选择 MCP"), "{error}");
 }
 
 #[test]

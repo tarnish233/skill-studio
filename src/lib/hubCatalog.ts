@@ -31,6 +31,13 @@ export function hubCatalog(skills: SkillView[]): HubCard[] {
   );
 }
 
+/** 随应用提供的内置 skill；它没有托管历史，但也不该被当成「来源待确认」 */
+export function isBuiltinSource(source: SkillView): boolean {
+  return (source.sourceIds ?? source.provenance?.sourceIds ?? []).includes(
+    "builtin",
+  );
+}
+
 export function sourceAgentIds(source: SkillView): string[] {
   const ids = new Set<string>();
   if (source.origin.kind === "inPlace") ids.add(source.origin.ownerAgent);

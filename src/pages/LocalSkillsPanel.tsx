@@ -3,7 +3,7 @@ import { uploadLocalSkill } from "@/lib/api/transport";
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { FolderOpen, Download, Check, Loader2 } from "lucide-react";
+import { FolderOpen, Download, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,9 +24,20 @@ export function LocalSkillsPanel() {
   const importing = useMutation({
     mutationFn: skillsApi.importLocal,
     onMutate: () => setError(null),
-    onSuccess: async () => {
+    onSuccess: async (result, path) => {
       await client.invalidateQueries({ queryKey: ["skills"] });
-      toast.success("已导入 Skill Hub，原目录已保留");
+      if (!result.changed) {
+        toast.success("Hub 里的副本已是最新");
+        return;
+      }
+      const existing = installed.some(
+        (s) => s.installation?.source === `local:${path}`,
+      );
+      toast.success(
+        existing
+          ? "已更新 Hub 里的副本，原目录已保留"
+          : "已导入 Skill Hub，原目录已保留",
+      );
     },
     onError: (e) => setError(String(e)),
   });
@@ -152,17 +163,17 @@ export function LocalSkillsPanel() {
                     <div className="border-t p-3">
                       <Button
                         className="w-full bg-blue-500 text-white hover:bg-blue-600"
-                        disabled={done || importing.isPending || !!skill.error}
+                        disabled={importing.isPending || !!skill.error}
                         onClick={() => importing.mutate(skill.path)}
                       >
                         {pending ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : done ? (
-                          <Check className="h-4 w-4" />
+                          <RefreshCw className="h-4 w-4" />
                         ) : (
                           <Download className="h-4 w-4" />
                         )}
-                        {pending ? "导入中…" : done ? "已导入" : "导入"}
+                        {pending ? "导入中…" : done ? "重新导入" : "导入"}
                       </Button>
                     </div>
                   </article>

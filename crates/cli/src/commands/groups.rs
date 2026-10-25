@@ -503,8 +503,26 @@ fn switch(ctx: &Ctx, input: &str, agents: &[String], enable: bool) -> Result<Rep
         untouched.extend(copies);
         changed.push(agent.to_string());
     }
+    // 分组没变，但部署可能还欠着（上次写入失败后重跑）：说清楚，别只回「没有变化」
+    let pending = if changed.is_empty() {
+        let data = view::load(&state)?;
+        data.config
+            .group(&group.id)
+            .map(|stored| {
+                view::pending_note(
+                    &view::group_states(&data, stored),
+                    &format!(
+                        "skill-studio groups apply {} --agent <Agent>",
+                        arg(&group.name)
+                    ),
+                )
+            })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
     let mut message = if changed.is_empty() {
-        format!("分组「{}」没有变化", group.name)
+        format!("分组「{}」没有变化{pending}", group.name)
     } else {
         format!(
             "已为 {} {verb}分组「{}」",
@@ -520,7 +538,12 @@ fn switch(ctx: &Ctx, input: &str, agents: &[String], enable: bool) -> Result<Rep
         !changed.is_empty(),
         true,
         &untouched,
-        json!({ "group": group.name, "agents": changed, "unchanged": unchanged }),
+        json!({
+            "group": group.name,
+            "agents": changed,
+            "unchanged": unchanged,
+            "pending": !pending.is_empty(),
+        }),
     ))
 }
 

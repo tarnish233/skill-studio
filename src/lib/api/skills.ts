@@ -6,6 +6,7 @@ import type {
   LocalSkill,
   LinkMode,
   LinkReport,
+  LocalImportResult,
   Skill,
   SkillView,
 } from "@/types";
@@ -14,7 +15,7 @@ export const skillsApi = {
   async discoverLocal(path: string): Promise<LocalSkill[]> {
     return await invoke("discover_local_skills", { path });
   },
-  async importLocal(path: string): Promise<Skill> {
+  async importLocal(path: string): Promise<LocalImportResult> {
     return await invoke("import_local_skill", { path });
   },
   async searchCatalog(query: string): Promise<CatalogSkill[]> {

@@ -29,6 +29,7 @@ import {
 } from "@/components/common/SourceMark";
 import {
   hubCatalog,
+  isBuiltinSource,
   isSkillVisible,
   hubSourceIds,
   sourceAgentIds,
@@ -430,7 +431,8 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
                     )}
                   {card.sources.map(
                     (source) =>
-                      source.origin.kind !== "external" && (
+                      source.origin.kind !== "external" &&
+                      !isBuiltinSource(source) && (
                         <DeleteSkillButton
                           key={source.id}
                           scope={
@@ -591,11 +593,16 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
                 )}
                 {source.origin.kind === "hub" &&
                   !source.provenance &&
-                  !source.installation && (
+                  !source.installation &&
+                  (isBuiltinSource(source) ? (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      {`这是随应用提供的「${source.name}」内置 skill，会跟着应用更新；你改过的内容会保留。`}
+                    </p>
+                  ) : (
                     <p className="mt-2 text-xs text-amber-700">
                       缺少历史托管记录，无法确认原始来源和还原路径。不会自动迁移或删除。
                     </p>
-                  )}
+                  ))}
                 {source.diagnostics?.map((message) => (
                   <p key={message} className="mt-2 text-xs text-amber-700">
                     {message}

@@ -500,6 +500,13 @@ impl AppState {
         self.transactional(|studio, config| studio.install_catalog_skill(config, prepared))
     }
 
+    pub fn import_local_skill(
+        &self,
+        prepared: &skill_studio_core::services::marketplace::PreparedSkill,
+    ) -> Result<skill_studio_core::services::marketplace::ImportOutcome> {
+        self.transactional(|studio, config| studio.import_local_skill(config, prepared))
+    }
+
     pub fn release_from_hub(
         &self,
         skill_id: &str,

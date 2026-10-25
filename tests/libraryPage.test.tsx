@@ -175,6 +175,18 @@ describe("Skill Hub", () => {
         (_, element) => element?.textContent === "来源：Skill Studio 内置",
       ),
     ).toBeInTheDocument();
+    // 内置 skill 跟着应用走：不给删除按钮，来源说明也不能说「无法确认原始来源」
+    expect(
+      screen.queryByRole("button", { name: "删除 skill-studio" }),
+    ).toBeNull();
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: "查看 skill-studio 的来源" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/随应用提供/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/缺少历史托管记录/)).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: /删除/ })).toBeNull();
   });
 
   it("开着「已托管」时，来源胶囊与失效来源都按同一口径收窄", async () => {

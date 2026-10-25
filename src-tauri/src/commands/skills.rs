@@ -160,7 +160,10 @@ pub async fn discover_local_skills(
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub async fn import_local_skill(state: State<'_, AppState>, path: String) -> Result<Skill, String> {
+pub async fn import_local_skill(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<skill_studio_core::services::marketplace::ImportOutcome, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         skill_studio_service::skills::import_local_skill(&state, path)

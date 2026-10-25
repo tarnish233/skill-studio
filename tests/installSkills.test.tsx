@@ -285,7 +285,7 @@ it("local tab scans a collection, imports a selected skill and refreshes its sta
         },
       }),
     ];
-    return skills[0];
+    return { skill: skills[0], changed: true };
   });
   renderWithProviders(<InstallSkillsPage />);
   fireEvent.click(screen.getByRole("tab", { name: "本地" }));
@@ -299,7 +299,7 @@ it("local tab scans a collection, imports a selected skill and refreshes its sta
     args: { path: "/local/collection" },
   });
   fireEvent.click(screen.getByRole("button", { name: "导入" }));
-  expect(await screen.findByRole("button", { name: "已导入" })).toBeDisabled();
+  expect(await screen.findByRole("button", { name: "重新导入" })).toBeEnabled();
   expect(calls).toContainEqual({
     command: "import_local_skill",
     args: { path },

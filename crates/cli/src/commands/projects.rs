@@ -462,8 +462,23 @@ fn switch(ctx: &Ctx, input: &str, agents: &[String], enable: bool) -> Result<Rep
         untouched.extend(checked(report)?.untouched);
         changed.push(agent.to_string());
     }
+    // 项目没变，但部署可能还欠着（上次写入失败后重跑）：说清楚，别只回「没有变化」
+    let pending = if changed.is_empty() {
+        let data = view::load(&state)?;
+        data.config
+            .project(&project.id)
+            .map(|stored| {
+                view::pending_note(
+                    &view::project_states(&data, stored),
+                    &format!("skill-studio projects apply {}", arg(&project.name)),
+                )
+            })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
     let mut message = if changed.is_empty() {
-        format!("项目「{}」没有变化", project.name)
+        format!("项目「{}」没有变化{pending}", project.name)
     } else {
         format!(
             "已为 {} {verb}项目「{}」",
@@ -479,7 +494,12 @@ fn switch(ctx: &Ctx, input: &str, agents: &[String], enable: bool) -> Result<Rep
         !changed.is_empty(),
         true,
         &untouched,
-        json!({ "project": project.name, "agents": changed, "unchanged": unchanged }),
+        json!({
+            "project": project.name,
+            "agents": changed,
+            "unchanged": unchanged,
+            "pending": !pending.is_empty(),
+        }),
     ))
 }
 

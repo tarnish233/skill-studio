@@ -415,7 +415,7 @@ fn delete(ctx: &Ctx, input: &str) -> Result<Report, CliError> {
         "只删除分组记录，不删除 MCP Hub 里的 MCP".to_string()
     } else {
         format!(
-            "只删除分组记录，不删除 MCP Hub 里的 MCP；项目{}绑定了它，之后要在项目里移出",
+            "只删除分组记录，不删除 MCP Hub 里的 MCP；项目{}绑定的未部署分组会一并移出，已部署的需先在项目里停用",
             projects.concat()
         )
     };
@@ -492,8 +492,26 @@ fn switch(ctx: &Ctx, input: &str, agents: &[String], enable: bool) -> Result<Rep
     if !changed.is_empty() {
         notify_gateway(&service::dir(&state));
     }
+    // 分组没变，但部署可能还欠着（上次写入失败后重跑）：说清楚，别只回「没有变化」
+    let pending = if changed.is_empty() {
+        let current = load(&state)?;
+        current
+            .group(&group.id)
+            .map(|stored| {
+                view::pending_note(
+                    &current.group_states(stored),
+                    &format!(
+                        "skill-studio mcp groups apply {} --agent <Agent>",
+                        arg(&group.name)
+                    ),
+                )
+            })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
     let mut message = if changed.is_empty() {
-        format!("MCP 分组「{}」没有变化", group.name)
+        format!("MCP 分组「{}」没有变化{pending}", group.name)
     } else {
         format!(
             "已为 {} {verb} MCP 分组「{}」",
@@ -509,7 +527,12 @@ fn switch(ctx: &Ctx, input: &str, agents: &[String], enable: bool) -> Result<Rep
         !changed.is_empty(),
         true,
         &untouched,
-        json!({ "group": group.name, "agents": changed, "unchanged": unchanged }),
+        json!({
+            "group": group.name,
+            "agents": changed,
+            "unchanged": unchanged,
+            "pending": !pending.is_empty(),
+        }),
     ))
 }
 

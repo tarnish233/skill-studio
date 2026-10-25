@@ -420,8 +420,19 @@ fn switch(ctx: &Ctx, input: &str, agents: &[String], enable: bool) -> Result<Rep
     if !changed.is_empty() {
         notify_gateway(&service::dir(&state));
     }
+    // 项目没变，但部署可能还欠着（上次写入失败后重跑）：说清楚，别只回「没有变化」
+    let pending = if changed.is_empty() {
+        let current = load(&state)?;
+        let stored = record(&current, &project);
+        view::pending_note(
+            &current.project_states(&project.id, &stored),
+            &format!("skill-studio mcp projects apply {}", arg(&project.name)),
+        )
+    } else {
+        String::new()
+    };
     let mut message = if changed.is_empty() {
-        format!("项目「{}」的 MCP 没有变化", project.name)
+        format!("项目「{}」的 MCP 没有变化{pending}", project.name)
     } else {
         format!(
             "已为 {} {verb}项目「{}」的 MCP",
@@ -437,7 +448,12 @@ fn switch(ctx: &Ctx, input: &str, agents: &[String], enable: bool) -> Result<Rep
         !changed.is_empty(),
         true,
         &untouched,
-        json!({ "project": project.name, "agents": changed, "unchanged": unchanged }),
+        json!({
+            "project": project.name,
+            "agents": changed,
+            "unchanged": unchanged,
+            "pending": !pending.is_empty(),
+        }),
     ))
 }
 

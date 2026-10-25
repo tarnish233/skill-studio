@@ -601,3 +601,69 @@ fn changing_a_hub_mcp_marks_its_groups_pending_until_applied() {
     assert_eq!(definition["args"], serde_json::json!(["--stdio"]));
     assert!(definition.get("env").is_none(), "{definition}");
 }
+
+#[test]
+#[serial]
+fn retrying_an_mcp_group_enable_after_a_failed_write_reports_pending_work() {
+    let home = Home::new();
+    home.ok(&["mcp", "add", "alpha", "--", "alpha-server"]);
+    home.ok(&["mcp", "add", "beta", "--", "beta-server"]);
+    home.ok(&["mcp", "groups", "create", "甲", "--mcp", "alpha"]);
+    home.ok(&["mcp", "groups", "enable", "甲", "-a", "codex"]);
+    // Codex 配置里已有一份不是 Studio 写的 beta：成员能存下，写入会失败
+    let mut codex = home.read(".codex/config.toml");
+    codex.push_str("\n[mcp_servers.beta]\ncommand = 'foreign'\n");
+    home.write(".codex/config.toml", &codex);
+    let failed = home.run(&["mcp", "groups", "add", "甲", "beta"]);
+    assert_eq!(failed.code, 1, "{}{}", failed.out, failed.err);
+
+    let retry = home.json(&["mcp", "groups", "enable", "甲", "-a", "codex"]);
+    assert_eq!(retry.code, 0, "{}", retry.err);
+    let value = retry.json();
+    assert_eq!(value["changed"], false);
+    assert_eq!(value["pending"], true, "{value}");
+    let message = value["message"].as_str().unwrap();
+    assert!(message.contains("待应用修改"), "{message}");
+    assert!(message.contains("mcp groups apply"), "{message}");
+}
+
+#[test]
+#[serial]
+fn retrying_an_mcp_project_enable_after_a_group_change_reports_pending_work() {
+    let home = Home::new();
+    let root = home.path("work/app");
+    std::fs::create_dir_all(&root).unwrap();
+    let root_arg = root.to_string_lossy().into_owned();
+    home.ok(&["projects", "create", &root_arg]);
+    home.ok(&["mcp", "add", "alpha", "--", "alpha-server"]);
+    home.ok(&["mcp", "add", "beta", "--", "beta-server"]);
+    home.ok(&["mcp", "groups", "create", "甲", "--mcp", "alpha"]);
+    home.ok(&["mcp", "projects", "add", "app", "--groups", "甲"]);
+    home.ok(&["mcp", "projects", "enable", "app", "-a", "codex"]);
+    // 绑定的 MCP 分组加了成员：项目部署落后，处于「有待应用修改」
+    home.ok(&["mcp", "groups", "add", "甲", "beta"]);
+    let listed = home.json(&["mcp", "projects", "list"]).json();
+    assert_eq!(listed[0]["pending"], true, "{listed}");
+
+    let retry = home.json(&["mcp", "projects", "enable", "app", "-a", "codex"]);
+    assert_eq!(retry.code, 0, "{}", retry.err);
+    let value = retry.json();
+    assert_eq!(value["changed"], false);
+    assert_eq!(value["pending"], true, "{value}");
+    let message = value["message"].as_str().unwrap();
+    assert!(message.contains("待应用修改"), "{message}");
+    assert!(message.contains("mcp projects apply"), "{message}");
+}
+
+#[test]
+#[serial]
+fn removing_a_hub_mcp_also_removes_saved_group_members() {
+    let home = Home::new();
+    home.ok(&["mcp", "add", "demo", "--", "demo-server"]);
+    home.ok(&["mcp", "groups", "create", "g", "--mcp", "demo"]);
+    home.ok(&["mcp", "remove", "demo", "--yes"]);
+
+    let shown = home.json(&["mcp", "groups", "show", "g"]).json();
+    assert_eq!(shown["members"], serde_json::json!([]), "{shown}");
+    assert_eq!(shown["missing"], serde_json::json!([]), "{shown}");
+}

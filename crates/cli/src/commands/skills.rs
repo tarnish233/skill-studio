@@ -371,13 +371,20 @@ fn import(ctx: &Ctx, path: &std::path::Path) -> Result<Report, CliError> {
         )));
     }
     let state = ctx.writer()?;
-    let skill = skills::import_local_skill(&state, chosen.path.to_string_lossy().into_owned())?;
-    Ok(Report::write(
+    let imported = skills::import_local_skill(&state, chosen.path.to_string_lossy().into_owned())?;
+    let changed = imported.changed;
+    let skill = imported.skill;
+    let message = if changed {
         format!(
             "已把「{}」导入 Skill Hub，还没有启用到任何 Agent",
             skill.name
-        ),
-        true,
+        )
+    } else {
+        format!("「{}」已在 Skill Hub 里，内容没有变化", skill.name)
+    };
+    Ok(Report::write(
+        message,
+        changed,
         false,
         &[],
         json!({ "skill": { "id": skill.id, "name": skill.name, "path": skill.source_path } }),
