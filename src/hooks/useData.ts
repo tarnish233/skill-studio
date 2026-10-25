@@ -159,7 +159,7 @@ export function useSkillsAutoRefresh() {
       queryKeys.backups,
       queryKeys.skillBackups,
       queryKeys.hubBackups,
-      ["mcp", "local"],
+      queryKeys.mcpStatus,
     ])
       void qc.invalidateQueries({ queryKey });
     // Agent 目录覆盖、退出管理都在配置里；不重新探测各 Agent 的命令行
@@ -167,7 +167,7 @@ export function useSkillsAutoRefresh() {
   });
   useTauriEvent("mcp-changed", () => {
     if (target.id !== "local") return;
-    void qc.invalidateQueries({ queryKey: ["mcp", "local"] });
+    void qc.invalidateQueries({ queryKey: queryKeys.mcpStatus });
   });
   useEffect(() => {
     if (target.id === "local" || !target.connected) return;
@@ -314,7 +314,7 @@ export function useUpdateSettings() {
         // 份数变了，后端已按新份数清理 MCP 备份（MCP Hub 的「已备份 N」）
         patch.backupKeep !== undefined
       ) {
-        void qc.invalidateQueries({ queryKey: ["mcp", "local"] });
+        void qc.invalidateQueries({ queryKey: queryKeys.mcpStatus });
       }
       if (
         visibilityOnly ||

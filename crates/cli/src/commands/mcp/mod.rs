@@ -8,12 +8,12 @@ mod groups;
 mod hub;
 mod projects;
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 use skill_studio_core::models::agent::AGENTS;
 use skill_studio_core::models::config::AppConfig;
+use skill_studio_core::models::same_members;
 use skill_studio_mcp::agents as mcp_agents;
 use skill_studio_mcp::discovery::{Discovered, Source};
 use skill_studio_mcp::management::{groups::Group, projects::Project, Binding, Catalog, Entry};
@@ -192,10 +192,6 @@ fn same_definition(a: &Entry, b: &Entry) -> bool {
         && a.oauth == b.oauth
         && a.client_id == b.client_id
         && a.scopes == b.scopes
-}
-
-fn same_members(a: &[String], b: &[String]) -> bool {
-    a.iter().collect::<BTreeSet<_>>() == b.iter().collect::<BTreeSet<_>>()
 }
 
 /// MCP 用 `claude`，命令行和 Skill 一侧用 `claude-code`

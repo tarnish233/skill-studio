@@ -27,7 +27,7 @@ export function StartupBoundary({ children }: { children: ReactNode }) {
     if (mcp) {
       definitions.push(
         target.id === "local"
-          ? { queryKey: ["mcp", "local"], queryFn: managementApi.list }
+          ? { queryKey: queryKeys.mcpStatus, queryFn: managementApi.list }
           : {
               queryKey: ["mcp", "inventory", target.id],
               queryFn: () => requestRemote(target.id, "scan_mcp"),

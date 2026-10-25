@@ -3,6 +3,7 @@
 //! 写入、撤回、原样保留被其他程序改写的接入，都和分组共用 [`super::deploy`]。
 use super::deploy::{deploy, intact, issue, snapshot, Members, Scope, Untouched};
 use super::*;
+use skill_studio_core::models::same_members;
 use std::collections::HashMap;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -51,15 +52,10 @@ pub struct Snapshot {
 impl Snapshot {
     /// 成员顺序不算修改；还没有记录的项目等同于什么都没选
     fn matches(&self, project: Option<&Project>) -> bool {
-        let set = |ids: &[String]| {
-            ids.iter()
-                .cloned()
-                .collect::<std::collections::BTreeSet<_>>()
-        };
         let empty = Project::default();
         let project = project.unwrap_or(&empty);
-        set(&self.entry_ids) == set(&project.entry_ids)
-            && set(&self.group_ids) == set(&project.group_ids)
+        same_members(&self.entry_ids, &project.entry_ids)
+            && same_members(&self.group_ids, &project.group_ids)
             && self.claude_local == project.claude_local
     }
 }

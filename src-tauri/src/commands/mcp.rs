@@ -11,15 +11,6 @@ fn dir(state: &AppState) -> PathBuf {
     service::dir(state)
 }
 
-/// 按「配置备份保留份数」清理最旧的 MCP 备份。清理失败不影响刚完成的写入。
-pub async fn prune_backups(dir: PathBuf, keep: usize) {
-    match tokio::task::spawn_blocking(move || management::backups::prune(&dir, keep)).await {
-        Ok(Ok(_)) => {}
-        Ok(Err(error)) => log::warn!("清理 MCP 配置备份失败: {error:#}"),
-        Err(error) => log::warn!("清理 MCP 配置备份失败: {error}"),
-    }
-}
-
 /// 写入后通知运行中的网关重读托管状态（不启动它；每次网关请求都会读最新的托管状态，漏一次
 /// 通知无妨）。网关没在运行时，替它清掉已删除服务的接入令牌和 OAuth 凭据：删掉最后一个网关
 /// 连接的 MCP 后，网关可能不会再启动。

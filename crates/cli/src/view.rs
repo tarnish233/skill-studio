@@ -1,12 +1,11 @@
 //! 和界面同一个口径的状态：分组、项目在每个 Agent 上是否「有待应用修改」「需要检查」。
 //! 对应前端 GroupsPage 的 status() 与 ProjectsPage 的 cardState()。
 
-use std::collections::BTreeSet;
-
 use skill_studio_core::models::agent::AGENTS;
 use skill_studio_core::models::config::AppConfig;
 use skill_studio_core::models::group::Group;
 use skill_studio_core::models::project::ProjectBinding;
+use skill_studio_core::models::same_members;
 use skill_studio_core::models::skill::LinkStatus;
 use skill_studio_core::services::project_write::project_deployments;
 use skill_studio_core::services::studio::{AgentSkillState, SkillView};
@@ -88,10 +87,6 @@ pub fn status_label(status: LinkStatus) -> &'static str {
         LinkStatus::BrokenLink => "链接失效",
         LinkStatus::Conflict => "指向冲突",
     }
-}
-
-fn same_members(a: &[String], b: &[String]) -> bool {
-    a.iter().collect::<BTreeSet<_>>() == b.iter().collect::<BTreeSet<_>>()
 }
 
 /// 按 Agent 的固定顺序排

@@ -19,6 +19,7 @@ import { PageTools } from "@/components/common/PageTools";
 import { SourceMark } from "@/components/common/SourceMark";
 import { SummaryStat } from "@/components/common/SummaryBar";
 import { GroupBoard } from "@/components/groups/GroupBoard";
+import { queryKeys } from "@/lib/queryKeys";
 import { GroupCard } from "@/components/groups/GroupCard";
 import {
   GroupDetail,
@@ -59,7 +60,7 @@ import {
 } from "@/lib/mcpAgents";
 import { sameMembers } from "@/lib/utils";
 
-const STATUS_KEY = ["mcp", "local"] as const;
+const STATUS_KEY = queryKeys.mcpStatus;
 /** 启停后的提示：MCP 要在 Agent 里重新加载才生效 */
 const RELOAD = "请在 Agent 中重新加载 MCP";
 

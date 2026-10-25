@@ -15,6 +15,8 @@ export const queryKeys = {
   /** 纳入托管、移出 Hub 时保存的完整备份 */
   hubBackups: ["hub-backups"] as const,
   mcpBackups: ["mcp-backups"] as const,
+  /** MCP 状态：Hub、分组、项目页共用一份，轮询与事件刷新都按这个 key */
+  mcpStatus: ["mcp", "local"] as const,
   version: ["version"] as const,
   /** 本机命令行程序的位置 */
   cliInfo: ["cli-info"] as const,

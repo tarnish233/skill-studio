@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime};
 use skill_studio_core::models::config::AppConfig;
 use skill_studio_core::models::group::UntouchedCopy;
 use skill_studio_core::models::project::ProjectSelection;
+use skill_studio_core::models::same_members;
 use skill_studio_core::models::skill::LinkReport;
 use skill_studio_core::services::store::{ConfigLock, Store};
 use skill_studio_core::services::studio::Studio;
@@ -702,13 +703,8 @@ pub struct ProjectMembers {
 impl ProjectMembers {
     /// 顺序不算修改
     fn matches(&self, project: &skill_studio_core::models::project::ProjectBinding) -> bool {
-        let set = |ids: &[String]| {
-            ids.iter()
-                .cloned()
-                .collect::<std::collections::BTreeSet<_>>()
-        };
-        set(&self.skill_ids) == set(&project.skill_ids)
-            && set(&self.group_ids) == set(&project.group_ids)
+        same_members(&self.skill_ids, &project.skill_ids)
+            && same_members(&self.group_ids, &project.group_ids)
             && self.link_mode == project.link_mode
     }
 }

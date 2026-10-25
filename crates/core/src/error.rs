@@ -86,9 +86,7 @@ impl Error {
     pub fn invalid(msg: impl Into<String>) -> Self {
         Self::InvalidInput(msg.into())
     }
-}
 
-impl Error {
     /// 等不到跨进程的配置锁：稍后重试即可，不是这次操作本身的问题
     pub fn is_config_busy(&self) -> bool {
         matches!(self, Error::Other(message) if message.contains(crate::services::store::CONFIG_BUSY))

@@ -3,6 +3,7 @@
 pub use super::deploy::Untouched;
 use super::deploy::{deploy, intact, issue, snapshot, Members, Scope};
 use super::*;
+use skill_studio_core::models::same_members;
 
 /// A saved MCP combination, shared across agents. Each agent independently
 /// decides whether this group is its current active combination (see
@@ -37,12 +38,7 @@ pub struct GroupSnapshot {
 impl GroupSnapshot {
     /// 名称前后的空格和成员顺序不算修改
     fn matches(&self, group: &Group) -> bool {
-        let set = |ids: &[String]| {
-            ids.iter()
-                .cloned()
-                .collect::<std::collections::BTreeSet<_>>()
-        };
-        self.name.trim() == group.name && set(&self.entry_ids) == set(&group.entry_ids)
+        self.name.trim() == group.name && same_members(&self.entry_ids, &group.entry_ids)
     }
 }
 /// 正在使用这个分组的 Agent，按固定顺序

@@ -86,12 +86,16 @@ pub fn catalog(state: &AppState) -> Result<Catalog, String> {
     .map_err(|e| e.to_string())
 }
 
-/// 写入后的收尾：按「配置备份保留份数」清理最旧的 MCP 备份。清理失败不影响刚完成的写入
-fn after_write(state: &AppState) {
-    let keep = state.config().settings.backup_keep;
-    if let Err(error) = management::backups::prune(&dir(state), keep) {
+/// 按「配置备份保留份数」清理最旧的 MCP 备份。清理失败不影响刚完成的写入
+pub fn prune_backups(dir: &Path, keep: usize) {
+    if let Err(error) = management::backups::prune(dir, keep) {
         log::warn!("清理 MCP 配置备份失败: {error:#}");
     }
+}
+
+/// 写入后的收尾：删除多了的 MCP 备份
+fn after_write(state: &AppState) {
+    prune_backups(&dir(state), state.config().settings.backup_keep);
 }
 
 /// 网关接入写进 Agent 配置的命令；没有桌面应用时为空，只能管理直连的 MCP

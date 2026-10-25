@@ -1,4 +1,5 @@
 use skill_studio_core::models::group::{Group, UntouchedCopy};
+use skill_studio_core::models::same_members;
 use skill_studio_core::Error;
 
 use crate::state::AppState;
@@ -60,12 +61,7 @@ pub struct GroupSnapshot {
 impl GroupSnapshot {
     /// 名称前后的空格和成员顺序不算修改
     fn matches(&self, group: &Group) -> bool {
-        let set = |ids: &[String]| {
-            ids.iter()
-                .cloned()
-                .collect::<std::collections::BTreeSet<_>>()
-        };
-        self.name.trim() == group.name && set(&self.skill_ids) == set(&group.skill_ids)
+        self.name.trim() == group.name && same_members(&self.skill_ids, &group.skill_ids)
     }
 }
 

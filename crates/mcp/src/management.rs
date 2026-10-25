@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use skill_studio_core::fs::atomic;
-use skill_studio_core::services::store::{lock_file, CONFIG_BUSY};
+use skill_studio_core::services::store::{lock_existing, lock_file, CONFIG_BUSY};
 use std::{
     collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
@@ -232,18 +232,8 @@ pub fn read(dir: &Path) -> Result<Catalog> {
 /// （命令行的查看命令，以及只允许读的 Agent 沙箱）。锁文件在时拿共享锁，等正在写的
 /// 进程写完；写到一半退出留下的记录不替它恢复，报 [`PENDING`]
 pub fn read_only(dir: &Path) -> Result<Catalog> {
-    let path = dir.join("management.lock");
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&path)
-        .or_else(|_| std::fs::File::open(&path))
-        .ok();
-    if let Some(file) = &lock {
-        if !lock_file(file, lock_wait(), false) {
-            bail!(CONFIG_BUSY);
-        }
-    }
+    // 锁文件不在时不创建，直接读；在时等正在写的进程写完
+    let _lock = lock_existing(&dir.join("management.lock"), lock_wait(), false)?;
     if dir.join("management-transaction.json").exists() {
         bail!(PENDING);
     }

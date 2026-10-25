@@ -15,6 +15,7 @@ import {
   mcpAppId,
 } from "@/lib/mcpAgents";
 import { useSettings } from "@/hooks/useData";
+import { queryKeys } from "@/lib/queryKeys";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -94,7 +95,7 @@ function LocalMcpPage() {
     (a) => !settings?.disabledAgents?.includes(a.appId),
   );
   const status = useQuery({
-    queryKey: ["mcp", "local"],
+    queryKey: queryKeys.mcpStatus,
     queryFn: managementApi.list,
     // Keep polling in the background without fetching again on every Agent switch.
     staleTime: MCP_STATUS_STALE_TIME,

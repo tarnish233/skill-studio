@@ -120,7 +120,7 @@ function ProjectsContent() {
   const { data: settings } = useSettings();
   // 同一份项目列表也在 MCP 项目页：移除项目前两边都要停用
   const mcpStatus = useQuery({
-    queryKey: ["mcp", "local"],
+    queryKey: queryKeys.mcpStatus,
     queryFn: managementApi.list,
     enabled: settings?.manageMcp ?? false,
     staleTime: MCP_STATUS_STALE_TIME,

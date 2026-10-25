@@ -97,7 +97,7 @@ function McpProjectsContent() {
     [projectsQuery.data],
   );
   const status = useQuery({
-    queryKey: ["mcp", "local"],
+    queryKey: queryKeys.mcpStatus,
     queryFn: managementApi.list,
     // Keep polling in the background without fetching again on every Agent switch.
     staleTime: MCP_STATUS_STALE_TIME,

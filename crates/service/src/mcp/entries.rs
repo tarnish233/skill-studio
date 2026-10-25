@@ -145,8 +145,7 @@ fn targets(
     if scope != "user" && project_id.is_none() {
         bail!("请选择安装项目");
     }
-    for agent in &placement.agents {
-        let agent = agent.as_str();
+    for agent in placement.agents.iter().map(String::as_str) {
         let mut target_project = None;
         let path = if let Some(id) = project_id {
             let project = config

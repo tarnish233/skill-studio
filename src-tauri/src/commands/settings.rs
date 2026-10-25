@@ -70,7 +70,12 @@ pub async fn update_settings(
     };
     if changed_keep {
         // 保留份数与 MCP 配置备份共用：调小后立即清理，不必等下一次写入
-        crate::commands::mcp::prune_backups(mcp_dir.clone(), settings.backup_keep).await;
+        let dir = mcp_dir.clone();
+        let keep = settings.backup_keep;
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            skill_studio_service::mcp::prune_backups(&dir, keep)
+        })
+        .await;
     }
     if let Some(enabled) = changed_mcp {
         if enabled {

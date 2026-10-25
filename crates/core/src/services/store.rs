@@ -74,6 +74,24 @@ pub fn lock_file(file: &std::fs::File, wait: Duration, exclusive: bool) -> bool 
     }
 }
 
+/// 打开一个**已存在**的锁文件再加锁，读的一方从不创建文件：
+/// 文件不在或打不开时返回 `Ok(None)`（没有别的进程在用锁）；文件在但等不到时返回
+/// `Err(CONFIG_BUSY)`。配置与 MCP 托管状态的只读查看共用这一份
+pub fn lock_existing(path: &Path, wait: Duration, exclusive: bool) -> Result<Option<ConfigLock>> {
+    let Ok(file) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .or_else(|_| std::fs::File::open(path))
+    else {
+        return Ok(None);
+    };
+    if !lock_file(&file, wait, exclusive) {
+        return Err(Error::Other(CONFIG_BUSY.into()));
+    }
+    Ok(Some(ConfigLock { _file: file }))
+}
+
 /// 配置读写的落点。测试里指向临时目录，运行时指向 `~/.skill-studio`。
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -165,14 +183,7 @@ impl Store {
     /// 读的一方从不创建文件；目录只读或等不到时返回 `None`，调用方照常读：写入是原子
     /// 替换，读到的总是完整的一份。
     pub fn lock_shared(&self, wait: Duration) -> Option<ConfigLock> {
-        let path = self.lock_path();
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)
-            .or_else(|_| std::fs::File::open(&path))
-            .ok()?;
-        acquire(&file, wait, fs2::FileExt::try_lock_shared).then_some(ConfigLock { _file: file })
+        lock_existing(&self.lock_path(), wait, false).ok().flatten()
     }
 
     /// v2 added optional Agent ownership and active combinations; v4 dropped that
