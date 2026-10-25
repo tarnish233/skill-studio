@@ -50,9 +50,6 @@ export const projectsApi = {
   async localSkills(projectId: string): Promise<ProjectLocalSkill[]> {
     return await invoke("list_project_skills", { projectId });
   },
-  async setEnabled(projectId: string, enabled: boolean): Promise<LinkReport> {
-    return await invoke("set_project_enabled", { projectId, enabled });
-  },
   /** 为一个 Agent 启用或停用项目，成员用已保存的；后端按最新状态计算，不影响其他 Agent */
   async setAgent(
     projectId: string,

@@ -78,7 +78,6 @@ pub fn run() {
             // 分组
             commands::list_groups,
             commands::save_group,
-            commands::activate_agent_group,
             commands::set_agent_group,
             commands::reapply_agent_groups,
             commands::delete_group,
@@ -97,7 +96,6 @@ pub fn run() {
             commands::update_project,
             commands::delete_project,
             commands::apply_project,
-            commands::set_project_enabled,
             commands::set_project_agent,
             commands::reapply_project,
             commands::save_project,

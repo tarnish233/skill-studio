@@ -310,16 +310,6 @@ fn uuid_v4() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-pub fn set_project_enabled(
-    state: &AppState,
-    project_id: String,
-    enabled: bool,
-) -> Result<LinkReport, String> {
-    state
-        .set_project_enabled(&project_id, enabled)
-        .map_err(Into::into)
-}
-
 /// 为一个 Agent 启用或停用项目，成员用已保存的；已经是目标状态时什么也不做
 pub fn set_project_agent(
     state: &AppState,

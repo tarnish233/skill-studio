@@ -126,7 +126,6 @@ it("shows a shared MCP group once, and each Agent's icon toggles only that Agent
     expect(screen.queryByText("使用中")).not.toBeInTheDocument(),
   );
   expect(methods()).not.toContain("start");
-  expect(calls.some((c) => c.command === "activate_agent_group")).toBe(false);
   expect(activations()).toEqual([
     { agent: "claude", groupId: "g1", enabled: true },
     { agent: "claude", groupId: "g1", enabled: false },

@@ -402,10 +402,6 @@ impl AppState {
         self.transactional(|studio, config| studio.write_project(config, id, selection))
     }
 
-    pub fn set_project_enabled(&self, id: &str, enabled: bool) -> Result<LinkReport> {
-        self.transactional(|studio, config| studio.set_project_enabled(config, id, enabled))
-    }
-
     /// 为一个 Agent 启用或停用项目，成员按配置里最新的。已经是目标状态时什么也不做。
     /// 在写锁内按最新状态计算，不会撤掉别处（另一个窗口、命令行）刚为其他 Agent 做的启用
     pub fn set_project_agent(&self, id: &str, agent_id: &str, enabled: bool) -> Result<LinkReport> {

@@ -20,11 +20,7 @@ import {
 import { renderWithProviders } from "./utils/render";
 
 /** 分组页启停与重新应用发出的命令 */
-const SWITCHES = [
-  "set_agent_group",
-  "reapply_agent_groups",
-  "activate_agent_group",
-];
+const SWITCHES = ["set_agent_group", "reapply_agent_groups"];
 const switched = () => calls.some((c) => SWITCHES.includes(c.command));
 const setCalls = () =>
   calls.filter((c) => c.command === "set_agent_group").map((c) => c.args);
@@ -731,7 +727,6 @@ it("启停只告诉后端这一个分组：别处刚启用、页面还没刷新�
   active = ["o"];
   fireEvent.click(enable);
   await waitFor(() => expect(active).toEqual(["o", "c"]));
-  expect(calls.some((c) => c.command === "activate_agent_group")).toBe(false);
 });
 
 it("保存时带上打开编辑时的样子：别处改过就提示，修改留在页面上；保存成功后以刚存的为准", async () => {

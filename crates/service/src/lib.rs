@@ -16,11 +16,6 @@ pub fn dispatch(state: &AppState, method: &str, params: Value) -> Result<Value, 
         "list_agents" => {
             serde_json::to_value(agents::list_agents(state, arg(&params, "skipCliProbe")?)?)
         }
-        "activate_agent_group" => serde_json::to_value(groups::activate_agent_groups(
-            state,
-            arg(&params, "agentId")?,
-            arg(&params, "groupIds")?,
-        )?),
         "delete_group" => {
             serde_json::to_value(groups::delete_group(state, arg(&params, "groupId")?)?)
         }
@@ -89,11 +84,6 @@ pub fn dispatch(state: &AppState, method: &str, params: Value) -> Result<Value, 
         "restore_skill_file" => {
             serde_json::to_value(projects::restore_skill_file(state, arg(&params, "id")?)?)
         }
-        "set_project_enabled" => serde_json::to_value(projects::set_project_enabled(
-            state,
-            arg(&params, "projectId")?,
-            arg(&params, "enabled")?,
-        )?),
         "set_project_agent" => serde_json::to_value(projects::set_project_agent(
             state,
             arg(&params, "projectId")?,

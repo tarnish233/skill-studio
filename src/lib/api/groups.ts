@@ -19,13 +19,6 @@ export const groupsApi = {
       expected,
     });
   },
-  /** 设置这个 Agent 当前叠加的全部分组；空数组表示全部停用。返回原样留下的副本 */
-  async activate(
-    agentId: string,
-    groupIds: string[],
-  ): Promise<UntouchedCopy[]> {
-    return await invoke("activate_agent_group", { agentId, groupIds });
-  },
   /**
    * 为一个 Agent 启用或停用一个分组，它叠加的其他分组不变。后端按最新的启用记录计算，
    * 不会撤掉别处刚启用的分组。返回原样留下的副本

@@ -366,14 +366,15 @@ fn desktop_project_group_and_hub_workflow_uses_the_remote_home() {
         json!({"groupId":null,"name":"Remote group","skillIds":[id]}),
     );
     assert!(group.get("error").is_none(), "{group}");
+    let group_id = group["result"]["id"].clone();
     let activate = session.call(
-        "activate_agent_group",
-        json!({"agentId":"claude-code","groupIds":[group["result"]["id"]]}),
+        "set_agent_group",
+        json!({"agentId":"claude-code","groupId":group_id,"enabled":true}),
     );
     assert!(activate.get("error").is_none(), "{activate}");
     let deactivate = session.call(
-        "activate_agent_group",
-        json!({"agentId":"claude-code","groupIds":[]}),
+        "set_agent_group",
+        json!({"agentId":"claude-code","groupId":group_id,"enabled":false}),
     );
     assert!(deactivate.get("error").is_none(), "{deactivate}");
     let project = session.call(

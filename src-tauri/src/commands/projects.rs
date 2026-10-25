@@ -130,20 +130,6 @@ pub async fn write_project_gitignore(
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub async fn set_project_enabled(
-    state: State<'_, AppState>,
-    project_id: String,
-    enabled: bool,
-) -> Result<LinkReport, String> {
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        skill_studio_service::projects::set_project_enabled(&state, project_id, enabled)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[tauri::command(rename_all = "camelCase")]
 pub async fn set_project_agent(
     state: State<'_, AppState>,
     project_id: String,

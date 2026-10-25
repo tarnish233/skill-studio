@@ -18,3 +18,21 @@ pub use config::{AppConfig, Registration, Registrations, Settings, SkillMeta, CO
 pub use group::Group;
 pub use project::ProjectBinding;
 pub use skill::{skill_id_for, LinkMode, LinkReport, LinkResult, LinkStatus, Skill, SkillOrigin};
+
+#[cfg(test)]
+mod tests {
+    use super::same_members;
+
+    #[test]
+    fn members_are_the_same_when_only_the_order_or_duplicates_differ() {
+        let a = vec!["x".to_string(), "y".to_string()];
+        let b = vec!["y".to_string(), "x".to_string()];
+        assert!(same_members(&a, &b));
+        assert!(same_members(
+            &a,
+            &["x".to_string(), "x".to_string(), "y".to_string()]
+        ));
+        assert!(!same_members(&a, &["x".to_string()]));
+        assert!(!same_members(&a, &[]));
+    }
+}
