@@ -1,6 +1,6 @@
 //! MCP 分组：一组 MCP，可为每个 Agent 单独启用，多个分组可以叠加。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use skill_studio_mcp::{
     agents as mcp_agents,
@@ -8,7 +8,7 @@ use skill_studio_mcp::{
 };
 
 use super::{
-    after_write, command, dir, ensure_managed, ensure_writable, scanned_imports, ImportRef,
+    after_write, command, dir, ensure_managed_in, ensure_writable, scanned_imports, ImportRef,
 };
 use crate::state::AppState;
 
@@ -43,11 +43,6 @@ pub fn reorder(state: &AppState, ids: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// 这个 Agent 的全局 MCP 配置：分组写在这里
-fn global_path(state: &AppState, agent: &str) -> anyhow::Result<PathBuf> {
-    mcp_agents::write_path(agent, &state.config().settings.agent_dir_overrides, None)
-}
-
 /// 为一个 Agent 启用或停用一个分组，它叠加的其他分组不变；已是目标状态时什么也不写。
 /// 返回部署后被其他程序改写、原样留下的接入
 pub fn set(
@@ -58,15 +53,17 @@ pub fn set(
     enabled: bool,
 ) -> Result<Vec<Untouched>, String> {
     ensure_writable(state)?;
+    // 设置先拷一份：MCP 锁内不再读配置（见 ensure_managed_in 的说明）
+    let settings = state.config().settings.clone();
     if enabled {
-        ensure_managed(state, agent)?;
+        ensure_managed_in(&settings, agent)?;
     }
     let untouched = groups::set_active(
         &dir(state),
         agent,
         group_id,
         enabled,
-        || global_path(state, agent),
+        || mcp_agents::write_path(agent, &settings.agent_dir_overrides, None),
         command(executable),
     )
     .map_err(|e| e.to_string())?;
@@ -81,13 +78,15 @@ pub fn reapply(
     agent: &str,
 ) -> Result<Vec<Untouched>, String> {
     ensure_writable(state)?;
+    // 设置先拷一份：MCP 锁内不再读配置（见 ensure_managed_in 的说明）
+    let settings = state.config().settings.clone();
     let untouched = groups::reapply(
         &dir(state),
         agent,
         // 没有启用的分组时什么也不写，也就不用管它是否在管理中
         || {
-            ensure_managed(state, agent).map_err(anyhow::Error::msg)?;
-            global_path(state, agent)
+            ensure_managed_in(&settings, agent).map_err(anyhow::Error::msg)?;
+            mcp_agents::write_path(agent, &settings.agent_dir_overrides, None)
         },
         command(executable),
     )

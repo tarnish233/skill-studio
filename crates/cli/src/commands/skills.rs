@@ -328,7 +328,10 @@ fn split_source(source: &str, skill: Option<&str>) -> Option<(String, String)> {
 }
 
 fn import(ctx: &Ctx, path: &std::path::Path) -> Result<Report, CliError> {
-    let path: PathBuf = std::env::current_dir().unwrap_or_default().join(path);
+    let path: PathBuf = resolve::absolute(path);
+    if !path.exists() {
+        return Err(CliError::not_found(format!("目录不存在：{}", home(&path))));
+    }
     let found = skills::discover_local_skills(path.to_string_lossy().into_owned())?;
     let chosen = match found.len() {
         0 => {

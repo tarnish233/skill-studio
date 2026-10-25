@@ -6,6 +6,7 @@
 mod args;
 mod commands;
 mod error;
+mod redact;
 mod report;
 mod resolve;
 mod serve;
@@ -18,6 +19,8 @@ use std::time::Duration;
 use serde_json::json;
 use skill_studio_core::models::agent::AGENTS;
 use skill_studio_core::services::store::Store;
+
+use redact::{hide, secret_name, HIDDEN};
 
 pub use error::{CliError, Kind};
 
@@ -195,7 +198,6 @@ fn audit(ctx: &commands::Ctx, args: &[OsString], result: &Result<report::Report,
 
 /// 记进日志的命令行：环境变量、请求头、粘贴的配置和网址参数都可能带密钥，只留名字
 fn logged(args: &[OsString]) -> Vec<String> {
-    const HIDDEN: &str = "<已隐藏>";
     let mut out = Vec::new();
     let mut pending: Option<&str> = None;
     let mut trailing = false;
@@ -211,22 +213,16 @@ fn logged(args: &[OsString]) -> Vec<String> {
         }
         if trailing {
             // -- 之后是 MCP 的启动命令：像令牌的参数照样隐藏
-            let secret = |name: &str| {
-                let name = name.to_lowercase();
-                ["key", "token", "secret", "password", "auth"]
-                    .iter()
-                    .any(|w| name.contains(w))
-            };
             if hide_next {
                 out.push(HIDDEN.into());
                 hide_next = false;
             } else if let Some((flag, _)) = arg
                 .split_once('=')
-                .filter(|(f, _)| f.starts_with('-') && secret(f))
+                .filter(|(f, _)| f.starts_with('-') && secret_name(f))
             {
                 out.push(format!("{flag}={HIDDEN}"));
             } else {
-                hide_next = arg.starts_with('-') && secret(&arg);
+                hide_next = arg.starts_with('-') && secret_name(&arg);
                 out.push(arg);
             }
             continue;
@@ -249,31 +245,30 @@ fn logged(args: &[OsString]) -> Vec<String> {
                 Some((flag @ ("--env" | "--header" | "--config" | "--url"), value)) => {
                     out.push(format!("{flag}={}", hide(flag, value)))
                 }
-                _ => out.push(arg),
+                // clap 也接受短选项紧跟值：-eTOKEN=…、-HAuthorization: …、-e=TOKEN=…
+                _ => match attached(&arg) {
+                    Some((flag, value)) => out.push(format!("{flag}{value}")),
+                    None => out.push(arg),
+                },
             },
         }
     }
     out
 }
 
-/// 一个选项的值隐藏成什么样：环境变量和请求头留名字，配置整段隐藏，网址只隐藏参数值
-fn hide(flag: &str, value: &str) -> String {
-    const HIDDEN: &str = "<已隐藏>";
-    match flag {
-        "--env" => match value.split_once('=') {
-            Some((name, _)) => format!("{name}={HIDDEN}"),
-            None => HIDDEN.into(),
-        },
-        "--header" => match value.split_once(':').or_else(|| value.split_once('=')) {
-            Some((name, _)) => format!("{}: {HIDDEN}", name.trim()),
-            None => HIDDEN.into(),
-        },
-        "--url" => match value.split_once('?') {
-            Some((base, _)) => format!("{base}?{HIDDEN}"),
-            None => value.into(),
-        },
-        _ => HIDDEN.into(),
-    }
+/// `-e值`、`-e=值`、`-H值`、`-H=值`：返回原样的选项和已经隐藏好的值
+fn attached(arg: &str) -> Option<(&'static str, String)> {
+    let (flag, canonical) = if arg.starts_with("-e") && !arg.starts_with("--") {
+        ("-e", "--env")
+    } else if arg.starts_with("-H") && !arg.starts_with("--") {
+        ("-H", "--header")
+    } else {
+        return None;
+    };
+    let value = &arg[2..];
+    let value = value.strip_prefix('=').unwrap_or(value);
+    // 只有选项本身、没有值时，交给上面等下一个参数的逻辑
+    (!value.is_empty()).then(|| (flag, hide(canonical, value)))
 }
 
 #[cfg(test)]
@@ -302,6 +297,8 @@ mod tests {
             "--api-key",
             "sk-9",
             "--token=t-1",
+            "--credentials",
+            "sk-cred",
             "--port",
             "80",
         ]
@@ -309,7 +306,9 @@ mod tests {
         .map(Into::into)
         .collect();
         let line = logged(&args).join(" ");
-        for secret in ["ghp_1", "=2", "Bearer x", "key=k", "\"s\"", "sk-9", "t-1"] {
+        for secret in [
+            "ghp_1", "=2", "Bearer x", "key=k", "\"s\"", "sk-9", "t-1", "sk-cred",
+        ] {
             assert!(!line.contains(secret), "{secret}：{line}");
         }
         assert!(line.contains("GITHUB_TOKEN=<已隐藏>"), "{line}");
@@ -318,5 +317,32 @@ mod tests {
         // 其他参数原样记下，看得出做了什么
         assert!(line.starts_with("mcp add gh -e"), "{line}");
         assert!(line.ends_with("--port 80"), "{line}");
+    }
+
+    /// clap 也接受短选项紧跟值，这三种写法原来会原样进日志
+    #[test]
+    fn secrets_attached_to_a_short_option_never_reach_the_command_log() {
+        let args: Vec<std::ffi::OsString> = [
+            "skill-studio",
+            "mcp",
+            "add",
+            "gh",
+            "-eTOKEN=ghp_attached",
+            "-HAuthorization: Bearer attached",
+            "-e=API=also-attached",
+            "--",
+            "npx",
+            "server",
+        ]
+        .iter()
+        .map(Into::into)
+        .collect();
+        let line = logged(&args).join(" ");
+        for secret in ["ghp_attached", "Bearer attached", "also-attached"] {
+            assert!(!line.contains(secret), "{secret}：{line}");
+        }
+        assert!(line.contains("-eTOKEN=<已隐藏>"), "{line}");
+        assert!(line.contains("-HAuthorization: <已隐藏>"), "{line}");
+        assert!(line.contains("-eAPI=<已隐藏>"), "{line}");
     }
 }

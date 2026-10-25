@@ -13,6 +13,7 @@ use skill_studio_core::services::studio::{AgentSkillState, SkillView};
 use skill_studio_service::state::AppState;
 
 use crate::error::CliError;
+use crate::report::{agent_name, list};
 
 pub struct Data {
     pub config: AppConfig,
@@ -119,6 +120,39 @@ pub fn group_agents(config: &AppConfig, group_id: &str) -> Vec<String> {
             .map(|(agent, _)| agent.clone())
             .collect(),
     )
+}
+
+/// 按名称移出「已经不在 Hub 里」的成员时，`resolve` 给的是去搜索的提示——那会装回一个
+/// 同名的新成员，正是当初要避免的。目标里已有缺失成员时，改成提示按 ID 移出。
+/// `subject` 如「分组「前端」」，`show` 如 `groups show`
+pub fn missing_member_hint(
+    error: CliError,
+    missing: Vec<String>,
+    subject: &str,
+    show: &str,
+) -> CliError {
+    if error.kind != crate::Kind::NotFound || missing.is_empty() {
+        return error;
+    }
+    error.hint(format!(
+        "{subject}里已不在 Hub 的成员只能按 ID 移出：{}（用 {show} 查看）",
+        list(&missing)
+    ))
+}
+
+/// 「没有变化」的回答里补一句：哪些 Agent 上还欠着写入。调用方（尤其是 Agent）重跑
+/// 同一条命令时，不能只看到「没有变化」就以为已经做完
+pub fn pending_note(states: &[AgentState], apply: &str) -> String {
+    let pending: Vec<String> = states
+        .iter()
+        .filter(|state| !state.pending.is_empty())
+        .map(|state| format!("{}（{}）", agent_name(&state.agent), list(&state.pending)))
+        .collect();
+    if pending.is_empty() {
+        String::new()
+    } else {
+        format!("；但 {}上还有待应用修改 → {apply}", pending.join("、"))
+    }
 }
 
 pub fn group_states(data: &Data, group: &Group) -> Vec<AgentState> {

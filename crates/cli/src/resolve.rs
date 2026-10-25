@@ -92,14 +92,29 @@ fn looks_like_path(input: &str) -> bool {
         || input.starts_with('~')
 }
 
-fn expand(input: &str) -> PathBuf {
-    if input == "~" {
+/// `~`、`~/…` 展开成主目录；其余原样返回。命令行打印出来的路径可以直接粘回来
+pub fn expand_path(input: impl AsRef<Path>) -> PathBuf {
+    let path = input.as_ref();
+    let Some(text) = path.to_str() else {
+        return path.to_path_buf();
+    };
+    if text == "~" {
         return paths::home_dir();
     }
-    if let Some(rest) = input.strip_prefix("~/") {
-        return paths::home_dir().join(rest);
+    match text.strip_prefix("~/").or_else(|| text.strip_prefix("~\\")) {
+        Some(rest) => paths::home_dir().join(rest),
+        None => path.to_path_buf(),
     }
-    PathBuf::from(input)
+}
+
+/// 命令行里的路径变成绝对路径：先展开 `~`，相对路径按当前目录
+pub fn absolute(input: impl AsRef<Path>) -> PathBuf {
+    let path = expand_path(input);
+    if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    }
 }
 
 fn canonical(path: &Path) -> PathBuf {
@@ -112,7 +127,7 @@ pub fn skill<'a>(skills: &'a [SkillView], input: &str) -> Result<&'a SkillView, 
         return Ok(view);
     }
     if looks_like_path(input) {
-        let wanted = canonical(&expand(input));
+        let wanted = canonical(&absolute(input));
         if let Some(view) = skills
             .iter()
             .find(|v| canonical(&v.skill.source_path) == wanted)
@@ -210,11 +225,7 @@ pub fn project<'a>(config: &'a AppConfig, input: &str) -> Result<&'a ProjectBind
                 return None;
             }
             // 写目录时找包含它的项目，最深的那个：在项目的子目录里运行也能找到
-            let wanted = canonical(
-                &std::env::current_dir()
-                    .unwrap_or_default()
-                    .join(expand(input)),
-            );
+            let wanted = canonical(&absolute(input));
             config
                 .projects
                 .iter()

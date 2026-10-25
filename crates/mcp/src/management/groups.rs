@@ -191,7 +191,8 @@ pub fn active_ids(catalog: &Catalog, agent_id: &str) -> Vec<String> {
 
 /// 为一个 Agent 启用或停用一个分组，它叠加的其他分组不变；已经是目标状态时什么也不写。
 /// 在锁内按最新的启用记录计算，不会撤掉别处（另一个窗口、命令行）刚做的启用。
-/// `path` 只在启用后还有分组要部署时才用到，由 `path` 回调按需解析
+/// `path` 只在启用后还有分组要部署时才用到，由 `path` 回调按需解析；回调在管理锁内调用，
+/// 只能算路径，不要再读配置文件（加锁顺序见 `AppState::set_mcp_management`）
 pub fn set_active(
     dir: &Path,
     agent_id: &str,

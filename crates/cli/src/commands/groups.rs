@@ -289,7 +289,19 @@ fn members(ctx: &Ctx, input: &str, skills: &[String], add: bool) -> Result<Repor
             let (id, name) = match member(&data, &group.skill_ids, skill).filter(|_| !add) {
                 Some(found) => found,
                 None => {
-                    let view = resolve::skill(&data.skills, skill)?;
+                    let view = resolve::skill(&data.skills, skill).map_err(|error| {
+                        view::missing_member_hint(
+                            error,
+                            group
+                                .skill_ids
+                                .iter()
+                                .filter(|id| data.skill(id).is_none())
+                                .cloned()
+                                .collect(),
+                            &format!("分组「{}」", group.name),
+                            "groups show",
+                        )
+                    })?;
                     (view.skill.id.clone(), view.skill.name.clone())
                 }
             };
@@ -327,16 +339,15 @@ fn members(ctx: &Ctx, input: &str, skills: &[String], add: bool) -> Result<Repor
         Ok((group.clone(), touched, skipped))
     })?;
     // 操作之后分组里已缺失的成员只剩 ID：想移出必须按 ID 来，别让它悄悄留在这里
-    let missing: Vec<String> = {
-        let data = view::load(&state)?;
-        data.config
-            .group(&group.id)
-            .map(|g| g.skill_ids.clone())
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|id| data.skill_name(id).is_none())
-            .collect()
-    };
+    let data = view::load(&state)?;
+    let missing: Vec<String> = data
+        .config
+        .group(&group.id)
+        .map(|g| g.skill_ids.clone())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|id| data.skill_name(id).is_none())
+        .collect();
     let missing_note = if missing.is_empty() {
         String::new()
     } else {
@@ -353,12 +364,29 @@ fn members(ctx: &Ctx, input: &str, skills: &[String], add: bool) -> Result<Repor
         format!("（{} 本来就不在分组里）", list(&skipped))
     };
     if touched.is_empty() {
+        // 分组没变，但部署可能还欠着（上次写入失败后重跑）：说清楚，别只回「没有变化」
+        let pending = data
+            .config
+            .group(&group.id)
+            .map(|group| {
+                view::pending_note(
+                    &view::group_states(&data, group),
+                    &format!(
+                        "skill-studio groups apply {} --agent <Agent>",
+                        arg(&group.name)
+                    ),
+                )
+            })
+            .unwrap_or_default();
         return Ok(Report::write(
-            format!("分组「{}」没有变化{skipped_note}{missing_note}", group.name),
+            format!(
+                "分组「{}」没有变化{skipped_note}{missing_note}{pending}",
+                group.name
+            ),
             false,
             false,
             &[],
-            json!({ "group": group.name, "skipped": skipped, "missing": missing }),
+            json!({ "group": group.name, "skipped": skipped, "missing": missing, "pending": !pending.is_empty() }),
         ));
     }
     // 与界面一致：保存即写入正在使用这个分组的 Agent

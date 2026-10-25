@@ -17,6 +17,7 @@ use crate::commands::{retry, Ctx};
 use crate::error::CliError;
 use crate::report::{agent_name, agent_names, arg, home, list, Report};
 use crate::resolve as names;
+use crate::view;
 
 pub fn run(command: &McpProjectsCommand, ctx: &Ctx) -> Result<Report, CliError> {
     match command {
@@ -223,7 +224,17 @@ fn members(
             let (id, name) = match found {
                 Some(found) => found,
                 None => {
-                    let row = resolve(&mcp, input)?;
+                    let row = resolve(&mcp, input).map_err(|error| {
+                        view::missing_member_hint(
+                            error,
+                            mcp.project_members(&current)
+                                .into_iter()
+                                .filter(|id| mcp.row(id).is_none())
+                                .collect(),
+                            &format!("项目「{}」", project.name),
+                            "mcp projects show",
+                        )
+                    })?;
                     if add && !row.managed {
                         imports.push(import_ref(row));
                     }
@@ -296,12 +307,22 @@ fn members(
         format!("（{} 本来就不在项目里）", list(&skipped))
     };
     let Some(untouched) = untouched else {
+        // 成员没变，但部署可能还欠着（上次写入失败后重跑）
+        let current = load(&state)?;
+        let stored = record(&current, &project);
+        let pending = view::pending_note(
+            &current.project_states(&project.id, &stored),
+            &format!("skill-studio mcp projects apply {}", arg(&project.name)),
+        );
         return Ok(written(
-            format!("项目「{}」的 MCP 没有变化{skipped_note}", project.name),
+            format!(
+                "项目「{}」的 MCP 没有变化{skipped_note}{pending}",
+                project.name
+            ),
             false,
             false,
             &[],
-            json!({ "project": project.name, "skipped": skipped }),
+            json!({ "project": project.name, "skipped": skipped, "pending": !pending.is_empty() }),
         ));
     };
     notify_gateway(&service::dir(&state));

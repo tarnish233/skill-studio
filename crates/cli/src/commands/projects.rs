@@ -229,10 +229,10 @@ fn show(ctx: &Ctx, input: &str) -> Result<Report, CliError> {
 }
 
 fn create(ctx: &Ctx, dir: &Path, name: Option<&str>) -> Result<Report, CliError> {
-    let root = std::env::current_dir().unwrap_or_default().join(dir);
+    let root = resolve::absolute(dir);
     // Windows 上 std 的 canonicalize 得到 \\?\C:\…；Agent 和桌面应用都用普通写法
     let root = dunce::canonicalize(&root)
-        .map_err(|_| CliError::failed(format!("目录不存在：{}", home(&root))))?;
+        .map_err(|_| CliError::not_found(format!("目录不存在：{}", home(&root))))?;
     let name = name
         .map(str::to_string)
         .or_else(|| root.file_name().map(|n| n.to_string_lossy().into_owned()))
@@ -274,7 +274,19 @@ fn members(
             let (id, name) = match member(&data, &project.skill_ids, skill).filter(|_| !add) {
                 Some(found) => found,
                 None => {
-                    let view = resolve::skill(&data.skills, skill)?;
+                    let view = resolve::skill(&data.skills, skill).map_err(|error| {
+                        view::missing_member_hint(
+                            error,
+                            project
+                                .skill_ids
+                                .iter()
+                                .filter(|id| data.skill(id).is_none())
+                                .cloned()
+                                .collect(),
+                            &format!("项目「{}」", project.name),
+                            "projects show",
+                        )
+                    })?;
                     (view.skill.id.clone(), view.skill.name.clone())
                 }
             };
@@ -322,16 +334,15 @@ fn members(
         Ok((project.clone(), touched, skipped, report))
     })?;
     // 操作之后项目里已缺失的成员只剩 ID，只能按 ID 移出
-    let missing: Vec<String> = {
-        let data = view::load(&state)?;
-        data.config
-            .project(&project.id)
-            .map(|p| p.skill_ids.clone())
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|id| data.skill_name(id).is_none())
-            .collect()
-    };
+    let data = view::load(&state)?;
+    let missing: Vec<String> = data
+        .config
+        .project(&project.id)
+        .map(|p| p.skill_ids.clone())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|id| data.skill_name(id).is_none())
+        .collect();
     let missing_note = if missing.is_empty() {
         String::new()
     } else {
@@ -348,15 +359,26 @@ fn members(
         format!("（{} 本来就不在项目里）", list(&skipped))
     };
     let Some(report) = report else {
+        // 成员没变，但部署可能还欠着（上次写入失败后重跑）
+        let pending = data
+            .config
+            .project(&project.id)
+            .map(|project| {
+                view::pending_note(
+                    &view::project_states(&data, project),
+                    &format!("skill-studio projects apply {}", arg(&project.name)),
+                )
+            })
+            .unwrap_or_default();
         return Ok(Report::write(
             format!(
-                "项目「{}」没有变化{skipped_note}{missing_note}",
+                "项目「{}」没有变化{skipped_note}{missing_note}{pending}",
                 project.name
             ),
             false,
             false,
             &[],
-            json!({ "project": project.name, "skipped": skipped, "missing": missing }),
+            json!({ "project": project.name, "skipped": skipped, "missing": missing, "pending": !pending.is_empty() }),
         ));
     };
     // 保存即写入项目已启用的 Agent（由后端按实际部署确定）

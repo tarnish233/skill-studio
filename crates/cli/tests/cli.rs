@@ -66,6 +66,20 @@ impl Home {
         self.skill(".skill-studio/skills", name)
     }
 
+    fn config(&self) -> Value {
+        let text = std::fs::read_to_string(self.path(".skill-studio/config.json")).unwrap();
+        serde_json::from_str(&text).unwrap()
+    }
+
+    /// 直接改配置，模拟另一个窗口（命令行本身只通过命令修改）
+    fn save_config(&self, config: &Value) {
+        std::fs::write(
+            self.path(".skill-studio/config.json"),
+            serde_json::to_string_pretty(config).unwrap(),
+        )
+        .unwrap();
+    }
+
     fn run(&self, args: &[&str]) -> Output {
         let mut out = Vec::new();
         let mut err = Vec::new();
@@ -666,4 +680,114 @@ fn clearing_the_last_member_of_a_group_in_use_says_how_to_stop_it_first() {
     home.ok(&["groups", "remove", "笔记", "alpha"]);
     let after = home.json(&["groups", "show", "笔记"]).json();
     assert_eq!(after["members"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+#[serial]
+fn paths_printed_with_a_tilde_can_be_pasted_back() {
+    let home = Home::new();
+    std::fs::create_dir_all(home.path("proj")).unwrap();
+
+    let created = home.json(&["projects", "create", "~/proj"]);
+    assert_eq!(created.code, 0, "{}", created.err);
+    let root = created.json()["project"]["root"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        PathBuf::from(root),
+        home.path("proj").canonicalize().unwrap()
+    );
+
+    home.skill(".", "myskill");
+    let imported = home.json(&["skills", "import", "~/myskill"]);
+    assert_eq!(imported.code, 0, "{}", imported.err);
+
+    // 目录不在时是一句能看懂的「找不到」，不是拼错的绝对路径和 IO 错误
+    for args in [
+        vec!["projects", "create", "~/nope"],
+        vec!["skills", "import", "~/nope"],
+    ] {
+        let missing = home.json(&args);
+        assert_eq!(missing.code, 3, "{args:?}");
+        let message = missing.json()["error"]["message"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(message.contains("目录不存在：~/nope"), "{message}");
+    }
+}
+
+#[test]
+#[serial]
+fn a_retry_after_a_failed_write_says_the_deployment_is_still_pending() {
+    let home = Home::new();
+    home.hub("alpha");
+    home.hub("beta");
+    home.ok(&["groups", "create", "笔记", "-s", "alpha"]);
+    home.ok(&["groups", "enable", "笔记", "-a", "codex"]);
+
+    // Codex 退出管理：成员能存下，写入会失败
+    let mut config = home.config();
+    config["settings"]["disabledAgents"] = serde_json::json!(["codex"]);
+    home.save_config(&config);
+    let first = home.run(&["groups", "add", "笔记", "beta"]);
+    assert_eq!(first.code, 1, "{}{}", first.out, first.err);
+    assert!(first.err.contains("已把 beta 加入分组"), "{}", first.err);
+
+    // 重跑：分组确实没变，但要说明 Codex 上还欠着，不能只说「没有变化」
+    let again = home.json(&["groups", "add", "笔记", "beta"]);
+    assert_eq!(again.code, 0, "{}", again.err);
+    let value = again.json();
+    assert_eq!(value["changed"], false);
+    assert_eq!(value["pending"], true, "{value}");
+    let message = value["message"].as_str().unwrap();
+    assert!(message.contains("待应用修改"), "{message}");
+    assert!(message.contains("groups apply"), "{message}");
+}
+
+#[test]
+#[serial]
+fn removing_a_member_that_left_the_hub_points_at_its_id() {
+    let home = Home::new();
+    home.hub("alpha");
+    home.ok(&["groups", "create", "笔记", "-s", "alpha"]);
+    std::fs::remove_dir_all(home.path(".skill-studio/skills/alpha")).unwrap();
+    let shown = home.json(&["groups", "show", "笔记"]).json();
+    let missing = shown["missing"][0].as_str().unwrap().to_string();
+
+    let output = home.json(&["groups", "remove", "笔记", "alpha"]);
+    assert_eq!(output.code, 3, "{}{}", output.out, output.err);
+    let error = &output.json()["error"];
+    assert!(error["message"]
+        .as_str()
+        .unwrap()
+        .contains("找不到 skill「alpha」"));
+    let hint = error["hint"].as_str().unwrap();
+    assert!(hint.contains("只能按 ID 移出"), "{error}");
+    assert!(hint.contains(&missing), "{error}");
+    // 提示里的出路确实可用
+    home.ok(&["groups", "remove", "笔记", &missing]);
+
+    // 项目里同样
+    let project = home.path("proj");
+    std::fs::create_dir_all(&project).unwrap();
+    home.ok(&[
+        "projects",
+        "create",
+        project.to_str().unwrap(),
+        "--name",
+        "示例",
+    ]);
+    home.hub("gamma");
+    home.ok(&["projects", "add", "示例", "--skills", "gamma"]);
+    std::fs::remove_dir_all(home.path(".skill-studio/skills/gamma")).unwrap();
+    let shown = home.json(&["projects", "show", "示例"]).json();
+    let missing = shown["missing"][0].as_str().unwrap().to_string();
+    let output = home.json(&["projects", "remove", "示例", "--skills", "gamma"]);
+    assert_eq!(output.code, 3, "{}{}", output.out, output.err);
+    let hint = output.json()["error"]["hint"].as_str().unwrap().to_string();
+    assert!(hint.contains("只能按 ID 移出"), "{hint}");
+    assert!(hint.contains(&missing), "{hint}");
+    home.ok(&["projects", "remove", "示例", "--skills", &missing]);
 }

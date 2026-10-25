@@ -16,6 +16,7 @@ use crate::commands::{retry, Ctx};
 use crate::error::CliError;
 use crate::report::{agent_name, agent_names, arg, list, Report};
 use crate::resolve as names;
+use crate::view;
 
 pub fn run(command: &McpGroupsCommand, ctx: &Ctx) -> Result<Report, CliError> {
     match command {
@@ -288,7 +289,19 @@ fn members(ctx: &Ctx, input: &str, mcps: &[String], add: bool) -> Result<Report,
             let (id, name) = match member(&mcp, &group.entry_ids, input).filter(|_| !add) {
                 Some(found) => found,
                 None => {
-                    let row = resolve(&mcp, input)?;
+                    let row = resolve(&mcp, input).map_err(|error| {
+                        view::missing_member_hint(
+                            error,
+                            group
+                                .entry_ids
+                                .iter()
+                                .filter(|id| mcp.row(id).is_none())
+                                .cloned()
+                                .collect(),
+                            &format!("MCP 分组「{}」", group.name),
+                            "mcp groups show",
+                        )
+                    })?;
                     if add && !row.managed {
                         imports.push(import_ref(row));
                     }
@@ -332,12 +345,26 @@ fn members(ctx: &Ctx, input: &str, mcps: &[String], add: bool) -> Result<Report,
         format!("（{} 本来就不在分组里）", list(&skipped))
     };
     if touched.is_empty() {
+        // 分组没变，但部署可能还欠着（上次写入失败后重跑）
+        let current = load(&state)?;
+        let pending = current
+            .group(&group.id)
+            .map(|stored| {
+                view::pending_note(
+                    &current.group_states(stored),
+                    &format!(
+                        "skill-studio mcp groups apply {} --agent <Agent>",
+                        arg(&stored.name)
+                    ),
+                )
+            })
+            .unwrap_or_default();
         return Ok(written(
-            format!("MCP 分组「{}」没有变化{skipped_note}", group.name),
+            format!("MCP 分组「{}」没有变化{skipped_note}{pending}", group.name),
             false,
             false,
             &[],
-            json!({ "group": group.name, "skipped": skipped }),
+            json!({ "group": group.name, "skipped": skipped, "pending": !pending.is_empty() }),
         ));
     }
     // 与界面一致：保存即写入正在使用这个分组的 Agent

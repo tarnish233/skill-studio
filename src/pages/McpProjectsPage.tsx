@@ -268,8 +268,7 @@ function McpProjectsContent() {
           deleting &&
           void run(
             async () => {
-              if (record(deleting))
-                await mcpRequest("removeProject", { projectId: deleting.id });
+              // 项目的 MCP 记录由后端一并清掉（service::projects::delete_project）
               await projectsApi.remove(deleting.id);
             },
             {

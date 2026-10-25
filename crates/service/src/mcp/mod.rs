@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
+use skill_studio_core::models::config::Settings;
 use skill_studio_mcp::{
     config::{self, Server},
     discovery::{self, ScanResult},
@@ -61,14 +62,14 @@ pub fn app_agent(agent: &str) -> &str {
 
 /// 设置里退出管理的 Agent 不再写入；停用（撤回）不受限制
 fn ensure_managed(state: &AppState, agent: &str) -> Result<(), String> {
+    ensure_managed_in(&state.config().settings, agent)
+}
+
+/// 同 [`ensure_managed`]，用一份已经取好的设置判断。持有 MCP 锁的调用方必须走这个：
+/// 锁内再读配置会和 `AppState::set_mcp_management`（持配置写锁等 MCP 锁）互相等
+fn ensure_managed_in(settings: &Settings, agent: &str) -> Result<(), String> {
     let app = app_agent(agent);
-    if state
-        .config()
-        .settings
-        .disabled_agents
-        .iter()
-        .any(|a| a == app)
-    {
+    if settings.disabled_agents.iter().any(|a| a == app) {
         return Err("请先开启此 Agent 的管理".into());
     }
     Ok(())

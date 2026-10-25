@@ -23,6 +23,7 @@ use skill_studio_service::state::AppState;
 use super::Ctx;
 use crate::args::McpCommand;
 use crate::error::CliError;
+use crate::redact::{secret_name, HIDDEN};
 use crate::report::{agent_name, home};
 use crate::view::AgentState;
 
@@ -368,24 +369,6 @@ impl Mcp {
         );
         missing
     }
-}
-
-/// 输出里隐藏的值
-const HIDDEN: &str = "<已隐藏>";
-
-fn secret_name(name: &str) -> bool {
-    let name = name.to_lowercase();
-    [
-        "key",
-        "token",
-        "secret",
-        "password",
-        "passwd",
-        "auth",
-        "credential",
-    ]
-    .iter()
-    .any(|word| name.contains(word))
 }
 
 /// 隐藏网址里的参数值（有的服务把令牌放在查询参数里）

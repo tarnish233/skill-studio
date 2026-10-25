@@ -522,6 +522,8 @@ impl AppState {
 
     pub fn set_mcp_management(&self, enabled: bool) -> Result<()> {
         self.ensure_writable()?;
+        // 全局加锁顺序：配置锁 → MCP 锁。MCP 一侧持有管理锁时不要再读配置，否则两边
+        // 反向等待（service::mcp::groups 用设置快照就是这个原因）
         let mut guard = self.config_mut()?;
         if guard.settings.manage_mcp == enabled {
             return Ok(());

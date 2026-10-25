@@ -64,7 +64,6 @@ import {
 } from "@/hooks/useData";
 import { agentDetection, projectSkillDirectory } from "@/lib/agents";
 import { projectsApi, systemApi } from "@/lib/api";
-import { mcpRequest } from "@/lib/api/mcp";
 import {
   managementApi,
   MCP_STATUS_POLL_INTERVAL,
@@ -262,10 +261,8 @@ function ProjectsContent() {
           deleting &&
           void run(
             async () => {
+              // 项目的 MCP 记录由后端一并清掉（service::projects::delete_project）
               await projectsApi.remove(deleting.id);
-              // 同一个项目在 MCP 项目页的记录（成员）一并删掉
-              if (mcpStatus.data?.projects?.[deleting.id])
-                await mcpRequest("removeProject", { projectId: deleting.id });
             },
             {
               success: "项目已移除（项目目录里的文件未变动）",

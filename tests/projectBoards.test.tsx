@@ -281,7 +281,6 @@ const mcpBoard: Board = {
         return [];
       }
       if (method === "saveProject") return [];
-      if (method === "removeProject") return null;
       return null;
     });
   },
