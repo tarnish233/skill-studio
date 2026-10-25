@@ -99,12 +99,12 @@ pub fn get_cli_info() -> CliInfo {
     locate(bundled, &search_dirs())
 }
 
-#[cfg(test)]
+// 两个用例都靠 Unix 的软链与路径写法，Windows 不跑
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
     #[test]
-    #[cfg(unix)]
     fn a_homebrew_link_counts_as_installed_and_a_bare_bundle_does_not() {
         let temp = tempfile::tempdir().unwrap();
         let app = temp.path().join("Skill Studio.app/Contents/MacOS");
@@ -140,7 +140,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
     fn an_appimage_mount_is_not_offered_as_a_permanent_path() {
         let temp = tempfile::tempdir().unwrap();
         let mount = temp.path().join(".mount_skill0/usr/bin");

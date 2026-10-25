@@ -1,6 +1,8 @@
 //! 命令行的行为：在独立的临时主目录里跑，绝不碰真实的 ~/.skill-studio 与各 Agent 目录。
 
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 
 use serde_json::Value;
 use serial_test::serial;
@@ -694,8 +696,9 @@ fn paths_printed_with_a_tilde_can_be_pasted_back() {
         .as_str()
         .unwrap()
         .to_string();
+    // 两边都按当前平台解析：Windows 会带上 \\?\ 前缀，macOS 会把 /var 指到 /private
     assert_eq!(
-        PathBuf::from(root),
+        std::fs::canonicalize(root).unwrap(),
         home.path("proj").canonicalize().unwrap()
     );
 
