@@ -322,7 +322,9 @@ impl Studio {
                 };
                 let provenance = config.skill_provenance.get(&skill.id).cloned();
                 let installation = config.skill_installations.get(&skill.id).cloned();
-                let source_ids = if installation.is_some() {
+                let source_ids = if config.builtin_skills.contains_key(&skill.id) {
+                    vec!["builtin".into()]
+                } else if installation.is_some() {
                     vec!["studio".into()]
                 } else {
                     provenance

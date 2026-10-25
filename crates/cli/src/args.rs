@@ -74,6 +74,9 @@ pub enum Command {
     Mcp(McpCommand),
     /// 自检：配置能否读取、有没有未完成的写入、Agent 目录、需要检查的问题
     Doctor,
+    /// 生成命令行参考；内置 skill 的 references/commands.md 由它产出
+    #[command(hide = true)]
+    Docs,
 }
 
 #[derive(Subcommand, Debug)]
@@ -578,7 +581,7 @@ impl Command {
     /// 会改动配置或文件的命令：以可写方式打开，并记入命令行日志
     pub fn writes(&self) -> bool {
         match self {
-            Command::Status | Command::Agents { .. } | Command::Doctor => false,
+            Command::Status | Command::Agents { .. } | Command::Doctor | Command::Docs => false,
             Command::Skills(c) => matches!(
                 c,
                 SkillsCommand::Install { .. } | SkillsCommand::Import { .. }
@@ -637,6 +640,25 @@ pub enum Exit {
     /// 帮助、版本，或缺少子命令时显示的帮助
     Print(String, i32),
     Usage(CliError),
+}
+
+/// `skill-studio docs`：根命令与每个子命令的帮助拼成一份参考。隐藏命令，不出现在帮助里；
+/// 内置 skill 的 `references/commands.md` 与它逐字一致（测试会核对）
+pub fn reference() -> String {
+    fn walk(command: &clap::Command, path: &str, out: &mut String) {
+        out.push_str(&format!("## {path}\n\n"));
+        out.push_str(command.clone().render_help().to_string().trim_end());
+        out.push_str("\n\n");
+        for sub in command.get_subcommands() {
+            if !sub.is_hide_set() {
+                walk(sub, &format!("{path} {}", sub.get_name()), out);
+            }
+        }
+    }
+    let mut out =
+        String::from("# 命令行参考\n\n由 `skill-studio docs` 生成，与当前版本一致；不要手改。\n\n");
+    walk(&command(), "skill-studio", &mut out);
+    out
 }
 
 pub fn parse(args: &[OsString]) -> Result<Cli, Exit> {

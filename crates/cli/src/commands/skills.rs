@@ -41,6 +41,9 @@ pub fn run(command: &SkillsCommand, ctx: &Ctx) -> Result<Report, CliError> {
 
 /// 来源：Hub 托管、某个 Agent 目录里的原件、外部来源
 fn origin(view: &SkillView) -> (&'static str, Option<String>, String) {
+    if view.source_ids.iter().any(|id| id == "builtin") {
+        return ("builtin", None, "Skill Studio 内置".into());
+    }
     match &view.skill.origin {
         SkillOrigin::Hub => ("hub", None, "Hub 托管".into()),
         SkillOrigin::InPlace { owner_agent } => (

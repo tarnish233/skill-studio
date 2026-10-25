@@ -135,6 +135,17 @@ pub struct SkillInstallation {
     pub variants: Vec<SkillVariant>,
 }
 
+/// 随应用内置到 Hub 的 skill：记录上次写入时的内容哈希，用来判断用户是否改过，
+/// 以及升级后是否需要更新（改过就原样保留）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuiltinSkill {
+    /// 写入它的应用版本
+    pub version: String,
+    pub installed_hash: String,
+    pub installed_at: i64,
+}
+
 /// Durable provenance and recovery information; independent of the current storage location.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -180,6 +191,9 @@ pub struct AppConfig {
     pub skill_provenance: HashMap<String, SkillProvenance>,
     #[serde(default)]
     pub skill_installations: HashMap<String, SkillInstallation>,
+    /// 随应用内置的 skill（id → 上次写入的记录）。只记录装在 Hub 里的那份
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub builtin_skills: HashMap<String, BuiltinSkill>,
     /// agent → Studio 为了让分组管得住它而关掉的兼容读取开关（如 Grok 的
     /// `compat.claude.skills`）。只记 Studio 自己改动的：退出管理时据此还原，
     /// 用户本来就关着的、或之后自己改回去的都不碰。
@@ -231,6 +245,7 @@ impl Default for AppConfig {
             skill_meta: HashMap::new(),
             skill_provenance: HashMap::new(),
             skill_installations: HashMap::new(),
+            builtin_skills: HashMap::new(),
             native_isolation: HashMap::new(),
         }
     }

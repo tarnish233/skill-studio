@@ -164,7 +164,7 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
         title: `筛选 ${a.displayName} 来源`,
       }),
     ),
-    ...(["studio", "agent", "unknown", "external"] as const)
+    ...(["studio", "builtin", "agent", "unknown", "external"] as const)
       // 待确认与外部来源只在确实有（或正筛着它）时出现
       .filter(
         (id) =>

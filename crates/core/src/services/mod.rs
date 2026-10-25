@@ -9,6 +9,7 @@ pub mod tokens;
 pub(crate) mod transaction;
 
 pub mod agent_groups;
+pub mod builtin;
 
 pub mod marketplace;
 

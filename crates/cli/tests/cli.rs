@@ -791,3 +791,29 @@ fn removing_a_member_that_left_the_hub_points_at_its_id() {
     assert!(hint.contains(&missing), "{hint}");
     home.ok(&["projects", "remove", "示例", "--skills", &missing]);
 }
+
+#[test]
+#[serial]
+fn a_builtin_skill_is_labelled_as_built_in() {
+    let home = Home::new();
+    let bundle = home.path("bundle");
+    let source = bundle.join("skill-studio");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(
+        source.join("SKILL.md"),
+        "---\nname: skill-studio\ndescription: 内置\n---\n\n正文\n",
+    )
+    .unwrap();
+
+    let store = skill_studio_core::services::store::Store::new(home.path(".skill-studio"));
+    let studio = skill_studio_core::services::studio::Studio::new(store);
+    let mut config = studio.load_config().unwrap();
+    studio
+        .sync_builtin_skills(&mut config, &bundle, "1.0.0")
+        .unwrap();
+
+    let listed = home.ok(&["skills", "list"]);
+    assert!(listed.contains("Skill Studio 内置"), "{listed}");
+    let shown = home.json(&["skills", "show", "skill-studio"]).json();
+    assert_eq!(shown["origin"], "builtin", "{shown}");
+}

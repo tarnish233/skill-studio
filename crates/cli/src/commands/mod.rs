@@ -36,6 +36,8 @@ impl Ctx {
 
 pub fn run(command: &Command, ctx: &Ctx) -> Result<Report, CliError> {
     match command {
+        // 参考不需要配置和锁：生成内置 skill 的 commands.md 时也不该碰用户的目录
+        Command::Docs => Ok(Report::new(crate::args::reference(), serde_json::json!({}))),
         Command::Status => status::status(ctx),
         Command::Agents { probe } => status::agents(ctx, *probe),
         Command::Skills(command) => skills::run(command, ctx),

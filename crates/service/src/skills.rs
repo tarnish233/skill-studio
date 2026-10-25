@@ -4,6 +4,17 @@ use skill_studio_core::services::studio::SkillView;
 
 use crate::state::AppState;
 
+/// 启动时把随应用提供的 skill 同步进 Hub；用户改过的不覆盖
+pub fn sync_builtin_skills(
+    state: &AppState,
+    source: &std::path::Path,
+    version: &str,
+) -> Result<Vec<Skill>, String> {
+    state
+        .transactional(|studio, config| studio.sync_builtin_skills(config, source, version))
+        .map_err(Into::into)
+}
+
 /// 扫描全部 skill 真身及其在各 agent 上的状态
 pub fn scan_skills(state: &AppState) -> Result<Vec<SkillView>, String> {
     state.scan_with_policy().map_err(Into::into)

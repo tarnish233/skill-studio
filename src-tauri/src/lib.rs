@@ -13,6 +13,19 @@ use skill_studio_core::fs::paths;
 use skill_studio_core::services::store::Store;
 use tauri::Manager;
 
+/// 内置 skill 的资源目录：打包后读 `Resources/resources/builtin-skills`，
+/// 开发时退回仓库里的 `src-tauri/resources/builtin-skills`
+fn builtin_skills_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    if let Ok(dir) = app.path().resource_dir() {
+        let dir = dir.join("resources/builtin-skills");
+        if dir.is_dir() {
+            return Some(dir);
+        }
+    }
+    let dev = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/builtin-skills");
+    dev.is_dir().then_some(dev)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let config_dir = paths::config_dir();
@@ -118,6 +131,25 @@ pub fn run() {
             // 要让界面起来并引导去 backups/ 恢复。
             match AppState::bootstrap(Store::new(config_dir.clone())) {
                 Ok(state) => {
+                    // 内置 skill 随应用提供：缺少时放进去，用户改过就不覆盖
+                    if let Some(dir) = builtin_skills_dir(app.handle()) {
+                        match skill_studio_service::skills::sync_builtin_skills(
+                            &state,
+                            &dir,
+                            env!("CARGO_PKG_VERSION"),
+                        ) {
+                            Ok(skills) if !skills.is_empty() => log::info!(
+                                "已更新内置 skill：{}",
+                                skills
+                                    .iter()
+                                    .map(|skill| skill.name.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join("、")
+                            ),
+                            Ok(_) => {}
+                            Err(error) => log::warn!("同步内置 skill 失败：{error}"),
+                        }
+                    }
                     app.manage(state.clone());
                     // watcher 必须被持有，drop 掉就停止监听
                     if let Some(w) = watcher::spawn(app.handle().clone(), state) {

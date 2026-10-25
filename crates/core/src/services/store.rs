@@ -23,6 +23,7 @@ const JOURNALS: &[&str] = &[
     "skill-unregister.json",
     "manual-policy.json",
     "project-write.json",
+    "builtin-skills.json",
 ];
 
 /// 等不到配置锁时的提示。命令行据此区分「稍后重试即可」与其他失败

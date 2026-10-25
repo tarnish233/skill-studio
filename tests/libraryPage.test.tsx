@@ -156,6 +156,27 @@ describe("Skill Hub", () => {
       expect(pill).toHaveClass("border-border-default");
   });
 
+  it("内置 skill 的来源写「Skill Studio 内置」，胶囊和卡片都写名称", async () => {
+    setup([
+      makeSkill({
+        id: "builtin",
+        name: "skill-studio",
+        origin: { kind: "hub" },
+        sourceIds: ["builtin"],
+        agents: {},
+      }),
+    ]);
+    renderWithProviders(<LibraryPage />);
+    expect(
+      await screen.findByRole("button", { name: "Skill Studio 内置 1" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        (_, element) => element?.textContent === "来源：Skill Studio 内置",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("开着「已托管」时，来源胶囊与失效来源都按同一口径收窄", async () => {
     setup([
       makeSkill(),

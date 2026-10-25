@@ -37,3 +37,40 @@ fn the_bundled_command_line_program_runs_without_the_desktop() {
     assert_eq!(missing.status.code(), Some(3));
     assert!(String::from_utf8_lossy(&missing.stderr).contains("找不到分组"));
 }
+
+#[test]
+fn the_builtin_skill_reference_matches_the_command_line() {
+    let home = tempfile::tempdir().unwrap();
+    let output = run(home.path(), &["docs"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !home.path().join(".skill-studio").exists(),
+        "生成参考不该碰用户的配置目录"
+    );
+    let generated = String::from_utf8(output.stdout)
+        .unwrap()
+        .replace("\r\n", "\n");
+    let checked_in =
+        include_str!("../resources/builtin-skills/skill-studio/references/commands.md")
+            .replace("\r\n", "\n");
+    assert_eq!(
+        generated, checked_in,
+        "命令行变了：运行 target/debug/skill-studio-cli docs > src-tauri/resources/builtin-skills/skill-studio/references/commands.md"
+    );
+}
+
+#[test]
+fn the_builtin_skill_stays_short_and_names_itself() {
+    let skill = include_str!("../resources/builtin-skills/skill-studio/SKILL.md");
+    assert!(skill.starts_with("---\nname: skill-studio\n"), "{skill}");
+    assert!(
+        skill.lines().count() <= 150,
+        "SKILL.md 太长（{} 行），细节放进 references/",
+        skill.lines().count()
+    );
+    assert!(skill.contains("references/commands.md"), "{skill}");
+}

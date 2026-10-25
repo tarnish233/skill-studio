@@ -58,7 +58,7 @@ export function isSkillVisible(
     return true;
   const owners = new Set(sourceAgentIds(source));
   for (const id of sourceIds) {
-    if (!["studio", "agent", "external", "unknown"].includes(id))
+    if (!["studio", "builtin", "agent", "external", "unknown"].includes(id))
       owners.add(id);
   }
   for (const [id, state] of Object.entries(source.agents)) {
