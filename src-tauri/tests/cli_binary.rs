@@ -65,7 +65,9 @@ fn the_builtin_skill_reference_matches_the_command_line() {
 
 #[test]
 fn the_builtin_skill_stays_short_and_names_itself() {
-    let skill = include_str!("../resources/builtin-skills/skill-studio/SKILL.md");
+    // Windows 上检出的资源是 CRLF，先归一化再比较
+    let skill =
+        include_str!("../resources/builtin-skills/skill-studio/SKILL.md").replace("\r\n", "\n");
     assert!(skill.starts_with("---\nname: skill-studio\n"), "{skill}");
     assert!(
         skill.lines().count() <= 150,
