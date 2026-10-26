@@ -295,9 +295,12 @@ fn duplicate_project_names_require_a_path_or_id_before_writing() {
     let second = home.path("work/two/app");
     std::fs::create_dir_all(&first).unwrap();
     std::fs::create_dir_all(&second).unwrap();
-    let first_path = first.canonicalize().unwrap().to_string_lossy().into_owned();
-    let second_path = second
-        .canonicalize()
+    // CLI 项目目录用 dunce::canonicalize 去掉 Windows 的 \\?\ 前缀。
+    let first_path = dunce::canonicalize(&first)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let second_path = dunce::canonicalize(&second)
         .unwrap()
         .to_string_lossy()
         .into_owned();

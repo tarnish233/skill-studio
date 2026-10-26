@@ -23,13 +23,18 @@ impl ServerHandler for Fixture {
     }
 }
 async fn wait(dir: &Path) {
-    for _ in 0..100 {
-        if request(dir, "list", Value::Null).await.is_ok() {
-            return;
+    // CI 的 macOS runner 在并行跑完整 Rust 套件时可能比固定的 2 秒窗口更慢。
+    // 记录最后一次请求错误，真正启动失败时比笼统的超时信息更容易定位。
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match request(dir, "list", Value::Null).await {
+            Ok(_) => return,
+            Err(error) if tokio::time::Instant::now() >= deadline => {
+                panic!("gateway did not start within 10s: {error:#}");
+            }
+            Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    panic!("gateway did not start");
 }
 fn definition(url: String, oauth: bool) -> Server {
     Server {
