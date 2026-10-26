@@ -189,20 +189,102 @@ pub fn update_project(
 /// 它的 MCP 记录一并清掉；还有 Agent 在用项目的 MCP 时拒绝，免得项目没了、写进去的 MCP
 /// 却再也没有地方停用
 pub fn delete_project(state: &AppState, project_id: String) -> Result<(), String> {
-    if !state.config().projects.iter().any(|p| p.id == project_id) {
-        return Err(Error::NotFound(format!("项目 {project_id}")).into());
-    }
-    crate::mcp::projects::forget(state, &project_id)?;
     state
-        .mutate(|_, config| {
-            let before = config.projects.len();
-            config.projects.retain(|p| p.id != project_id);
-            if config.projects.len() == before {
+        .transactional(|studio, config| {
+            let mut next = config.clone();
+            let before = next.projects.len();
+            next.projects.retain(|p| p.id != project_id);
+            if next.projects.len() == before {
                 return Err(Error::NotFound(format!("项目 {project_id}")));
             }
+            // 锁顺序：配置 → MCP。MCP 在确认项目没有部署后调用配置保存；
+            // 如果随后提交 MCP 失败，在这两把锁内还原配置。
+            skill_studio_mcp::management::projects::forget_with(
+                &studio.store().dir().join("mcp"),
+                &project_id,
+                || studio.save_config(&next).map_err(Into::into),
+                || studio.save_config(config).map_err(Into::into),
+            )
+            .map_err(Error::from)?;
+            *config = next;
             Ok(())
         })
         .map_err(Into::into)
+}
+
+#[cfg(test)]
+mod project_deletion_tests {
+    use super::*;
+    use skill_studio_core::services::store::{Store, CONFIG_BUSY};
+    use skill_studio_mcp::management::{self, projects as mcp_projects, Entry};
+    use std::{collections::HashMap, path::Path, time::Duration};
+
+    #[test]
+    fn config_lock_timeout_does_not_erase_a_projects_saved_mcp_members() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path().join("studio"));
+        let state = AppState::bootstrap_waiting(store.clone(), Duration::ZERO).unwrap();
+        let root = temp.path().join("work");
+        std::fs::create_dir_all(&root).unwrap();
+        let project = create_project(&state, "work".into(), root.clone()).unwrap();
+        let mcp_dir = store.dir().join("mcp");
+        management::save(
+            &mcp_dir,
+            Entry {
+                id: "demo".into(),
+                name: "demo".into(),
+                mode: "direct".into(),
+                definition: serde_json::json!({"type":"stdio","command":"demo"}),
+                ..Default::default()
+            },
+            vec![],
+            Path::new(""),
+            None,
+        )
+        .unwrap();
+        mcp_projects::save(
+            &mcp_dir,
+            &project.id,
+            mcp_projects::Input {
+                root,
+                entry_ids: vec!["demo".into()],
+                group_ids: vec![],
+                claude_local: false,
+            },
+            vec![],
+            &HashMap::new(),
+            Path::new(""),
+            None,
+        )
+        .unwrap();
+
+        let other_writer = store.lock_exclusive(Duration::ZERO).unwrap();
+        let error = delete_project(&state, project.id.clone()).unwrap_err();
+        assert!(error.contains(CONFIG_BUSY), "{error}");
+        assert!(store
+            .read()
+            .unwrap()
+            .unwrap()
+            .project(&project.id)
+            .is_some());
+        assert_eq!(
+            management::read(&mcp_dir).unwrap().projects[&project.id].entry_ids,
+            ["demo"],
+            "删除失败时 MCP 项目成员不能先丢"
+        );
+        drop(other_writer);
+        delete_project(&state, project.id.clone()).unwrap();
+        assert!(store
+            .read()
+            .unwrap()
+            .unwrap()
+            .project(&project.id)
+            .is_none());
+        assert!(!management::read(&mcp_dir)
+            .unwrap()
+            .projects
+            .contains_key(&project.id));
+    }
 }
 
 /// 把项目绑定写进各 agent 的项目目录

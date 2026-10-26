@@ -564,10 +564,7 @@ impl AppState {
             let config = self.config();
             return self.studio.scan_skills(&config);
         }
-        let scan = self.transactional(|studio, config| {
-            studio.reconcile_manual_policy(config, false)?;
-            studio.scan_skills(config)
-        });
+        let scan = self.transactional(|studio, config| studio.scan_skills_with_policy(config));
         match scan {
             Err(error) if error.is_config_busy() => {
                 log::warn!("配置正被其他程序修改，这次只读扫描");

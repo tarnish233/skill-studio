@@ -103,8 +103,29 @@ pub(crate) fn plan(
     Ok((suspended_manual, manual_toggles))
 }
 impl Studio {
+    /// 可写扫描：没发生策略校正时直接复用初次扫描结果；发生了原生开关或配置修改才
+    /// 扫第二遍，避免界面刷新或 CLI 修改前的检查每次都白扫一遍。
+    pub fn scan_skills_with_policy(&self, config: &mut AppConfig) -> Result<Vec<SkillView>> {
+        let views = self.scan_skills(config)?;
+        if self.reconcile_manual_policy_with_views(config, false, &views)? {
+            self.scan_skills(config)
+        } else {
+            Ok(views)
+        }
+    }
+
     pub fn reconcile_manual_policy(&self, config: &mut AppConfig, force_save: bool) -> Result<()> {
         let views = self.scan_skills(config)?;
+        self.reconcile_manual_policy_with_views(config, force_save, &views)
+            .map(|_| ())
+    }
+
+    fn reconcile_manual_policy_with_views(
+        &self,
+        config: &mut AppConfig,
+        force_save: bool,
+        views: &[SkillView],
+    ) -> Result<bool> {
         let mut next = config.clone();
         let mut updates = Vec::new();
         for agent in AGENTS {
@@ -117,7 +138,7 @@ impl Studio {
                 continue;
             }
             let ids = config.active_skill_ids(agent.id);
-            let (suspended, toggles) = plan(config, agent.id, &ids, &views)?;
+            let (suspended, toggles) = plan(config, agent.id, &ids, views)?;
             if suspended.is_empty() {
                 next.policy_suspensions.remove(agent.id);
             } else {
@@ -142,7 +163,7 @@ impl Studio {
                 == serde_json::to_value(&*config)
                     .map_err(|source| Error::JsonSerialize { source })?
         {
-            return Ok(());
+            return Ok(false);
         }
         let mut tx = Transaction::begin(self.store().dir().join("manual-policy.json"))?;
         let result = (|| -> Result<()> {
@@ -175,6 +196,6 @@ impl Studio {
         }
         tx.commit()?;
         *config = next;
-        Ok(())
+        Ok(true)
     }
 }

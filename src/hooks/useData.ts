@@ -137,7 +137,7 @@ export function useAppVersion() {
 
 /**
  * Studio 之外的改动出现时刷新：
- * - skills-changed：skill 目录变了（后端 watcher 已做 400ms 去抖）
+ * - skills-changed：全局或项目的 skill 目录变了（后端 watcher 已做 400ms 去抖）
  * - config-changed：别的进程（命令行、另一个 Skill Studio）改了配置，分组、项目、设置都可能变了
  * - mcp-changed：MCP 托管状态变了，不必等 30 秒一次的轮询
  */
@@ -147,6 +147,8 @@ export function useSkillsAutoRefresh() {
   useTauriEvent("skills-changed", () => {
     if (target.id !== "local") return;
     void qc.invalidateQueries({ queryKey: queryKeys.skills });
+    // 项目卡片统计和详情里的 localSkills 都在 projects 键下。
+    void qc.invalidateQueries({ queryKey: queryKeys.projects });
   });
   useTauriEvent("config-changed", () => {
     if (target.id !== "local") return;

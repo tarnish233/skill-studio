@@ -16,6 +16,7 @@ import {
 } from "@/lib/mcpAgents";
 import { useSettings } from "@/hooks/useData";
 import { queryKeys } from "@/lib/queryKeys";
+import { mcpTarget } from "@/lib/mcpDisplay";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -741,11 +742,7 @@ function LocalMcpPage() {
                       ))}
                   </div>
                   <p className="truncate pt-0.5 text-xs text-muted-foreground">
-                    {String(
-                      row.entry.definition.url ??
-                        row.entry.definition.command ??
-                        "点击查看配置来源",
-                    )}
+                    {mcpTarget(row.entry.definition) || "点击查看配置来源"}
                   </p>
                 </div>
                 <RowActions busy={busy}>

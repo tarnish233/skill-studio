@@ -198,6 +198,108 @@ fn adding_mcp_three_ways_keeps_every_secret_out_of_the_output() {
 
 #[test]
 #[serial]
+fn malformed_mcp_pairs_never_echo_secrets_to_stderr_or_the_audit_log() {
+    let home = Home::new();
+    for (args, secret) in [
+        (
+            vec![
+                "mcp",
+                "add",
+                "bad-env",
+                "--env",
+                "GITHUB_TOKEN ghp_malformed_env",
+                "--",
+                "npx",
+                "server",
+            ],
+            "ghp_malformed_env",
+        ),
+        (
+            vec![
+                "mcp",
+                "add",
+                "bad-header",
+                "--url",
+                "https://example.com/mcp",
+                "--header",
+                "Authorization Bearer malformed_header_secret",
+            ],
+            "malformed_header_secret",
+        ),
+    ] {
+        for json in [false, true] {
+            let failed = if json {
+                home.json(&args)
+            } else {
+                home.run(&args)
+            };
+            assert_eq!(failed.code, 2, "{}", failed.err);
+            assert!(failed.err.contains("要写成"), "{}", failed.err);
+            assert!(
+                !failed.err.contains(secret),
+                "密钥进了错误输出：{}",
+                failed.err
+            );
+        }
+        let log = home.read(".skill-studio/logs/cli.log");
+        assert!(
+            log.contains("失败"),
+            "格式错误的修改命令也应记录失败：{log}"
+        );
+        assert!(!log.contains(secret), "密钥进了审计日志：{log}");
+    }
+}
+
+#[test]
+#[serial]
+fn url_userinfo_and_bare_query_tokens_are_hidden_in_mcp_views_and_the_log() {
+    let home = Home::new();
+    let url = "https://user:sk_url_password@example.com/mcp?sk_bare_query";
+    let added = home.ok(&["mcp", "add", "remote", "--url", url]);
+    let list = home.ok(&["mcp", "list"]);
+    let shown = home.json(&["mcp", "show", "remote"]).out;
+    let log = home.read(".skill-studio/logs/cli.log");
+    for output in [&added, &list, &shown, &log] {
+        for secret in ["sk_url_password", "sk_bare_query"] {
+            assert!(!output.contains(secret), "{secret} 出现在输出里：{output}");
+        }
+    }
+    let shown: Value = serde_json::from_str(shown.trim()).unwrap();
+    assert!(shown["definition"]["url"]
+        .as_str()
+        .unwrap()
+        .contains("<已隐藏>"));
+}
+
+#[test]
+#[serial]
+fn a_mistyped_unset_key_does_not_echo_its_value_to_stderr_or_the_log() {
+    let home = Home::new();
+    home.ok(&[
+        "mcp",
+        "add",
+        "demo",
+        "--env",
+        "API_TOKEN=old",
+        "--",
+        "npx",
+        "demo",
+    ]);
+    let failed = home.json(&[
+        "mcp",
+        "set",
+        "demo",
+        "--unset-env",
+        "API_TOKEN=sk_mistyped_unset",
+    ]);
+    assert_ne!(failed.code, 0);
+    assert!(!failed.err.contains("sk_mistyped_unset"), "{}", failed.err);
+    let log = home.read(".skill-studio/logs/cli.log");
+    assert!(!log.contains("sk_mistyped_unset"), "{log}");
+}
+
+#[test]
+#[serial]
 fn group_switches_stack_per_agent_and_never_drop_each_other() {
     let home = Home::new();
     home.ok(&["mcp", "add", "alpha", "--", "alpha-server"]);

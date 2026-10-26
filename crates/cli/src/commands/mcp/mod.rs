@@ -23,7 +23,7 @@ use skill_studio_service::state::AppState;
 use super::Ctx;
 use crate::args::McpCommand;
 use crate::error::CliError;
-use crate::redact::{secret_name, HIDDEN};
+use crate::redact::{redact_url, secret_name, HIDDEN};
 use crate::report::{agent_name, home};
 use crate::view::AgentState;
 
@@ -365,21 +365,6 @@ impl Mcp {
         );
         missing
     }
-}
-
-/// 隐藏网址里的参数值（有的服务把令牌放在查询参数里）
-fn redact_url(url: &str) -> String {
-    let Some((base, query)) = url.split_once('?') else {
-        return url.to_string();
-    };
-    let query: Vec<String> = query
-        .split('&')
-        .map(|pair| match pair.split_once('=') {
-            Some((name, _)) => format!("{name}={HIDDEN}"),
-            None => pair.to_string(),
-        })
-        .collect();
-    format!("{base}?{}", query.join("&"))
 }
 
 /// 隐藏像令牌的参数：`--api-key xxx`、`--token=xxx`

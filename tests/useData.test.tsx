@@ -144,6 +144,21 @@ describe("Studio 之外的改动", () => {
     expect(stale(qc, queryKeys.agentProbe)).toBe(false);
   });
 
+  it("项目 skill 目录被外部修改时刷新项目卡片和打开的本地 skill 列表", async () => {
+    const listeners = listenAll();
+    const qc = client();
+    const localSkills = [...queryKeys.projects, "p1", "localSkills"];
+    qc.setQueryData(localSkills, []);
+    renderHook(() => useSkillsAutoRefresh(), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(listeners.has("skills-changed")).toBe(true));
+
+    act(() => listeners.get("skills-changed")!({ payload: null }));
+    expect(stale(qc, queryKeys.skills)).toBe(true);
+    expect(stale(qc, queryKeys.projects)).toBe(true);
+    expect(stale(qc, localSkills)).toBe(true);
+    expect(stale(qc, queryKeys.groups)).toBe(false);
+  });
+
   it("MCP 托管状态变了：只重新读取 MCP 状态，不等 30 秒的轮询", async () => {
     const listeners = listenAll();
     const qc = client();

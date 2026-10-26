@@ -484,8 +484,20 @@ impl Studio {
                 .clone();
             let current = scanner::dir_content_hash(&target)?;
             if current == hash {
+                let skill = self.installed_view(config, &id)?;
+                if record.content_hash != hash {
+                    // The user has already brought the Hub copy up to the source's content.
+                    // This import acknowledges those bytes, so the next source update can
+                    // still distinguish a fresh change from an unapproved Hub edit.
+                    let mut next = config.clone();
+                    let mut synced = record;
+                    synced.content_hash = hash;
+                    next.skill_installations.insert(id.clone(), synced);
+                    self.save_config(&next)?;
+                    *config = next;
+                }
                 return Ok(ImportOutcome {
-                    skill: self.installed_view(config, &id)?,
+                    skill,
                     changed: false,
                 });
             }

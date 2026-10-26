@@ -40,6 +40,7 @@ import {
   mcpAppId,
 } from "@/lib/mcpAgents";
 import type { ProjectBinding } from "@/types";
+import { mcpTarget } from "@/lib/mcpDisplay";
 
 /** 启停后的提示：MCP 要在 Agent 里重新加载才生效 */
 const RELOAD = "请在 Agent 中重新加载 MCP";
@@ -389,9 +390,7 @@ export function McpProjectDetail({
           title="单独选择 MCP"
           items={[
             ...catalog.map((row) => {
-              const target = String(
-                row.entry.definition.command ?? row.entry.definition.url ?? "",
-              );
+              const target = mcpTarget(row.entry.definition);
               const kind = row.managed
                 ? row.entry.mode === "direct"
                   ? "Agent 直连"

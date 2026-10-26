@@ -63,6 +63,27 @@ fn policy_without_groups_restores_only_its_own_suspensions_and_finds_new_skills(
 }
 #[test]
 #[serial]
+fn policy_scan_returns_current_states_and_does_not_resave_an_unchanged_config() {
+    let env = Env::new();
+    let studio = env.studio();
+    let mut config = studio.load_config().unwrap();
+    env.write_simple_skill(&env.claude_skills(), "manual");
+    config.settings.preserve_manual_skills = false;
+    studio.save_config(&config).unwrap();
+
+    let first = studio.scan_skills_with_policy(&mut config).unwrap();
+    assert!(first
+        .iter()
+        .any(|view| { view.skill.name == "manual" && view.agents["claude-code"].disabled }));
+    assert_eq!(config.policy_suspensions["claude-code"].len(), 1);
+    let written = fs::read(studio.store().config_path()).unwrap();
+    let second = studio.scan_skills_with_policy(&mut config).unwrap();
+    assert_eq!(first.len(), second.len());
+    assert_eq!(fs::read(studio.store().config_path()).unwrap(), written);
+}
+
+#[test]
+#[serial]
 fn cross_agent_policy_failure_rolls_back_native_files_and_config() {
     let env = Env::new();
     let studio = env.studio();

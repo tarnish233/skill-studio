@@ -442,6 +442,52 @@ fn removing_a_group_clears_project_bindings_that_are_not_deployed() {
 }
 
 #[test]
+fn removing_a_group_still_refuses_deployed_projects_after_its_members_change() {
+    for new_members in [&[][..], &["beta"][..]] {
+        let env = Env::new();
+        groups::save_group(&env.dir, group("g", &["alpha"]), vec![], None).unwrap();
+        let root = env.root.path().join("work");
+        std::fs::create_dir_all(&root).unwrap();
+        let codex = env.root.path().join("home/codex");
+        std::fs::create_dir_all(&codex).unwrap();
+        let overrides = std::collections::HashMap::from([("codex".to_string(), codex)]);
+        projects::save(
+            &env.dir,
+            "p",
+            projects::Input {
+                root,
+                entry_ids: vec![],
+                group_ids: vec!["g".into()],
+                claude_local: false,
+            },
+            vec![],
+            &overrides,
+            Path::new("/app"),
+            None,
+        )
+        .unwrap();
+        projects::activate(&env.dir, "p", "codex", true, &overrides, Path::new("/app")).unwrap();
+
+        // The project still owns alpha, even though the group's saved definition no longer does.
+        groups::save_group(
+            &env.dir,
+            group("g", new_members),
+            vec![],
+            Some(&snapshot("g", &["alpha"])),
+        )
+        .unwrap();
+        let error = groups::remove_group(&env.dir, "g").unwrap_err().to_string();
+        assert!(error.contains("项目"), "{error}");
+        let catalog = read(&env.dir).unwrap();
+        assert_eq!(catalog.projects["p"].group_ids, ["g"]);
+        assert_eq!(catalog.projects["p"].active["codex"].entries[0].id, "alpha");
+
+        projects::activate(&env.dir, "p", "codex", false, &overrides, Path::new("/app")).unwrap();
+        groups::remove_group(&env.dir, "g").unwrap();
+    }
+}
+
+#[test]
 fn removing_a_group_a_project_is_using_is_refused_until_it_is_stopped() {
     let env = Env::new();
     groups::save_group(&env.dir, group("g", &["alpha"]), vec![], None).unwrap();

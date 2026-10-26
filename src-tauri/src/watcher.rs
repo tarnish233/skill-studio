@@ -134,7 +134,9 @@ fn reconcile(
     watched: &mut HashSet<PathBuf>,
     desired: HashSet<PathBuf>,
 ) -> bool {
-    let changed = *watched != desired;
+    // A desired directory can fail to watch (permissions or OS watch limit). Report only
+    // subscriptions that actually changed; otherwise we emit skills-changed every second.
+    let mut changed = watched.iter().any(|p| !desired.contains(p));
     for removed in watched.difference(&desired) {
         let _ = watcher.unwatch(removed);
     }
@@ -143,6 +145,7 @@ fn reconcile(
         match watcher.watch(&added, RecursiveMode::NonRecursive) {
             Ok(()) => {
                 watched.insert(added);
+                changed = true;
             }
             Err(e) => log::debug!("监听 {} 失败: {e}", added.display()),
         }
@@ -295,6 +298,22 @@ mod tests {
             dirs.contains(&skill.canonicalize().unwrap()),
             "项目里的 skill 目录也要监听"
         );
+    }
+
+    #[test]
+    fn a_failed_watch_does_not_report_a_skill_change_on_every_reconcile() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        let (tx, _rx) = mpsc::channel();
+        let mut watcher = notify::recommended_watcher(move |event| {
+            let _ = tx.send(event);
+        })
+        .unwrap();
+        let mut watched = HashSet::new();
+        let desired = HashSet::from([missing]);
+        assert!(!reconcile(&mut watcher, &mut watched, desired.clone()));
+        assert!(!reconcile(&mut watcher, &mut watched, desired));
+        assert!(watched.is_empty());
     }
 
     #[test]

@@ -59,6 +59,7 @@ import {
   supportsMcp,
 } from "@/lib/mcpAgents";
 import { sameMembers } from "@/lib/utils";
+import { mcpTarget } from "@/lib/mcpDisplay";
 
 const STATUS_KEY = queryKeys.mcpStatus;
 /** 启停后的提示：MCP 要在 Agent 里重新加载才生效 */
@@ -185,9 +186,7 @@ function LocalGroups() {
   const open = (id: string | null) =>
     requestNavigation(() => setDetail({ key: ++sessions.current, id }));
   const options: ChecklistItem[] = catalog.map((row) => {
-    const target = String(
-      row.entry.definition.command ?? row.entry.definition.url ?? "",
-    );
+    const target = mcpTarget(row.entry.definition);
     const kind = row.managed
       ? row.entry.mode === "direct"
         ? "Agent 直连"

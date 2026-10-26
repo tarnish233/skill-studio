@@ -230,7 +230,8 @@ fn pairs(items: &[String], what: &str, colon: bool) -> Result<Map<String, Value>
             item.split_once('=')
         };
         let Some((key, value)) = split.filter(|(k, _)| !k.trim().is_empty()) else {
-            return Err(CliError::usage(format!("{what}要写成 名称=值：{item}")));
+            // `item` 可能是把冒号或等号漏掉的令牌；错误和审计日志都不能回显它。
+            return Err(CliError::usage(format!("{what}要写成 名称=值")));
         };
         map.insert(key.trim().to_string(), json!(value.trim()));
     }
@@ -428,7 +429,8 @@ fn edit_map(
         .unwrap_or_default();
     for name in unset {
         if map.remove(name.trim()).is_none() {
-            return Err(CliError::not_found(format!("没有这一项：{name}"))
+            // 输入可能是把密钥值误写进了 --unset-env/--unset-header：不要回显它。
+            return Err(CliError::not_found("没有这一项，请从可选名称中选择")
                 .candidates(map.keys().cloned().collect()));
         }
     }

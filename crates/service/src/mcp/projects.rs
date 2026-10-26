@@ -108,13 +108,6 @@ pub fn remove(state: &AppState, project_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 删除项目本身时调用：清掉它的 MCP 记录。MCP 管理关闭时也清（那时接入已还原）；
-/// 还有 Agent 在用时拒绝
-pub fn forget(state: &AppState, project_id: &str) -> Result<(), String> {
-    state.ensure_writable().map_err(String::from)?;
-    projects::forget(&dir(state), project_id).map_err(|e| e.to_string())
-}
-
 /// 移除 Hub 写在这个项目里的接入（直接纳入管理的那些，不是项目部署的）；被其他程序改写
 /// 过的原样留下
 pub fn remove_bindings(state: &AppState, project_id: &str) -> Result<Removal, String> {

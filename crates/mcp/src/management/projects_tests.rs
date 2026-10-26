@@ -209,6 +209,47 @@ fn removing_a_project_needs_every_agent_stopped() {
 }
 
 #[test]
+fn forgetting_a_project_never_discards_mcp_members_if_config_save_fails() {
+    let env = Env::new(&["alpha"]);
+    env.save(&["alpha"], &[]).unwrap();
+    let error = forget_with(
+        &env.dir,
+        "p1",
+        || anyhow::bail!("simulated config save failure"),
+        || panic!("nothing to roll back when config was not saved"),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("simulated config save failure"), "{error}");
+    assert_eq!(read(&env.dir).unwrap().projects["p1"].entry_ids, ["alpha"]);
+
+    env.activate("codex", true).unwrap();
+    let saved = std::cell::Cell::new(false);
+    let error = forget_with(
+        &env.dir,
+        "p1",
+        || {
+            saved.set(true);
+            Ok(())
+        },
+        || panic!("the MCP deployment must be rejected before saving config"),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("请先停用"), "{error}");
+    assert!(!saved.get());
+    env.activate("codex", false).unwrap();
+    forget_with(
+        &env.dir,
+        "p1",
+        || Ok(()),
+        || panic!("successful delete needs no rollback"),
+    )
+    .unwrap();
+    assert!(!read(&env.dir).unwrap().projects.contains_key("p1"));
+}
+
+#[test]
 fn a_hub_entry_an_active_project_uses_cannot_be_deleted() {
     let env = Env::new(&["alpha"]);
     env.save(&["alpha"], &[]).unwrap();

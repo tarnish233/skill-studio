@@ -29,6 +29,7 @@ import type {
   McpRow,
 } from "@/lib/api/mcpManagement";
 import { mcpAgentName, mcpAppId } from "@/lib/mcpAgents";
+import { mcpTarget } from "@/lib/mcpDisplay";
 
 /** 本次启动后对当前配置的测试结果 */
 export interface McpTestState {
@@ -224,9 +225,7 @@ export function McpEntryDetail({
             running={running}
           />
         }
-        subtitle={String(
-          row.entry.definition.url ?? row.entry.definition.command ?? "",
-        )}
+        subtitle={mcpTarget(row.entry.definition)}
         mono
         onBack={onBack}
         actions={

@@ -48,16 +48,7 @@ impl Data {
 
 /// Agent 能读到这个 skill：副本在、没被原生开关停用（与前端 isRegistered 一致）
 pub fn loaded(state: &AgentSkillState) -> bool {
-    !state.disabled
-        && matches!(
-            state.status,
-            LinkStatus::Source
-                | LinkStatus::Linked
-                | LinkStatus::Copied
-                | LinkStatus::CopyStale
-                | LinkStatus::CopyModified
-                | LinkStatus::CopyConflict
-        )
+    !state.disabled && state.status.is_registered()
 }
 
 /// 必须由人动手才能用（与前端 needsManualFix 一致）

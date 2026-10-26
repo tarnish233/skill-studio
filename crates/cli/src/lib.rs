@@ -232,6 +232,11 @@ fn logged(args: &[OsString]) -> Vec<String> {
                 trailing = true;
                 out.push(arg);
             }
+            "--unset-env" | "--unset-header" => {
+                // These flags take names, but a typo can put an entire credential there.
+                pending = Some("--config");
+                out.push(arg);
+            }
             "--env" | "-e" | "--header" | "-H" | "--config" | "--url" => {
                 pending = Some(match arg.as_str() {
                     "--env" | "-e" => "--env",
@@ -244,6 +249,9 @@ fn logged(args: &[OsString]) -> Vec<String> {
             _ => match arg.split_once('=') {
                 Some((flag @ ("--env" | "--header" | "--config" | "--url"), value)) => {
                     out.push(format!("{flag}={}", hide(flag, value)))
+                }
+                Some((flag @ ("--unset-env" | "--unset-header"), _)) => {
+                    out.push(format!("{flag}={HIDDEN}"))
                 }
                 // clap 也接受短选项紧跟值：-eTOKEN=…、-HAuthorization: …、-e=TOKEN=…
                 _ => match attached(&arg) {

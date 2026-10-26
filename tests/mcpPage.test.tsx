@@ -142,6 +142,45 @@ it("parses pasted configurations in the unified add flow and lets users choose a
     params: { entry: { definition: { startup_timeout_sec: 120 } } },
   });
 });
+it("hides URL credentials on MCP cards and detail headings without changing the editable value", async () => {
+  const url =
+    "https://user:sk_ui_password@example.com/mcp?token=sk_ui_query&sk_ui_bare";
+  handlers.set("mcp_request", ({ method }) =>
+    method === "list"
+      ? {
+          ...empty,
+          entries: [
+            {
+              id: "private-url",
+              name: "Private URL",
+              mode: "direct",
+              definition: { type: "http", url },
+              oauth: false,
+              clientId: null,
+              scopes: [],
+              bindings: [],
+            },
+          ],
+        }
+      : null,
+  );
+  renderWithProviders(<McpPage />);
+  await screen.findByText("Private URL");
+  for (const secret of ["sk_ui_password", "sk_ui_query", "sk_ui_bare"]) {
+    expect(screen.queryByText(new RegExp(secret))).not.toBeInTheDocument();
+  }
+  expect(
+    screen.getByText(/https:\/\/<已隐藏>@example.com\/mcp/),
+  ).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "编辑 Private URL" }));
+  await screen.findByText(/https:\/\/<已隐藏>@example.com\/mcp/);
+  expect(screen.getByLabelText("MCP 地址")).toHaveValue(url);
+  for (const secret of ["sk_ui_password", "sk_ui_query", "sk_ui_bare"]) {
+    expect(screen.queryByText(new RegExp(secret))).not.toBeInTheDocument();
+  }
+});
+
 it("shows a Pi project override on the managed server instead of a second card", async () => {
   handlers.set("mcp_request", ({ method }) =>
     method === "list"

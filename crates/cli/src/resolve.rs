@@ -207,38 +207,70 @@ pub fn skills(views: &[SkillView], inputs: &[String]) -> Result<Vec<String>, Cli
 
 pub fn project<'a>(config: &'a AppConfig, input: &str) -> Result<&'a ProjectBinding, CliError> {
     let input = input.trim();
-    let found = config
-        .projects
-        .iter()
-        .find(|p| p.id == input || p.name == input)
-        .or_else(|| {
-            let lower = input.to_lowercase();
-            let matches: Vec<_> = config
-                .projects
-                .iter()
-                .filter(|p| p.name.to_lowercase() == lower)
-                .collect();
-            (matches.len() == 1).then(|| matches[0])
-        })
-        .or_else(|| {
-            if !looks_like_path(input) {
-                return None;
-            }
-            // 写目录时找包含它的项目，最深的那个：在项目的子目录里运行也能找到
-            let wanted = canonical(&absolute(input));
-            config
-                .projects
-                .iter()
-                .filter(|p| wanted.starts_with(canonical(&p.root)))
-                .max_by_key(|p| canonical(&p.root).components().count())
-        });
-    found.ok_or_else(|| {
-        CliError::not_found(format!("找不到项目「{input}」"))
-            .candidates(config.projects.iter().map(|p| p.name.clone()).collect())
-            .hint(if looks_like_path(input) {
-                "这个目录还不是项目，用 skill-studio projects create <目录> 添加"
-            } else {
-                "用 skill-studio projects list 查看全部项目"
+    // IDs and explicit paths must never be shadowed by another project's display name.
+    if let Some(project) = config.projects.iter().find(|p| p.id == input) {
+        return Ok(project);
+    }
+    let ambiguous = |matches: Vec<&'a ProjectBinding>| {
+        CliError::not_found(format!("有 {} 个项目匹配「{input}」", matches.len()))
+            .candidates(
+                matches
+                    .iter()
+                    .map(|p| format!("{} · {} · ID {}", p.name, p.root.display(), p.id))
+                    .collect(),
+            )
+            .hint("请改用项目目录或 ID")
+    };
+    if looks_like_path(input) {
+        // 在项目子目录里运行时选最深的一层；同深度的目录别名也不能任意挑一个。
+        let wanted = canonical(&absolute(input));
+        let mut matches: Vec<_> = config
+            .projects
+            .iter()
+            .filter_map(|p| {
+                let root = canonical(&p.root);
+                wanted
+                    .starts_with(&root)
+                    .then_some((p, root.components().count()))
             })
-    })
+            .collect();
+        matches.sort_by_key(|(_, depth)| std::cmp::Reverse(*depth));
+        if let Some((_, depth)) = matches.first() {
+            let closest: Vec<_> = matches
+                .iter()
+                .take_while(|(_, d)| d == depth)
+                .map(|(project, _)| *project)
+                .collect();
+            return if closest.len() == 1 {
+                Ok(closest[0])
+            } else {
+                Err(ambiguous(closest))
+            };
+        }
+    }
+    for exact in [true, false] {
+        let matches: Vec<_> = config
+            .projects
+            .iter()
+            .filter(|p| {
+                if exact {
+                    p.name == input
+                } else {
+                    p.name.to_lowercase() == input.to_lowercase()
+                }
+            })
+            .collect();
+        match matches.len() {
+            0 => {}
+            1 => return Ok(matches[0]),
+            _ => return Err(ambiguous(matches)),
+        }
+    }
+    Err(CliError::not_found(format!("找不到项目「{input}」"))
+        .candidates(config.projects.iter().map(|p| p.name.clone()).collect())
+        .hint(if looks_like_path(input) {
+            "这个目录还不是项目，用 skill-studio projects create <目录> 添加"
+        } else {
+            "用 skill-studio projects list 查看全部项目"
+        }))
 }

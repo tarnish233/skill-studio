@@ -301,21 +301,46 @@ pub fn remove(dir: &Path, id: &str) -> Result<()> {
 /// 删除项目本身时清掉它的 MCP 记录；还有 Agent 在用时先停用。MCP 管理关闭期间接入已经
 /// 还原成原来的配置，记录直接删掉，重新开启时也就不会写回这个已删除的项目
 pub fn forget(dir: &Path, id: &str) -> Result<()> {
-    // 从没用过 MCP 托管：不会有这个项目的记录，也不建任何文件
+    forget_with(dir, id, || Ok(()), || Ok(()))
+}
+
+/// 与 Skill 配置里的项目一同删除。调用方先持配置写锁，再进入这里持 MCP 锁；
+/// 确认项目 MCP 没在部署后才保存 Skill 配置，MCP 提交失败则在同一锁内还原它。
+/// 因为配置锁在外面，两个进程不能在这两次保存之间改写项目。
+pub fn forget_with(
+    dir: &Path,
+    id: &str,
+    save_config: impl FnOnce() -> Result<()>,
+    restore_config: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    // 从没用过 MCP 托管：不会有这个项目的记录，也不建任何 MCP 文件
     if !dir.join("catalog.json").exists() && !dir.join("management-transaction.json").exists() {
-        return Ok(());
+        return save_config();
     }
     let _lock = lock(dir)?;
     let mut catalog = read_unlocked(dir)?;
     match catalog.projects.get(id) {
-        None => return Ok(()),
+        None => return save_config(),
         Some(project) if !catalog.suspended && !project.active.is_empty() => {
             bail!("请先停用项目里所有 Agent 的 MCP")
         }
         Some(_) => {}
     }
     catalog.projects.remove(id);
-    commit(dir, BTreeMap::new(), &catalog)
+    save_config()?;
+    if let Err(error) = commit(dir, BTreeMap::new(), &catalog) {
+        // 删除日志的最后一步也可能失败，此时 catalog 已经写好。先完成/回滚 MCP
+        // 自己的日志，再确认是否真的需要恢复 Skill 配置。
+        let removed = recover(dir)
+            .and_then(|_| read_unlocked(dir))
+            .is_ok_and(|current| !current.projects.contains_key(id));
+        if !removed {
+            restore_config()
+                .with_context(|| format!("删除项目 MCP 记录失败：{error}；恢复项目配置也失败"))?;
+            return Err(error);
+        }
+    }
+    Ok(())
 }
 
 /// 项目 id → Agent → 写进去的接入已被外部修改或移除：只标在出问题的项目和 Agent 上

@@ -289,6 +289,68 @@ fn names_resolve_to_one_thing_or_list_the_candidates() {
 
 #[test]
 #[serial]
+fn duplicate_project_names_require_a_path_or_id_before_writing() {
+    let home = Home::new();
+    let first = home.path("work/one/app");
+    let second = home.path("work/two/app");
+    std::fs::create_dir_all(&first).unwrap();
+    std::fs::create_dir_all(&second).unwrap();
+    let first_path = first.canonicalize().unwrap().to_string_lossy().into_owned();
+    let second_path = second
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let first_id = home.json(&["projects", "create", &first_path]).json()["project"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let second_id = home.json(&["projects", "create", &second_path]).json()["project"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    for args in [
+        vec!["projects", "show", "app"],
+        vec!["projects", "delete", "app", "--yes"],
+        vec!["mcp", "projects", "show", "app"],
+    ] {
+        let ambiguous = home.json(&args);
+        assert_eq!(
+            ambiguous.code, 3,
+            "{args:?}: {}{}",
+            ambiguous.out, ambiguous.err
+        );
+        let error = &ambiguous.json()["error"];
+        assert_eq!(error["code"], "not_found");
+        let candidates = error["candidates"].as_array().unwrap();
+        assert!(candidates
+            .iter()
+            .any(|c| c.as_str().unwrap().contains(&first_path)));
+        assert!(candidates
+            .iter()
+            .any(|c| c.as_str().unwrap().contains(&second_path)));
+    }
+    assert_eq!(
+        home.json(&["projects", "list"])
+            .json()
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        home.json(&["projects", "show", &first_id]).json()["root"],
+        first_path
+    );
+    assert_eq!(
+        home.json(&["projects", "show", &second_path]).json()["id"],
+        second_id
+    );
+}
+
+#[test]
+#[serial]
 fn projects_save_members_and_write_only_the_agents_enabled() {
     let home = Home::new();
     home.hub("alpha");
@@ -605,6 +667,33 @@ fn reimporting_a_changed_local_skill_updates_the_hub_copy_without_overwriting_ed
             .unwrap()
             .contains("mine")
     );
+}
+
+#[test]
+#[serial]
+fn reimporting_a_hub_copy_already_matching_the_source_refreshes_its_hash() {
+    let home = Home::new();
+    let source = home.skill(".", "mine");
+    home.ok(&["skills", "import", "~/mine"]);
+    let hub = home.path(".skill-studio/skills/mine/SKILL.md");
+    let v2 = "---\nname: mine\ndescription: v2\n---\n\nv2\n";
+    std::fs::write(source.join("SKILL.md"), v2).unwrap();
+    std::fs::write(&hub, v2).unwrap();
+    let already_equal = home.json(&["skills", "import", "~/mine"]);
+    assert_eq!(already_equal.code, 0, "{}", already_equal.err);
+    assert_eq!(already_equal.json()["changed"], false);
+
+    // Explicitly importing matching content acknowledges it as the current Hub copy;
+    // the next source update must not be mistaken for an unapproved Hub edit.
+    std::fs::write(
+        source.join("SKILL.md"),
+        "---\nname: mine\ndescription: v3\n---\n\nv3\n",
+    )
+    .unwrap();
+    let next = home.json(&["skills", "import", "~/mine"]);
+    assert_eq!(next.code, 0, "{}", next.err);
+    assert_eq!(next.json()["changed"], true);
+    assert!(std::fs::read_to_string(hub).unwrap().contains("v3"));
 }
 
 #[test]
