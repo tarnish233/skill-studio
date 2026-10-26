@@ -703,9 +703,11 @@ fn remote_mcp_is_managed_like_the_desktop_for_direct_connections() {
         .cloned()
         .unwrap();
     assert_eq!(adopted["bindings"][0]["agent"], "codex");
+    // Windows 的路径用反斜杠：只看文件名与目录，不假设分隔符
     assert!(adopted["bindings"][0]["path"]
         .as_str()
         .unwrap()
+        .replace('\\', "/")
         .ends_with(".codex/config.toml"));
 
     // 新的直连 MCP 先只进 Hub，再通过分组启用到 Agent
