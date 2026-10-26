@@ -105,6 +105,28 @@ async fn direct_probe_distinguishes_login_from_rejected_authorization_header() {
     mock.abort();
 }
 #[tokio::test]
+async fn gateway_restarts_on_an_available_port_when_the_saved_port_is_occupied() {
+    let occupied = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let previous_port = occupied.local_addr().unwrap().port();
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().to_owned();
+    let saved = config::Config {
+        port: previous_port,
+        ..Default::default()
+    };
+    config::save(&dir, &saved).unwrap();
+
+    let mut daemon = tokio::spawn(serve(dir.clone()));
+    tokio::select! {
+        _ = wait(&dir) => {},
+        result = &mut daemon => panic!("网关不能因旧端口被占用而退出：{result:?}"),
+    }
+    assert_ne!(config::read(&dir).unwrap().port, previous_port);
+    request(&dir, "stop", Value::Null).await.unwrap();
+    daemon.await.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn http_gateway_isolates_sessions_and_requires_service_credentials() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -186,8 +208,11 @@ async fn oauth_login_is_persistent_and_shared_by_two_clients() {
     });
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().to_owned();
-    let daemon = tokio::spawn(serve(dir.clone()));
-    wait(&dir).await;
+    let mut daemon = tokio::spawn(serve(dir.clone()));
+    tokio::select! {
+        _ = wait(&dir) => {},
+        result = &mut daemon => panic!("OAuth 测试网关初次启动失败：{result:?}"),
+    }
     request(
         &dir,
         "save",
@@ -275,8 +300,11 @@ async fn oauth_login_is_persistent_and_shared_by_two_clients() {
     b.cancel().await.unwrap();
     request(&dir, "stop", Value::Null).await.unwrap();
     daemon.await.unwrap().unwrap();
-    let daemon = tokio::spawn(serve(dir.clone()));
-    wait(&dir).await;
+    let mut daemon = tokio::spawn(serve(dir.clone()));
+    tokio::select! {
+        _ = wait(&dir) => {},
+        result = &mut daemon => panic!("OAuth 测试网关重启失败：{result:?}"),
+    }
     let a = client(&dir, Some(&token)).await.unwrap();
     assert_eq!(a.list_all_tools().await.unwrap().len(), 1);
     a.cancel().await.unwrap();

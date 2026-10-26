@@ -820,7 +820,16 @@ pub async fn serve(dir: PathBuf) -> Result<()> {
     fs2::FileExt::try_lock_exclusive(&lock).context("MCP 网关已在运行")?;
     let mut config = config::read(&dir)?;
     let listener =
-        tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, config.port)).await?;
+        match tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, config.port)).await {
+            Ok(listener) => listener,
+            // A quick restart on macOS can leave the old listening port unavailable.
+            // The bridge reads config.port for each connection; another free localhost port
+            // keeps the gateway usable without touching the locked previous process.
+            Err(error) if config.port != 0 && error.kind() == std::io::ErrorKind::AddrInUse => {
+                tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?
+            }
+            Err(error) => return Err(error.into()),
+        };
     config.port = listener.local_addr()?.port();
     config::save(&dir, &config)?;
     let app = Arc::new(App {
