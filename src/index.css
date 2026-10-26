@@ -141,6 +141,17 @@
   display: none;
 }
 
+/* The transparent WKWebView must never scroll the document itself. Long lists
+   scroll in their own panes; otherwise macOS overscroll reveals the native gray
+   material beneath the entire App shell. */
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 html {
   @apply font-sans antialiased;
   line-height: 1.5;

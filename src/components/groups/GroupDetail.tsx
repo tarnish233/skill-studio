@@ -163,7 +163,7 @@ export function GroupDetail({
         </p>
       )}
       {/* Leave room for focus rings inside the scroll viewport without shifting the fields. */}
-      <div className="-mx-1 min-h-0 flex-1 space-y-6 overflow-y-auto px-1 pb-6 pt-1">
+      <div className="-mx-1 min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-y-none px-1 pb-6 pt-1">
         <section className="space-y-2">
           <h3 className="text-sm font-semibold">分组名称</h3>
           <Input
