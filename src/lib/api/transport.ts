@@ -81,7 +81,11 @@ export async function invoke<T>(
     "set_window_theme",
     "search_catalog_skills",
   ];
-  if (desktop.includes(method)) return nativeInvoke<T>(method, params);
+  // 官方 MCP 目录是公开的网络查询，与市场搜索一样由桌面完成：服务器可能连不上外网
+  const registry =
+    method === "mcp_request" && params.method === "searchRegistry";
+  if (desktop.includes(method) || registry)
+    return nativeInvoke<T>(method, params);
   if (destination.id === "local") {
     busy(1);
     try {

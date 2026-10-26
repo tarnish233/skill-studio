@@ -20,6 +20,7 @@ import { DetailHeader } from "@/components/common/DetailHeader";
 import { ListContainer, ListItemRow } from "@/components/common/ListItemRow";
 import { useUnsavedProject } from "@/components/common/NavigationGuard";
 import { SettingCard, SettingsSection } from "@/components/common/SettingCard";
+import { useTarget } from "@/components/targets/TargetProvider";
 import { McpChoiceCards } from "./McpChoiceCards";
 import { McpDefinitionFields, readDefinition } from "./McpDefinitionFields";
 import { mcpRequest } from "@/lib/api/mcp";
@@ -29,7 +30,7 @@ import type {
   McpRow,
 } from "@/lib/api/mcpManagement";
 import { mcpAgentName, mcpAppId } from "@/lib/mcpAgents";
-import { mcpTarget } from "@/lib/mcpDisplay";
+import { mcpTarget, REMOTE_GATEWAY_REASON } from "@/lib/mcpDisplay";
 
 /** 本次启动后对当前配置的测试结果 */
 export interface McpTestState {
@@ -50,6 +51,8 @@ export function McpStatusBadges({
   authPending: boolean;
   running: boolean;
 }) {
+  // 管理服务器时，连接测试在服务器上进行
+  const remote = useTarget().id !== "local";
   return (
     <>
       <Badge variant="outline">
@@ -73,7 +76,9 @@ export function McpStatusBadges({
           variant={test.status === "ok" ? "success" : "warning"}
         >
           {test.status === "ok"
-            ? "本机连接已验证"
+            ? remote
+              ? "服务器连接已验证"
+              : "本机连接已验证"
             : test.status === "auth"
               ? "需要登录"
               : "最近测试失败"}
@@ -129,6 +134,7 @@ export function McpEntryDetail({
   onSaved: (entry: ManagedMcp, result?: McpInstallResult) => void;
 }) {
   const managed = row.managed;
+  const remote = useTarget().id !== "local";
   // 指向 Studio 网关的原有配置不是独立的服务，不能另存或托管
   const viaGateway = !managed && row.sources.some((s) => s.gateway);
   const [entry, setEntry] = useState<ManagedMcp>(() => ({
@@ -312,8 +318,12 @@ export function McpEntryDetail({
           {managed && row.entry.mode === "direct" && (
             <p className="text-xs text-muted-foreground">
               {sse
-                ? "SSE 服务请在 Agent 中测试连接，Studio 暂不支持此类型的本机测试。"
-                : "本机测试只验证服务握手和工具列表；Agent 是否已重新加载及其登录状态仍需在 Agent 中确认。"}
+                ? remote
+                  ? "SSE 服务请在服务器上的 Agent 中测试连接，Studio 暂不支持此类型的测试。"
+                  : "SSE 服务请在 Agent 中测试连接，Studio 暂不支持此类型的本机测试。"
+                : remote
+                  ? "测试在服务器上进行，只验证服务握手和工具列表；Agent 是否已重新加载及其登录状态仍需在 Agent 中确认。"
+                  : "本机测试只验证服务握手和工具列表；Agent 是否已重新加载及其登录状态仍需在 Agent 中确认。"}
             </p>
           )}
         </SettingsSection>
@@ -433,6 +443,7 @@ export function McpEntryDetail({
                   value: "gateway",
                   title: "Studio 代理",
                   description: "由 Studio 连接服务，可让多个 Agent 共用登录。",
+                  disabledReason: remote ? REMOTE_GATEWAY_REASON : undefined,
                 },
               ]}
             />

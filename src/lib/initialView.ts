@@ -5,22 +5,10 @@ export type Resource = "skills" | "mcp";
 export const VIEW_STORAGE_KEY = "skill-studio-view";
 export const RESOURCE_STORAGE_KEY = "skill-studio-resource";
 
-/** Resolve persisted navigation only against the loaded settings. */
-export function readInitialView(
-  settings?: Settings,
-  targetId = "local",
-): ViewId {
+/** 记下的导航：本机和服务器都有 Hub、分组、项目，不认识的值回到 Hub */
+export function readInitialView(): ViewId {
   const stored = localStorage.getItem(VIEW_STORAGE_KEY);
-  const view: ViewId =
-    stored === "projects" || stored === "groups" ? stored : "hub";
-  // Remote MCP has no group or project management; open its Hub instead.
-  if (
-    targetId !== "local" &&
-    view !== "hub" &&
-    initialResource(settings) === "mcp"
-  )
-    return "hub";
-  return view;
+  return stored === "projects" || stored === "groups" ? stored : "hub";
 }
 
 export function initialResource(settings?: Settings): Resource {

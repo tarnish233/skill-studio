@@ -76,14 +76,11 @@ function AppContent() {
   useSkillsAutoRefresh();
 
   const [initError, setInitError] = useState<string | null>(null);
-  const [view, setView] = useState<ViewId>(() =>
-    readInitialView(settings, target.id),
-  );
+  const [view, setView] = useState<ViewId>(() => readInitialView());
   const [resource, setResource] = useState<Resource>(() =>
     initialResource(settings),
   );
   const activeResource = mcpEnabled ? resource : "skills";
-  const remoteMcp = target.id !== "local" && activeResource === "mcp";
   useEffect(() => {
     localStorage.setItem(RESOURCE_STORAGE_KEY, resource);
   }, [resource]);
@@ -112,13 +109,6 @@ function AppContent() {
     }
   }, [view]);
 
-  useEffect(() => {
-    const disabledView = (id: ViewId) =>
-      remoteMcp && (id === "projects" || id === "groups");
-    if (disabledView(backTarget.current)) backTarget.current = "hub";
-    if (disabledView(view)) setView("hub");
-  }, [view, remoteMcp]);
-
   // 启动期错误（例如配置文件坏了）要让用户看见，而不是静默用默认值跑
   useEffect(() => {
     void systemApi
@@ -146,20 +136,14 @@ function AppContent() {
         id: "groups",
         label: VIEW_TITLES.groups,
         icon: <LayoutGrid className="h-5 w-5" />,
-        disabledReason: remoteMcp
-          ? "远程 MCP 暂不支持分组管理，请在 MCP Hub 查看。"
-          : undefined,
       },
       {
         id: "projects",
         label: VIEW_TITLES.projects,
         icon: <FolderGit2 className="h-5 w-5" />,
-        disabledReason: remoteMcp
-          ? "远程 MCP 暂不支持项目管理，请在 MCP Hub 查看。"
-          : undefined,
       },
     ],
-    [remoteMcp],
+    [],
   );
 
   const refresh = () => {
@@ -167,8 +151,6 @@ function AppContent() {
   };
 
   const content = () => {
-    if (remoteMcp && (view === "projects" || view === "groups"))
-      return <McpPage />;
     if (view === "groups") {
       return activeResource === "mcp" ? <McpGroupsPage /> : <GroupsPage />;
     }
@@ -222,12 +204,7 @@ function AppContent() {
   const switchResource = (next: Resource) => {
     if (next === activeResource || (next === "mcp" && !mcpEnabled)) return;
     requestNavigation(() => {
-      const unavailable = (id: ViewId) =>
-        next === "mcp" &&
-        target.id !== "local" &&
-        (id === "projects" || id === "groups");
-      if (unavailable(backTarget.current)) backTarget.current = "hub";
-      if (view === "install" || unavailable(view)) setView("hub");
+      if (view === "install") setView("hub");
       // The toggle sits left (Skill) → right (MCP); slide content the same way.
       setPageSlide({ x: next === "mcp" ? 14 : -14, y: 0 });
       setResource(next);

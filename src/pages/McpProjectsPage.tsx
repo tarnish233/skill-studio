@@ -33,7 +33,6 @@ import {
 } from "@/components/groups/useGroupActions";
 import { McpProjectDetail } from "@/components/mcp/McpProjectDetail";
 import { ProjectCreateDialog } from "@/components/projects/ProjectCreateDialog";
-import { useTarget } from "@/components/targets/TargetProvider";
 import { useAgents, useProjects, useSettings } from "@/hooks/useData";
 import { agentDetection } from "@/lib/agents";
 import { projectsApi, systemApi } from "@/lib/api";
@@ -70,13 +69,6 @@ const PROJECT_FILES: Record<string, string> = {
 };
 
 export function McpProjectsPage() {
-  const target = useTarget();
-  if (target.id !== "local")
-    return (
-      <p className="p-6 text-sm text-muted-foreground">
-        项目 MCP 当前仅支持本机。请切换到本机管理。
-      </p>
-    );
   return (
     <NavigationGuard>
       <McpProjectsContent />

@@ -156,16 +156,13 @@ describe("startup readiness", () => {
     expect(initialResource({ ...defaultSettings(), manageMcp: false })).toBe(
       "skills",
     );
-    // 远程 MCP 没有分组和项目管理，落到 Hub；关闭 MCP 管理后按 Skill 恢复分组页
+    // 服务器上的 MCP 也有分组和项目：记下的页面原样打开
     localStorage.setItem("skill-studio-view", "groups");
-    expect(readInitialView(defaultSettings(), "remote")).toBe("hub");
-    expect(
-      readInitialView({ ...defaultSettings(), manageMcp: false }, "remote"),
-    ).toBe("groups");
+    expect(readInitialView()).toBe("groups");
     // 不认识的值（包括旧版导航存下的）一律回到 Hub
     for (const stale of ["settings", "agent:codex", "mcp", "library"]) {
       localStorage.setItem("skill-studio-view", stale);
-      expect(readInitialView(defaultSettings())).toBe("hub");
+      expect(readInitialView()).toBe("hub");
     }
   });
 });

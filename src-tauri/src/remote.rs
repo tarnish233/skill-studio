@@ -702,14 +702,14 @@ mod tests {
     #[cfg(unix)]
     #[test]
     #[ignore = "requires SKILL_STUDIO_LIVE_HOST and SKILL_STUDIO_LIVE_BINARY"]
-    fn live_desktop_ssh_mcp_inventory_is_read_only() {
+    fn live_desktop_ssh_mcp_management_roundtrip() {
         let app = tauri::test::mock_builder()
             .manage(RemoteState::default())
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();
         let mut profile = ServerProfile {
             id: uuid::Uuid::new_v4().to_string(),
-            name: "MCP inventory fixture".into(),
+            name: "MCP management fixture".into(),
             host: std::env::var("SKILL_STUDIO_LIVE_HOST").expect("live host"),
             user: None,
             port: None,
@@ -735,49 +735,76 @@ print(p, end='')
         .unwrap();
         assert!(fixture.starts_with("/tmp/skill-studio-mcp-live-"));
         profile.sandbox_home = Some(fixture.clone());
-        let fingerprints = || {
+        let remote_file = |name: &str| {
             let mut command = ssh(&profile, &ask).unwrap();
             command.arg(format!(
-                "sha256sum -- {} {}",
-                shell_quote(&format!("{fixture}/.claude.json")),
-                shell_quote(&format!("{fixture}/.codex/config.toml"))
+                "cat -- {}",
+                shell_quote(&format!("{fixture}/{name}"))
             ));
-            captured(command, None, Duration::from_secs(60)).unwrap()
+            String::from_utf8(captured(command, None, Duration::from_secs(60)).unwrap()).unwrap()
         };
-        let before = fingerprints();
-        let hello = connect(app.handle(), profile.clone()).unwrap();
-        assert!(hello["methods"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|m| m == "scan_mcp"));
+        let codex_before = remote_file(".codex/config.toml");
+        connect(app.handle(), profile.clone()).unwrap();
         let state = app.state::<RemoteState>();
+        let mcp = |method: &str, params: Value| {
+            request(
+                &state,
+                &profile.id,
+                "mcp_request",
+                json!({"method": method, "params": params}),
+            )
+        };
+        // 名称清单仍只给名称；管理一览与本机一样带完整配置
         let inventory = request(&state, &profile.id, "scan_mcp", json!({})).unwrap();
-        assert_eq!(inventory["servers"].as_array().unwrap().len(), 1);
-        assert_eq!(inventory["servers"][0]["name"], "shared");
-        assert_eq!(
-            inventory["servers"][0]["agents"],
-            json!(["claude", "codex"])
-        );
         assert!(!inventory.to_string().contains("fixture-private-token"));
-        assert!(request(
-            &state,
-            &profile.id,
-            "mcp_request",
-            json!({"method":"start"})
+        let status = mcp("list", Value::Null).unwrap();
+        assert_eq!(status["running"], false);
+        assert!(status["discovered"]
+            .to_string()
+            .contains("fixture-private-token"));
+
+        let entry = json!({
+            "id": "live-tool", "name": "live-tool", "mode": "direct",
+            "definition": {"type": "stdio", "command": "/nonexistent/live-tool"},
+            "oauth": false, "clientId": null, "scopes": [], "bindings": []
+        });
+        mcp(
+            "saveEntry",
+            json!({
+                "entry": entry, "expectedEntry": null, "bindingIds": [], "sources": [],
+                "agents": [], "scope": "user", "projectId": ""
+            }),
         )
-        .unwrap_err()
-        .contains("只读"));
-        assert_eq!(
-            request(&state, &profile.id, "scan_mcp", json!({})).unwrap(),
-            inventory
-        );
+        .unwrap();
+        mcp("saveGroup", json!({
+            "group": {"id": "live-group", "name": "live", "entryIds": ["live-tool"], "sortOrder": 0},
+            "imports": [], "expected": null
+        }))
+        .unwrap();
+        mcp(
+            "setGroup",
+            json!({"agent": "claude", "groupId": "live-group", "enabled": true}),
+        )
+        .unwrap();
+        assert!(remote_file(".claude.json").contains("/nonexistent/live-tool"));
+        mcp(
+            "setGroup",
+            json!({"agent": "claude", "groupId": "live-group", "enabled": false}),
+        )
+        .unwrap();
+        assert!(!remote_file(".claude.json").contains("/nonexistent/live-tool"));
+        assert!(mcp("start", Value::Null)
+            .unwrap_err()
+            .contains("服务器上暂不支持 Studio 网关"));
+        mcp("removeGroup", json!({"id": "live-group"})).unwrap();
+        mcp("removeEntry", json!({"id": "live-tool", "restore": true})).unwrap();
+        assert_eq!(mcp("list", Value::Null).unwrap()["entries"], json!([]));
         disconnect(&state, &profile.id).unwrap();
-        assert_eq!(fingerprints(), before);
+        assert_eq!(remote_file(".codex/config.toml"), codex_before);
         assert!(request(&state, &profile.id, "scan_mcp", json!({}))
             .unwrap_err()
             .starts_with("REMOTE_DISCONNECTED:"));
-        println!("Read-only MCP desktop SSH integration passed. Isolated fixture: {fixture}");
+        println!("Remote MCP desktop SSH integration passed. Isolated fixture: {fixture}");
     }
 
     /// Explicit opt-in live test. Only the generated /tmp fixture is managed.

@@ -7,6 +7,7 @@ import {
   calls,
   claudeAgent,
   codexAgent,
+  defaultSettings,
   handlers,
   makeProject,
   skillOnlyAgents,
@@ -310,11 +311,28 @@ it("指向 Studio 网关的原有配置不能选作成员，并写明原因", as
   ).toBeVisible();
 });
 
-it("远程目标不读取本机的项目 MCP", () => {
+it("服务器上的项目 MCP 经服务器连接管理，不读本机的", async () => {
+  setup();
+  // 服务器端的应答与本机同一套形状：套用上面准备的数据，只换传输通道
+  const local = new Map(handlers);
+  handlers.set("remote_request", ({ method, params }) =>
+    method === "get_settings" ? defaultSettings() : local.get(method)?.(params),
+  );
   setTarget({ id: "remote", name: "远程", connected: true });
   renderWithProviders(<McpProjectsPage />);
-  expect(screen.getByText(/项目 MCP 当前仅支持本机/)).toBeVisible();
+  fireEvent.click(await screen.findByRole("button", { name: "编辑 webapp" }));
+  expect(await screen.findByText("项目已有 MCP")).toBeVisible();
+  const remote = calls.filter((c) => c.command === "remote_request");
+  expect(
+    remote.some(
+      (c) =>
+        (c.args as { method: string; params: { method?: string } }).params
+          ?.method === "list",
+    ),
+  ).toBe(true);
   expect(calls.some((c) => c.command === "mcp_request")).toBe(false);
+  expect(calls.some((c) => c.command === "list_projects")).toBe(false);
+  setTarget({ id: "local", name: "本机", connected: true });
 });
 
 it("MCP 项目卡片按名字生成图标，点卡片进详情", async () => {

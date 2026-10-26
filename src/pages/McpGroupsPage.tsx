@@ -37,7 +37,6 @@ import {
 } from "@/components/groups/useGroupActions";
 import { McpAgentNote } from "@/components/mcp/McpAgentNote";
 import type { ChecklistItem } from "@/components/projects/MemberChecklist";
-import { useTarget } from "@/components/targets/TargetProvider";
 import { useAgents, useSettings } from "@/hooks/useData";
 import { agentDetection } from "@/lib/agents";
 import { mcpRequest } from "@/lib/api/mcp";
@@ -73,20 +72,13 @@ const RELOAD = "请在 Agent 中重新加载 MCP";
  * 在页内展开，保存即写入正在使用这个分组的 Agent。
  */
 export function McpGroupsPage() {
-  const target = useTarget();
-  if (target.id !== "local")
-    return (
-      <p className="p-6 text-sm text-muted-foreground">
-        MCP 分组当前仅支持本机。
-      </p>
-    );
   return (
     <NavigationGuard>
-      <LocalGroups />
+      <McpGroups />
     </NavigationGuard>
   );
 }
-function LocalGroups() {
+function McpGroups() {
   const requestNavigation = useNavigationGuard();
   const { data: allAgents = [], isDetecting, detectionFailed } = useAgents();
   const { data: settings } = useSettings();

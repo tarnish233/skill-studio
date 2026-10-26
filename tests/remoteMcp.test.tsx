@@ -1,5 +1,4 @@
 import {
-  act,
   cleanup,
   fireEvent,
   screen,
@@ -7,36 +6,129 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { useQueryClient } from "@tanstack/react-query";
 import App from "@/App";
 import { McpPage } from "@/pages/McpPage";
 import { setTarget } from "@/lib/api/transport";
-import { queryKeys } from "@/lib/queryKeys";
 import { renderWithProviders } from "./utils/render";
 import {
   calls,
-  handlers,
-  defaultSettings,
+  claudeAgent,
   codexAgent,
+  defaultSettings,
+  handlers,
+  makeProject,
   skillOnlyAgents,
 } from "./mocks/tauri";
 
-const inventory = {
-  servers: [
-    { id: "shared", name: "Shared MCP", agents: ["codex", "opencode"] },
-    { id: "pi", name: "Pi tools", agents: ["pi"] },
-    { id: "private", name: "Open tools", agents: ["opencode"] },
-  ],
-  warnings: [],
+const SERVER = "server-a";
+
+/** 服务器上的 MCP：托管的直连服务，加一处扫描到的原有配置（请求头和本机一样传回桌面编辑） */
+function serverStatus(over: Record<string, unknown> = {}) {
+  return {
+    running: false,
+    entries: [
+      {
+        id: "server-tool",
+        name: "Server tool",
+        mode: "direct",
+        definition: { type: "http", url: "https://tools.example/mcp" },
+        oauth: false,
+        clientId: null,
+        scopes: [],
+        bindings: [
+          {
+            id: "b1",
+            agent: "codex",
+            path: "/home/srv/.codex/config.toml",
+            project: null,
+            key: "server-tool",
+            original: null,
+            installed: { url: "https://tools.example/mcp" },
+          },
+        ],
+      },
+    ],
+    servers: [],
+    discovered: [
+      {
+        id: "shared",
+        name: "Shared MCP",
+        server: null,
+        issue: null,
+        managedId: null,
+        sources: [
+          {
+            id: "src-1",
+            project: null,
+            agent: "codex",
+            path: "/home/srv/.codex/config.toml",
+            scope: "user",
+            key: "shared",
+            enabled: true,
+            gateway: false,
+            definition: {
+              url: "https://shared.example/mcp",
+              http_headers: { Authorization: "Bearer server-token" },
+            },
+          },
+        ],
+      },
+    ],
+    groups: [],
+    activeGroups: {},
+    projects: {},
+    backups: [],
+    scanWarnings: [],
+    ...over,
+  };
+}
+
+type RemoteMcpCall = {
+  serverId: string;
+  params: { method: string; params: Record<string, unknown> };
 };
+/** 经服务器连接发出的 MCP 请求 */
+const remoteMcp = () =>
+  calls
+    .filter(
+      (c) =>
+        c.command === "remote_request" &&
+        (c.args as { method: string }).method === "mcp_request",
+    )
+    .map((c) => c.args as RemoteMcpCall);
+const remoteMethods = () => remoteMcp().map((c) => c.params.method);
+const remoteParams = (method: string) =>
+  remoteMcp().filter((c) => c.params.method === method)[0]?.params.params;
+/** 发给本机桌面应用的 MCP 请求 */
+const localMcp = () =>
+  calls
+    .filter((c) => c.command === "mcp_request")
+    .map((c) => (c.args as { method: string }).method);
+
+let serverMcp: (method: string) => unknown;
 beforeEach(() => {
-  setTarget({ id: "server-a", name: "A", connected: true });
-  handlers.set("remote_request", ({ method }) => {
-    if (method === "scan_mcp") return inventory;
+  setTarget({ id: SERVER, name: "A", connected: true });
+  serverMcp = (method) =>
+    method === "list"
+      ? serverStatus()
+      : method === "gatewayCheck"
+        ? { issue: null }
+        : null;
+  handlers.set("remote_request", ({ method, params }) => {
+    if (method === "mcp_request") return serverMcp(params.method);
     if (method === "get_settings") return defaultSettings();
-    if (method === "list_agents") return [codexAgent, ...skillOnlyAgents];
+    if (method === "list_agents")
+      return [claudeAgent, codexAgent, ...skillOnlyAgents];
     if (method === "get_config")
       return { activeGroups: {}, settings: defaultSettings() };
+    if (method === "list_projects")
+      return [
+        makeProject({
+          id: "srv-project",
+          name: "服务器项目",
+          root: "/srv/work",
+        }),
+      ];
     return [];
   });
 });
@@ -45,200 +137,181 @@ afterEach(() => {
   setTarget({ id: "local", name: "本机", connected: true });
 });
 
-it("renders remote MCP names and Agent owners as inert cards with no management actions", async () => {
+it("manages server MCP on the same Hub page through the server connection", async () => {
   renderWithProviders(<McpPage />);
-  const name = await screen.findByText("Shared MCP");
-  const card = name.parentElement!;
-  expect(within(card).getByText("Codex")).toBeVisible();
-  expect(within(card).getByText("OpenCode")).toBeVisible();
-  const filter = screen.getByRole("group", { name: "筛选 MCP" });
-  expect(within(filter).getByRole("button", { name: "全部 3" })).toBeVisible();
-  expect(screen.getByText("只读")).toBeVisible();
-  const add = screen.getByRole("button", { name: "添加 MCP" });
-  expect(add).toBeVisible();
-  expect(add).toHaveAttribute("aria-disabled", "true");
-  // 只读：除了筛选，唯一的按钮是不可用的「添加 MCP」
-  expect(
-    screen.queryAllByRole("button").filter((b) => !filter.contains(b)),
-  ).toEqual([add]);
-  expect(screen.queryAllByRole("link")).toHaveLength(0);
-  fireEvent.click(add);
-  fireEvent.click(name);
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  fireEvent.change(screen.getByPlaceholderText("搜索 MCP 或 Agent…"), {
-    target: { value: "Pi" },
-  });
-  expect(screen.getByText("Pi tools")).toBeVisible();
-  expect(screen.queryByText("Shared MCP")).not.toBeInTheDocument();
-  expect(calls.filter((call) => call.command === "mcp_request")).toHaveLength(
-    0,
-  );
-  expect(
-    calls
-      .filter((call) => call.command === "remote_request")
-      .map((call) => (call.args as { method: string }).method),
-  ).toEqual(expect.arrayContaining(["scan_mcp", "get_settings"]));
-  expect(
-    calls
-      .filter((call) => call.command === "remote_request")
-      .every((call) =>
-        ["scan_mcp", "get_settings"].includes(
-          (call.args as { method: string }).method,
-        ),
-      ),
-  ).toBe(true);
-});
-
-function HideOpenCode() {
-  const client = useQueryClient();
-  return (
-    <button
-      onClick={() =>
-        client.setQueryData(queryKeys.settings, {
-          ...defaultSettings(),
-          disabledAgents: ["opencode"],
-        })
-      }
-    >
-      隐藏 OpenCode
-    </button>
-  );
-}
-it("hides disabled Agent badges and private cards while retaining shared MCP", async () => {
-  renderWithProviders(
-    <>
-      <HideOpenCode />
-      <McpPage />
-    </>,
-  );
-  await screen.findByText("Open tools");
-  fireEvent.click(screen.getByRole("button", { name: "隐藏 OpenCode" }));
-  await waitFor(() =>
-    expect(screen.queryByText("Open tools")).not.toBeInTheDocument(),
-  );
-  expect(screen.queryByText("OpenCode")).not.toBeInTheDocument();
+  expect(await screen.findByText("Server tool")).toBeVisible();
   expect(screen.getByText("Shared MCP")).toBeVisible();
-  expect(screen.getByRole("button", { name: "全部 2" })).toBeVisible();
-  expect(screen.queryByRole("button", { name: /^OpenCode/ })).toBeNull();
-});
-
-it("returns to 全部 when the selected Agent is hidden, instead of filtering by an Agent that is no longer shown", async () => {
-  renderWithProviders(
-    <>
-      <HideOpenCode />
-      <McpPage />
-    </>,
-  );
-  const filter = within(await screen.findByRole("group", { name: "筛选 MCP" }));
-  fireEvent.click(await filter.findByRole("button", { name: "OpenCode 2" }));
-  expect(screen.queryByText("Pi tools")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "隐藏 OpenCode" }));
-  expect(await screen.findByText("Pi tools")).toBeVisible();
-  expect(screen.getByText("Shared MCP")).toBeVisible();
-  expect(filter.getByRole("button", { name: "全部 2" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-});
-
-it("keeps late remote responses scoped to their original server and restores local controls", async () => {
-  let resolveA!: (value: unknown) => void;
-  handlers.set("remote_request", ({ serverId, method }) => {
-    if (method === "get_settings") return defaultSettings();
-    if (method === "scan_mcp")
-      return serverId === "server-a"
-        ? new Promise((resolve) => {
-            resolveA = resolve;
-          })
-        : {
-            servers: [{ id: "b", name: "B MCP", agents: ["codex"] }],
-            warnings: [],
-          };
-    return [];
-  });
-  renderWithProviders(<McpPage />);
-  await waitFor(() => expect(resolveA).toBeDefined());
-  act(() => setTarget({ id: "server-b", name: "B", connected: true }));
-  expect(await screen.findByText("B MCP")).toBeVisible();
-  await act(async () => resolveA(inventory));
-  expect(screen.queryByText("Shared MCP")).not.toBeInTheDocument();
-  expect(calls.filter((call) => call.command === "mcp_request")).toHaveLength(
-    0,
-  );
-  act(() => setTarget({ id: "local", name: "本机", connected: true }));
-  expect(await screen.findByRole("button", { name: "添加 MCP" })).toBeVisible();
+  // 与本机一样能托管、删除和添加
+  expect(
+    screen.getByRole("button", { name: "托管 Shared MCP 到 Hub" }),
+  ).toBeEnabled();
+  expect(
+    screen.getByRole("button", { name: "删除 Server tool" }),
+  ).toBeEnabled();
   expect(screen.getByRole("button", { name: "添加 MCP" })).not.toHaveAttribute(
     "aria-disabled",
-    "true",
   );
-  expect(screen.queryByText("B MCP")).not.toBeInTheDocument();
+  // 网关留在原位，但服务器上不能开启，悬停写明原因
+  const gateway = screen.getByRole("button", { name: "MCP 网关" });
+  expect(gateway).toHaveAttribute("aria-disabled", "true");
+  expect(gateway).toHaveAttribute(
+    "title",
+    expect.stringContaining("服务器上暂不支持 Studio 网关"),
+  );
+  fireEvent.click(gateway);
+  expect(remoteMethods()).toContain("list");
+  expect(remoteMethods()).not.toContain("start");
+  expect(remoteMcp().every((c) => c.serverId === SERVER)).toBe(true);
+  expect(localMcp()).toEqual([]);
 });
 
-it("shows an upgrade hint for old helpers instead of an empty successful inventory", async () => {
-  handlers.set("remote_request", ({ method }) => {
-    if (method === "get_settings") return defaultSettings();
-    throw new Error("不支持的管理命令: scan_mcp");
+it("adopts an existing server config and adds direct MCP without offering the gateway", async () => {
+  renderWithProviders(<McpPage />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "托管 Shared MCP 到 Hub" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "托管" }));
+  await waitFor(() => expect(remoteMethods()).toContain("saveEntry"));
+  expect(remoteParams("saveEntry")).toMatchObject({
+    entry: {
+      name: "Shared MCP",
+      mode: "direct",
+      definition: {
+        type: "http",
+        url: "https://shared.example/mcp",
+        headers: { Authorization: "Bearer server-token" },
+      },
+    },
+    sources: [
+      {
+        id: "src-1",
+        definition: {
+          url: "https://shared.example/mcp",
+          http_headers: { Authorization: "Bearer server-token" },
+        },
+      },
+    ],
   });
-  renderWithProviders(<McpPage />);
-  expect(await screen.findByRole("alert")).toHaveTextContent("更新组件");
-  expect(screen.queryByText("未发现远程 MCP 配置")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "添加 MCP" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
+
+  fireEvent.click(screen.getByRole("button", { name: "添加 MCP" }));
+  const proxy = screen.getByRole("radio", { name: /^Studio 代理/ });
+  expect(proxy).toBeDisabled();
+  expect(screen.getByText(/服务器上暂不支持 Studio 网关/)).toBeVisible();
+  expect(screen.getByRole("radio", { name: /^Agent 直连/ })).toBeChecked();
+  fireEvent.change(screen.getByLabelText("名称"), {
+    target: { value: "Docs" },
+  });
+  fireEvent.change(screen.getByLabelText("MCP 地址"), {
+    target: { value: "https://docs.example/mcp" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "添加到 Hub" }));
+  await waitFor(() =>
+    expect(remoteMethods().filter((m) => m === "saveEntry")).toHaveLength(2),
   );
-});
-
-it("does not scan or fall back locally while disconnected", () => {
-  setTarget({ id: "server-a", name: "A", connected: false });
-  renderWithProviders(<McpPage />);
-  expect(screen.getByRole("alert")).toHaveTextContent("服务器已断开");
-  expect(screen.queryByText("未发现远程 MCP 配置")).not.toBeInTheDocument();
   expect(
-    calls.some(
-      (call) =>
-        call.command === "mcp_request" ||
-        (call.args as { method?: string })?.method === "scan_mcp",
-    ),
-  ).toBe(false);
+    remoteMcp().filter((c) => c.params.method === "saveEntry")[1].params.params,
+  ).toMatchObject({
+    entry: {
+      name: "Docs",
+      mode: "direct",
+      definition: { type: "http", url: "https://docs.example/mcp" },
+    },
+    agents: [],
+  });
+  expect(localMcp()).toEqual([]);
 });
 
-it("keeps remote MCP navigation in place without allowing unsupported actions", async () => {
+it("searches the official registry on the desktop and saves the choice to the server", async () => {
+  handlers.set("mcp_request", ({ method }) =>
+    method === "searchRegistry"
+      ? {
+          items: [
+            {
+              name: "io.example/docs",
+              description: "文档检索",
+              version: "1.0.0",
+              definition: { type: "http", url: "https://registry.example/mcp" },
+              source: "remote",
+            },
+          ],
+          nextCursor: null,
+        }
+      : null,
+  );
+  renderWithProviders(<McpPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "添加 MCP" }));
+  fireEvent.click(screen.getByRole("button", { name: "官方目录" }));
+  fireEvent.change(screen.getByLabelText("搜索官方 MCP 目录"), {
+    target: { value: "docs" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "搜索" }));
+  fireEvent.click(await screen.findByRole("button", { name: "填入" }));
+  fireEvent.click(screen.getByRole("button", { name: "添加到 Hub" }));
+  await waitFor(() => expect(remoteMethods()).toContain("saveEntry"));
+  expect(remoteParams("saveEntry")).toMatchObject({
+    entry: {
+      name: "io.example/docs",
+      definition: { url: "https://registry.example/mcp" },
+    },
+  });
+  // 服务器可能连不上外网：只有目录搜索留在桌面
+  expect(localMcp()).toEqual(["searchRegistry"]);
+  expect(remoteMethods()).not.toContain("searchRegistry");
+});
+
+it("tests a server MCP on the server and says where it was verified", async () => {
+  serverMcp = (method) =>
+    method === "list"
+      ? serverStatus()
+      : method === "testDirect"
+        ? [{ name: "lookup", description: "查资料" }]
+        : null;
+  renderWithProviders(<McpPage />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "编辑 Server tool" }),
+  );
+  expect(screen.getByText(/测试在服务器上进行/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+  expect(await screen.findByText("连接成功 · 1 个工具")).toBeInTheDocument();
+  expect(remoteParams("testDirect")).toEqual({ id: "server-tool" });
+  expect(screen.getByText("服务器连接已验证")).toBeInTheDocument();
+  expect(screen.queryByText("本机连接已验证")).toBeNull();
+  expect(localMcp()).toEqual([]);
+});
+
+it("opens MCP groups and projects for a server from the same navigation", async () => {
   localStorage.setItem("skill-studio-view", "groups");
   localStorage.setItem("skill-studio-resource", "mcp");
+  serverMcp = (method) =>
+    method === "list"
+      ? serverStatus({
+          groups: [
+            {
+              id: "g1",
+              name: "服务器分组",
+              entryIds: ["server-tool"],
+              sortOrder: 0,
+            },
+          ],
+        })
+      : null;
   renderWithProviders(<App />);
-  await waitFor(() => expect(screen.getByText("Shared MCP")).toBeVisible());
+  expect(await screen.findByText("服务器分组")).toBeVisible();
   const nav = within(screen.getByRole("navigation", { name: "主导航" }));
-  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-    "MCP Hub",
-  );
   const groups = nav.getByRole("button", { name: "分组" });
   const projects = nav.getByRole("button", { name: "项目" });
-  for (const button of [groups, projects]) {
-    expect(button).toBeVisible();
-    expect(button).toHaveAttribute("aria-disabled", "true");
-    fireEvent.click(button);
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      "MCP Hub",
-    );
-    expect(screen.getByText("Shared MCP")).toBeVisible();
-  }
-  const add = screen.getByRole("button", { name: "添加 MCP" });
-  expect(add).toBeVisible();
-  expect(add).toHaveAttribute("aria-disabled", "true");
-  fireEvent.click(add);
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(
-    calls.some(
-      (call) =>
-        call.command === "mcp_request" ||
-        (call.args as { method?: string })?.method === "mcp_request",
-    ),
-  ).toBe(false);
-  fireEvent.click(
-    within(screen.getByRole("banner")).getByRole("button", { name: "Skill" }),
-  );
-  expect(await nav.findByRole("button", { name: "分组" })).toBe(groups);
-  expect(nav.getByRole("button", { name: "项目" })).toBe(projects);
-  expect(groups).not.toHaveAttribute("aria-disabled", "true");
-  expect(projects).not.toHaveAttribute("aria-disabled", "true");
+  for (const button of [groups, projects])
+    expect(button).not.toHaveAttribute("aria-disabled");
+  fireEvent.click(projects);
+  expect(await screen.findByText("服务器项目")).toBeVisible();
+  expect(remoteMcp().every((c) => c.serverId === SERVER)).toBe(true);
+  expect(localMcp()).toEqual([]);
+});
+
+it("does not fall back to the local MCP while the server is disconnected", async () => {
+  setTarget({ id: SERVER, name: "A", connected: false });
+  renderWithProviders(<McpPage />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("服务器已断开");
+  expect(localMcp()).toEqual([]);
+  expect(remoteMcp()).toEqual([]);
 });

@@ -1,10 +1,10 @@
-//! MCP 的界面入口。Hub、分组、项目、备份的管理在服务层（与命令行共用）；这里只做要异步
-//! 运行或依赖窗口的部分：网关的启停与转发、连接测试、官方目录搜索、浏览器授权。
+//! MCP 的界面入口。Hub、分组、项目、备份的请求由服务层分派（与命令行、服务器上的辅助程序
+//! 共用）；这里只做要异步运行或依赖窗口的部分：网关的启停与转发、连接测试、官方目录搜索、
+//! 浏览器授权。
 use crate::AppState;
-use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
-use skill_studio_mcp::{agents as mcp_agents, config, gateway, management, registry};
-use skill_studio_service::mcp as service;
+use skill_studio_mcp::{agents as mcp_agents, config, gateway, registry};
+use skill_studio_service::mcp::{self as service, requests};
 use std::{path::PathBuf, process::Stdio, time::Duration};
 use tauri::{Manager, State};
 fn dir(state: &AppState) -> PathBuf {
@@ -64,22 +64,6 @@ pub async fn start(dir: PathBuf) -> Result<(), String> {
     Err("网关启动超时".into())
 }
 
-/// 取一个参数；缺少时按 `null` 解析（可选参数得到 `None`）
-fn param<T: DeserializeOwned>(params: &Value, key: &str) -> Result<T, String> {
-    serde_json::from_value(params.get(key).cloned().unwrap_or(Value::Null))
-        .map_err(|e| format!("参数 {key}: {e}"))
-}
-
-/// 列表参数：缺少时为空
-fn list<T: DeserializeOwned>(params: &Value, key: &str) -> Result<Vec<T>, String> {
-    Ok(param::<Option<Vec<T>>>(params, key)?.unwrap_or_default())
-}
-
-/// 整个参数对象解析成一个结构（保存位置、项目成员这类平铺在参数里的字段）
-fn whole<T: DeserializeOwned>(params: &Value) -> Result<T, String> {
-    serde_json::from_value(params.clone()).map_err(|e| format!("参数: {e}"))
-}
-
 /// 服务层的操作是同步的文件读写：放到阻塞线程里跑
 async fn blocking<T: Send + 'static>(
     state: &AppState,
@@ -91,10 +75,6 @@ async fn blocking<T: Send + 'static>(
         .map_err(|e| e.to_string())?
 }
 
-fn to_value(value: impl serde::Serialize) -> Result<Value, String> {
-    serde_json::to_value(value).map_err(|e| e.to_string())
-}
-
 #[tauri::command(rename_all = "camelCase")]
 pub async fn mcp_request(
     state: State<'_, AppState>,
@@ -102,188 +82,42 @@ pub async fn mcp_request(
     method: String,
     params: Value,
 ) -> Result<Value, String> {
+    // 官方目录是公开的网络查询：管理服务器时也在本机搜索（服务器可能连不上外网），所以不看
+    // 本机的 MCP 管理开关
+    if method == "searchRegistry" {
+        let query = params["query"].as_str().ok_or("请输入搜索词")?;
+        let cursor = params["cursor"].as_str();
+        return Ok(json!(registry::search(query, cursor)
+            .await
+            .map_err(|e| e.to_string())?));
+    }
     service::ensure_enabled(&state)?;
     let dir = dir(&state);
+    let state = state.inner();
+    if method == "testDirect" {
+        let id = params["id"].as_str().ok_or("缺少 MCP ID")?.to_owned();
+        let (server, startup) = blocking(state, move |s| requests::direct_probe(s, &id)).await?;
+        return gateway::probe_direct(server, startup)
+            .await
+            .map_err(|e| e.to_string());
+    }
+    if !requests::handles(&method) {
+        return gateway_request(state, &app, dir, &method, params).await;
+    }
+    let gateway = if method == "list" {
+        gateway::request(&dir, "list", Value::Null).await.ok()
+    } else {
+        None
+    };
     // 网关接入写进 Agent 配置的命令：桌面应用自己
     let exe = std::env::current_exe().ok();
-    let state = state.inner();
+    let task = method.clone();
+    let result = blocking(state, move |s| {
+        requests::request(s, exe.as_deref(), gateway, &task, &params)
+    })
+    .await?;
     // 改动了托管状态：通知网关
-    let notify = matches!(
-        method.as_str(),
-        "restoreBackup"
-            | "saveGroup"
-            | "removeGroup"
-            | "reorderGroups"
-            | "setGroup"
-            | "reapplyGroups"
-            | "saveProject"
-            | "activateProject"
-            | "removeProject"
-            | "saveEntry"
-            | "removeEntry"
-            | "removeSources"
-    );
-    let result = match method.as_str() {
-        "gatewayCheck" => {
-            let entry: management::Entry = param(&params, "entry")?;
-            json!({"issue": service::gateway_issue(&entry)})
-        }
-        "parse" => service::parse(params["text"].as_str().ok_or("请粘贴配置")?)?,
-        "searchRegistry" => {
-            let query = params["query"].as_str().ok_or("请输入搜索词")?;
-            let cursor = params["cursor"].as_str();
-            json!(registry::search(query, cursor)
-                .await
-                .map_err(|e| e.to_string())?)
-        }
-        "testDirect" => {
-            let id = params["id"].as_str().ok_or("缺少 MCP ID")?.to_owned();
-            let catalog_dir = dir.clone();
-            let entry = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-                let catalog = management::read(&catalog_dir)?;
-                let entry = catalog
-                    .entries
-                    .into_iter()
-                    .find(|e| e.id == id)
-                    .ok_or_else(|| anyhow::anyhow!("MCP 不存在"))?;
-                anyhow::ensure!(entry.mode == "direct", "此服务不是 Agent 直连");
-                management::direct_probe_server(&entry)
-            })
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
-            gateway::probe_direct(entry.0, entry.1)
-                .await
-                .map_err(|e| e.to_string())?
-        }
-        "listBackups" => to_value(blocking(state, service::backups::list).await?)?,
-        "deleteBackups" => {
-            let which: Option<String> = param(&params, "which")?;
-            let ids: Option<Vec<String>> = param(&params, "ids").map_err(|_| "缺少备份 ID")?;
-            let removed = blocking(state, move |s| {
-                service::backups::delete(s, which.as_deref(), ids)
-            })
-            .await?;
-            json!({"removed": removed})
-        }
-        "deleteLegacyBackups" => {
-            json!({"removed": blocking(state, service::backups::delete_legacy).await?})
-        }
-        "restoreBackup" => {
-            let id: String = param(&params, "id").map_err(|_| "缺少备份 ID")?;
-            blocking(state, move |s| service::backups::restore(s, &id)).await?;
-            Value::Null
-        }
-        "removeProjectBindings" => {
-            let id: String = param(&params, "projectId").map_err(|_| "缺少项目 ID")?;
-            to_value(blocking(state, move |s| service::projects::remove_bindings(s, &id)).await?)?
-        }
-        "saveGroup" => {
-            let group = param(&params, "group")?;
-            let imports: Vec<service::ImportRef> = list(&params, "imports")?;
-            let expected: Option<management::groups::GroupSnapshot> = param(&params, "expected")?;
-            blocking(state, move |s| {
-                service::groups::save(s, group, &imports, expected.as_ref())
-            })
-            .await?;
-            Value::Null
-        }
-        "removeGroup" => {
-            let id: String = param(&params, "id").map_err(|_| "缺少分组 ID")?;
-            blocking(state, move |s| service::groups::remove(s, &id)).await?;
-            Value::Null
-        }
-        "reorderGroups" => {
-            let ids: Vec<String> = param(&params, "ids")?;
-            blocking(state, move |s| service::groups::reorder(s, &ids)).await?;
-            Value::Null
-        }
-        // 只启停这一个分组：这个 Agent 叠加的其他分组由后端按最新状态保留
-        "setGroup" => {
-            let agent: String = param(&params, "agent").map_err(|_| "缺少 Agent")?;
-            let group: String = param(&params, "groupId").map_err(|_| "缺少分组 ID")?;
-            let enabled: bool = param(&params, "enabled").map_err(|_| "缺少启停")?;
-            to_value(
-                blocking(state, move |s| {
-                    service::groups::set(s, exe.as_deref(), &agent, &group, enabled)
-                })
-                .await?,
-            )?
-        }
-        "reapplyGroups" => {
-            let agent: String = param(&params, "agent").map_err(|_| "缺少 Agent")?;
-            to_value(
-                blocking(state, move |s| {
-                    service::groups::reapply(s, exe.as_deref(), &agent)
-                })
-                .await?,
-            )?
-        }
-        "saveProject" => {
-            let id: String = param(&params, "projectId").map_err(|_| "缺少项目")?;
-            let members: service::projects::Members = whole(&params)?;
-            let imports: Vec<service::ImportRef> = list(&params, "imports")?;
-            let expected: Option<management::projects::Snapshot> = param(&params, "expected")?;
-            to_value(
-                blocking(state, move |s| {
-                    service::projects::save(
-                        s,
-                        exe.as_deref(),
-                        &id,
-                        members,
-                        &imports,
-                        expected.as_ref(),
-                    )
-                })
-                .await?,
-            )?
-        }
-        "activateProject" => {
-            let id: String = param(&params, "projectId").map_err(|_| "缺少项目")?;
-            let agent: String = param(&params, "agent").map_err(|_| "缺少 Agent")?;
-            let enabled: bool = param(&params, "enabled").map_err(|_| "缺少启停")?;
-            to_value(
-                blocking(state, move |s| {
-                    service::projects::activate(s, exe.as_deref(), &id, &agent, enabled)
-                })
-                .await?,
-            )?
-        }
-        "removeProject" => {
-            let id: String = param(&params, "projectId").map_err(|_| "缺少项目")?;
-            blocking(state, move |s| service::projects::remove(s, &id)).await?;
-            Value::Null
-        }
-        "saveEntry" => {
-            let entry: management::Entry = param(&params, "entry")?;
-            let expected: Option<management::Entry> = param(&params, "expectedEntry")?;
-            let placement: service::entries::Placement = whole(&params)?;
-            blocking(state, move |s| {
-                service::entries::save(s, exe.as_deref(), entry, expected, &placement)
-            })
-            .await?;
-            Value::Null
-        }
-        "removeEntry" => {
-            let id: String = param(&params, "id").map_err(|_| "缺少 ID")?;
-            let restore = params["restore"].as_bool().unwrap_or(true);
-            to_value(blocking(state, move |s| service::entries::remove(s, &id, restore)).await?)?
-        }
-        "removeSources" => {
-            let sources: Vec<service::entries::SourceRef> = list(&params, "sources")?;
-            blocking(state, move |s| {
-                service::entries::remove_sources(s, &sources)
-            })
-            .await?;
-            Value::Null
-        }
-        "list" => {
-            let gateway = gateway::request(&dir, "list", Value::Null).await.ok();
-            blocking(state, move |s| service::status(s, gateway)).await?
-        }
-        _ => return gateway_request(state, &app, dir, &method, params).await,
-    };
-    if notify {
+    if requests::CATALOG_WRITES.contains(&method.as_str()) {
         notify_gateway(&dir).await;
     }
     Ok(result)

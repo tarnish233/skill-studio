@@ -1,5 +1,9 @@
 const HIDDEN = "<已隐藏>";
 
+/** 服务器上没有 Studio 网关：网关接入的命令和浏览器授权都在桌面应用这台机器上 */
+export const REMOTE_GATEWAY_REASON =
+  "服务器上暂不支持 Studio 网关：网关和浏览器授权只在本机运行，请使用 Agent 直连。";
+
 /** MCP 卡片、标题和选择器只展示安全的连接摘要；完整地址只留在编辑字段中。 */
 export function redactMcpUrl(url: string): string {
   const fragmentAt = url.indexOf("#");

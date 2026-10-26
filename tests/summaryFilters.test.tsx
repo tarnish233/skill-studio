@@ -632,17 +632,41 @@ it("MCP 项目：与分组同一套「按 Agent 查看」，右侧不再重复�
   expectStats("按 Agent 查看", ["托管接入 1", "未托管 0", "已启用 1"]);
 });
 
-it("远程 MCP：只读页面也有同一套「全部」筛选", async () => {
+it("服务器上的 MCP Hub：与本机同一套「全部」筛选和右侧统计", async () => {
   setTarget({ id: "server-a", name: "A", connected: true });
-  handlers.set("remote_request", ({ method }) => {
-    if (method === "scan_mcp")
-      return {
-        servers: [
-          { id: "a", name: "Alpha MCP", agents: ["codex"] },
-          { id: "b", name: "Beta MCP", agents: ["opencode"] },
+  const source = (agent: string, key: string) => ({
+    id: `${agent}-${key}`,
+    project: null,
+    definition: { type: "stdio", command: key },
+    agent,
+    path: `/srv/${agent}`,
+    scope: "user",
+    key,
+    enabled: true,
+    gateway: false,
+  });
+  handlers.set("remote_request", ({ method, params }) => {
+    if (method === "mcp_request" && params.method === "list")
+      return mcpStatus({
+        discovered: [
+          {
+            id: "a",
+            name: "Alpha MCP",
+            server: null,
+            issue: null,
+            managedId: null,
+            sources: [source("codex", "alpha")],
+          },
+          {
+            id: "b",
+            name: "Beta MCP",
+            server: null,
+            issue: null,
+            managedId: null,
+            sources: [source("opencode", "beta")],
+          },
         ],
-        warnings: [],
-      };
+      });
     if (method === "get_settings") return defaultSettings();
     return [];
   });
@@ -655,5 +679,5 @@ it("远程 MCP：只读页面也有同一套「全部」筛选", async () => {
     restored: () => screen.findByText("Beta MCP"),
   });
   expect(screen.queryByText(/^已配置 \d+ 个 MCP$/)).toBeNull();
-  expectStats("筛选 MCP", ["只读"]);
+  expectStats("筛选 MCP", ["已托管 0", "已备份 0", "网关已关闭"]);
 });

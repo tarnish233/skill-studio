@@ -1,16 +1,19 @@
 //! 远程模式：桌面应用经 SSH 启动 `skill-studio serve`，按行收发 JSON 请求与响应。
-//! 默认只读；加 `--allow-writes` 才能修改。服务器上装的就是这个命令行程序，
-//! 所以同一个程序在服务器上也能直接当命令行用。
+//! 默认只读；加 `--allow-writes` 才能修改（Skill 与 Agent 直连的 MCP）。服务器上装的就是
+//! 这个命令行程序，所以同一个程序在服务器上也能直接当命令行用。
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, BufRead, Read, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 use skill_studio_core::fs::{atomic, paths};
 use skill_studio_core::models::config::{AppConfig, CONFIG_VERSION};
 use skill_studio_core::services::{store::Store, studio::Studio};
+use skill_studio_mcp::{gateway, management::GATEWAY_NEEDS_APP};
+use skill_studio_service::{mcp::requests, state::AppState};
 
 const PROTOCOL_VERSION: u32 = 1;
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
@@ -92,9 +95,6 @@ impl Helper {
             )?)
             .map_err(|e| e.to_string());
         }
-        if request.method == "mcp_request" {
-            return Err("远程 MCP 仅支持只读展示".into());
-        }
         if request.method == "list_directory" {
             let path = request
                 .params
@@ -173,9 +173,10 @@ impl Helper {
                 }
                 return Ok(Value::Null);
             }
-            let state =
-                skill_studio_service::state::AppState::bootstrap(self.studio.store().clone())
-                    .map_err(String::from)?;
+            let state = AppState::bootstrap(self.studio.store().clone()).map_err(String::from)?;
+            if request.method == "mcp_request" {
+                return mcp_request(&state, &request.params);
+            }
             if request.method == "upload_finish" {
                 let upload = self.upload.borrow_mut().take().ok_or("上传会话不存在")?;
                 let mut prepared =
@@ -232,6 +233,7 @@ impl Helper {
                 let skills = self.studio.scan_skills(&config).map_err(String::from)?;
                 serde_json::to_value(skills).map_err(|e| e.to_string())
             }
+            "mcp_request" => Err("当前为只读连接，未允许修改 MCP".into()),
             "set_skill_enabled" => {
                 if !self.writable {
                     return Err("当前为只读连接，未允许修改".into());
@@ -247,6 +249,51 @@ impl Helper {
             _ => Err("不支持的操作".into()),
         }
     }
+}
+
+/// 服务器上没有桌面应用：网关接入要写进 Agent 配置的命令不存在，浏览器授权也回不到本机
+const NO_GATEWAY: &str =
+    "服务器上暂不支持 Studio 网关：网关和浏览器授权只在本机运行，请改用 Agent 直连";
+
+/// 连接测试必须在桌面应用等一次响应的时限（120 秒）内结束：启动最多等这么久，列出工具另有
+/// 30 秒。Agent 自己的启动等待更长时，测试可能先超时，Agent 里仍能正常连接
+const PROBE_STARTUP_LIMIT: Duration = Duration::from_secs(75);
+
+/// 界面的 MCP 请求：与桌面应用共用服务层的分派。服务器上只管理 Agent 直连的 MCP；连接测试
+/// 在服务器上进行，与服务器上的 Agent 连接时一样
+fn mcp_request(state: &AppState, request: &Value) -> Result<Value, String> {
+    let method = request["method"].as_str().ok_or("缺少 MCP 操作")?;
+    let params = request.get("params").cloned().unwrap_or(Value::Null);
+    skill_studio_service::mcp::ensure_enabled(state)?;
+    let result = match method {
+        "testDirect" => probe(state, &params),
+        "searchRegistry" => Err("官方 MCP 目录由桌面应用搜索".into()),
+        // 不写接入时也能存进 Hub，但在服务器上永远用不上：保存前就拒绝
+        "saveEntry" if params["entry"]["mode"] == "gateway" => Err(NO_GATEWAY.into()),
+        _ if requests::handles(method) => requests::request(state, None, None, method, &params),
+        _ => Err(NO_GATEWAY.into()),
+    };
+    result.map_err(|error| {
+        if error.contains(GATEWAY_NEEDS_APP) {
+            NO_GATEWAY.into()
+        } else {
+            error
+        }
+    })
+}
+
+fn probe(state: &AppState, params: &Value) -> Result<Value, String> {
+    let id = params["id"].as_str().ok_or("缺少 MCP ID")?;
+    let (server, startup) = requests::direct_probe(state, id)?;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?
+        .block_on(gateway::probe_direct(
+            server,
+            startup.min(PROBE_STARTUP_LIMIT),
+        ))
+        .map_err(|e| e.to_string())
 }
 
 fn serve(helper: Helper, input: impl BufRead, mut output: impl Write) -> io::Result<()> {

@@ -1,10 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { useAgentInventory, useSettings } from "@/hooks/useData";
-import { useTarget } from "@/components/targets/TargetProvider";
 import { groupsApi, projectsApi, settingsApi, skillsApi } from "@/lib/api";
 import { managementApi } from "@/lib/api/mcpManagement";
-import { invoke, requestRemote } from "@/lib/api/transport";
+import { invoke } from "@/lib/api/transport";
 import { initialResource, readInitialView } from "@/lib/initialView";
 import { NAVIGATION_STALE_TIME, queryKeys } from "@/lib/queryKeys";
 import { SkillStudioIcon } from "./SkillStudioIcon";
@@ -12,11 +11,10 @@ import { Button } from "@/components/ui/button";
 
 /** Only coordinate the first frame of this target, never background refreshes. */
 export function StartupBoundary({ children }: { children: ReactNode }) {
-  const target = useTarget();
   const settings = useSettings();
   const agents = useAgentInventory();
   const [opened, setOpened] = useState(false);
-  const view = readInitialView(settings.data, target.id);
+  const view = readInitialView();
   const mcp = initialResource(settings.data) === "mcp";
   const definitions: {
     queryKey: readonly string[];
@@ -25,14 +23,10 @@ export function StartupBoundary({ children }: { children: ReactNode }) {
   }[] = [];
   if (settings.data && !opened) {
     if (mcp) {
-      definitions.push(
-        target.id === "local"
-          ? { queryKey: queryKeys.mcpStatus, queryFn: managementApi.list }
-          : {
-              queryKey: ["mcp", "inventory", target.id],
-              queryFn: () => requestRemote(target.id, "scan_mcp"),
-            },
-      );
+      definitions.push({
+        queryKey: queryKeys.mcpStatus,
+        queryFn: managementApi.list,
+      });
     } else {
       definitions.push({
         queryKey: queryKeys.skillBackups,

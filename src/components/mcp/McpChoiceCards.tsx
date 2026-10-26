@@ -25,7 +25,13 @@ export function McpChoiceCards<T extends string>({
   label: string;
   icon: ReactNode;
   value: T;
-  options: { value: T; title: string; description: string }[];
+  options: {
+    value: T;
+    title: string;
+    description: string;
+    /** 保留在原位但不可选，写明原因 */
+    disabledReason?: string;
+  }[];
   disabled?: boolean;
   onChange: (value: T) => void;
 }) {
@@ -54,15 +60,17 @@ export function McpChoiceCards<T extends string>({
             return (
               <label
                 key={option.value}
-                className="relative cursor-pointer rounded-lg focus-within:ring-2 focus-within:ring-blue-500/40"
+                title={option.disabledReason}
+                className={`relative rounded-lg focus-within:ring-2 focus-within:ring-blue-500/40 ${option.disabledReason ? "cursor-not-allowed" : "cursor-pointer"}`}
               >
                 <input
                   type="radio"
                   name={name}
-                  aria-label={`${option.title} ${option.description}`}
+                  aria-label={`${option.title} ${option.disabledReason ?? option.description}`}
                   className="peer sr-only"
                   value={option.value}
                   checked={value === option.value}
+                  disabled={!!option.disabledReason}
                   onChange={() => onChange(option.value)}
                 />
                 <span
@@ -82,6 +90,13 @@ export function McpChoiceCards<T extends string>({
         <p className="text-xs text-muted-foreground">
           {options.find((option) => option.value === value)?.description}
         </p>
+        {options
+          .filter((option) => option.disabledReason)
+          .map((option) => (
+            <p key={option.value} className="text-xs text-muted-foreground">
+              {option.disabledReason}
+            </p>
+          ))}
       </SettingsSection>
     </fieldset>
   );

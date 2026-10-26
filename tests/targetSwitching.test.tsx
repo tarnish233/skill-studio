@@ -204,3 +204,68 @@ it("adds a server by selecting its SSH config alias without copying connection o
     passwordAuth: false,
   });
 });
+
+it("switches the MCP Hub between this machine and a server without mixing their services", async () => {
+  localStorage.setItem("skill-studio-view", "hub");
+  localStorage.setItem("skill-studio-resource", "mcp");
+  const status = (name: string) => ({
+    running: false,
+    servers: [],
+    discovered: [],
+    scanWarnings: [],
+    entries: [
+      {
+        id: name,
+        name,
+        mode: "direct",
+        definition: { type: "http", url: `https://${name}.example/mcp` },
+        oauth: false,
+        clientId: null,
+        scopes: [],
+        bindings: [],
+      },
+    ],
+  });
+  handlers.set("mcp_request", ({ method }) =>
+    method === "list" ? status("local-mcp") : null,
+  );
+  const remote = handlers.get("remote_request")!;
+  handlers.set("remote_request", (args) =>
+    args.method === "mcp_request"
+      ? args.params.method === "list"
+        ? status("server-mcp")
+        : null
+      : remote(args),
+  );
+  const user = userEvent.setup();
+  renderWithProviders(
+    <NavigationGuard>
+      <TargetProvider>
+        <App />
+      </TargetProvider>
+    </NavigationGuard>,
+  );
+  expect(await screen.findByText("local-mcp")).toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "本机" })).not.toBeDisabled(),
+  );
+  await user.click(screen.getByRole("button", { name: "本机" }));
+  await user.click(await screen.findByRole("menuitem", { name: /node2/ }));
+  expect(await screen.findByText("server-mcp")).toBeInTheDocument();
+  expect(screen.queryByText("local-mcp")).not.toBeInTheDocument();
+  // 网关只在本机：服务器上留在原位但不可用
+  expect(screen.getByRole("button", { name: "MCP 网关" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "node2" })).not.toBeDisabled(),
+  );
+  await user.click(screen.getByRole("button", { name: "node2" }));
+  await user.click(await screen.findByRole("menuitem", { name: "本机" }));
+  expect(await screen.findByText("local-mcp")).toBeInTheDocument();
+  expect(screen.queryByText("server-mcp")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "MCP 网关" })).not.toHaveAttribute(
+    "aria-disabled",
+  );
+});

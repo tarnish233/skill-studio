@@ -77,6 +77,33 @@ describe("remote target routing", () => {
     await expect(invoke("scan_skills")).rejects.toBeTruthy();
     expect(getTarget().connected).toBe(false);
   });
+  it("服务器上的 MCP 管理发往服务器，只有官方目录搜索留在本机", async () => {
+    setTarget({ id: "node2", name: "node2", connected: true });
+    handlers.set("remote_request", ({ serverId, params }) => ({
+      serverId,
+      method: params.method,
+    }));
+    handlers.set("mcp_request", ({ method }) => ({ local: method }));
+    for (const method of [
+      "list",
+      "saveEntry",
+      "setGroup",
+      "activateProject",
+      "testDirect",
+      "listBackups",
+    ])
+      expect(await invoke("mcp_request", { method, params: {} })).toEqual({
+        serverId: "node2",
+        method,
+      });
+    expect(
+      await invoke("mcp_request", {
+        method: "searchRegistry",
+        params: { query: "github" },
+      }),
+    ).toEqual({ local: "searchRegistry" });
+    expect(calls.filter((c) => c.command === "mcp_request")).toHaveLength(1);
+  });
   it("命令行工具的位置只看本机，连着服务器时也一样", async () => {
     setTarget({ id: "node2", name: "node2", connected: true });
     handlers.set("get_cli_info", () => ({

@@ -1,5 +1,6 @@
-//! MCP：Hub、分组、项目与备份的管理。桌面应用、命令行共用这一套；网关运行、连接测试、
-//! 浏览器授权这些要异步运行或依赖窗口的部分留在桌面应用里。
+//! MCP：Hub、分组、项目与备份的管理。桌面应用、命令行和服务器上的辅助程序共用这一套
+//! （界面请求的分派见 [`requests`]）；网关运行、浏览器授权这些要异步运行或依赖窗口的部分
+//! 留在桌面应用里。
 //!
 //! 托管状态（`~/.skill-studio/mcp/catalog.json`）由它自己的锁保护，每次操作都在锁内读最新的
 //! 状态再改：启停分组只动目标分组，保存时核对打开编辑时的样子，不会把别处（另一个窗口、
@@ -11,6 +12,7 @@ pub mod entries;
 pub mod groups;
 mod inventory;
 pub mod projects;
+pub mod requests;
 
 pub use inventory::{scan_inventory, Inventory, InventoryEntry};
 

@@ -196,22 +196,27 @@ fn mcp_inventory_is_metadata_only_and_never_recovers_or_executes_in_either_sessi
         ] {
             assert!(!response.to_string().contains(private), "leaked {private}");
         }
-        for method in [
-            "start",
-            "saveEntry",
-            "removeEntry",
-            "activateGroup",
-            "saveProject",
-            "activateProject",
-            "removeProject",
-            "login",
-        ] {
-            assert!(
-                session.call("mcp_request", json!({"method":method}))["error"]["message"]
-                    .as_str()
-                    .unwrap()
-                    .contains("只读")
-            );
+        // 只读会话不管理 MCP；可写会话的管理见 remote_mcp_is_managed_like_the_desktop_for_direct_connections
+        if !writable {
+            for method in [
+                "list",
+                "start",
+                "saveEntry",
+                "removeEntry",
+                "setGroup",
+                "saveProject",
+                "activateProject",
+                "removeProject",
+                "testDirect",
+                "login",
+            ] {
+                assert!(
+                    session.call("mcp_request", json!({"method":method}))["error"]["message"]
+                        .as_str()
+                        .unwrap()
+                        .contains("只读")
+                );
+            }
         }
         assert_eq!(snapshot(root), before);
         assert!(!root.join("must-not-run").exists());
@@ -602,4 +607,285 @@ fn the_server_build_is_the_command_line_too() {
         .unwrap();
     assert_eq!(bad.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&bad.stderr).contains("未知参数"));
+}
+
+/// 界面发出的 MCP 请求：与桌面应用调用 `mcp_request` 时的形状一致
+fn mcp(session: &mut Session, method: &str, params: Value) -> Value {
+    session.call("mcp_request", json!({"method": method, "params": params}))
+}
+
+fn ok(response: Value) -> Value {
+    assert!(response.get("error").is_none(), "{response}");
+    response["result"].clone()
+}
+
+fn error(response: &Value) -> String {
+    response["error"]["message"]
+        .as_str()
+        .unwrap_or_else(|| panic!("应当失败：{response}"))
+        .to_string()
+}
+
+fn direct(id: &str, definition: Value) -> Value {
+    json!({
+        "id": id, "name": id, "mode": "direct", "definition": definition,
+        "oauth": false, "clientId": null, "scopes": [], "bindings": []
+    })
+}
+
+/// 只存进 Hub，不写任何 Agent：与「添加 MCP」一致
+fn save_to_hub(session: &mut Session, entry: Value) -> Value {
+    mcp(
+        session,
+        "saveEntry",
+        json!({
+            "entry": entry, "expectedEntry": null, "bindingIds": [], "sources": [],
+            "agents": [], "scope": "user", "projectId": ""
+        }),
+    )
+}
+
+fn read_json(path: &std::path::Path) -> Value {
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+#[test]
+fn remote_mcp_is_managed_like_the_desktop_for_direct_connections() {
+    let home = fixture();
+    let root = home.path();
+    write_fixture(
+        root,
+        ".codex/config.toml",
+        "# preserved\nmodel = \"fixture\"\n[mcp_servers.shared]\nurl = \"https://service.invalid/mcp\"\nhttp_headers = { Authorization = \"Bearer private-header\" }\n",
+    );
+    let project_root = root.join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let mut session = Session::start(root, true);
+
+    // 一览与本机一致：原有配置连同请求头回到桌面，供查看和编辑；服务器上没有网关
+    let status = ok(mcp(&mut session, "list", Value::Null));
+    assert_eq!(status["running"], false);
+    assert_eq!(status["entries"], json!([]));
+    let shared = status["discovered"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["name"] == "shared")
+        .cloned()
+        .unwrap();
+    let source = shared["sources"][0].clone();
+    assert_eq!(source["agent"], "codex");
+    assert_eq!(
+        source["definition"]["http_headers"]["Authorization"],
+        "Bearer private-header"
+    );
+
+    // 托管原有配置：接管它的接入，配置文件里的其他内容不动
+    ok(mcp(
+        &mut session,
+        "saveEntry",
+        json!({
+            "entry": direct("remote-shared", json!({
+                "type": "http", "url": "https://service.invalid/mcp",
+                "headers": {"Authorization": "Bearer private-header"}
+            })),
+            "expectedEntry": null, "bindingIds": [],
+            "sources": [{"id": source["id"], "definition": source["definition"]}],
+            "agents": [], "scope": "user", "projectId": ""
+        }),
+    ));
+    let status = ok(mcp(&mut session, "list", Value::Null));
+    let adopted = status["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == "remote-shared")
+        .cloned()
+        .unwrap();
+    assert_eq!(adopted["bindings"][0]["agent"], "codex");
+    assert!(adopted["bindings"][0]["path"]
+        .as_str()
+        .unwrap()
+        .ends_with(".codex/config.toml"));
+
+    // 新的直连 MCP 先只进 Hub，再通过分组启用到 Agent
+    ok(save_to_hub(
+        &mut session,
+        direct(
+            "remote-tool",
+            json!({
+                "type": "stdio", "command": "/nonexistent/remote-tool",
+                "args": ["--serve"], "env": {"TOKEN": "private-env"}
+            }),
+        ),
+    ));
+    assert!(!root.join(".claude.json").exists());
+    ok(mcp(
+        &mut session,
+        "saveGroup",
+        json!({
+            "group": {"id": "remote-group", "name": "服务器分组", "entryIds": ["remote-tool"], "sortOrder": 0},
+            "imports": [], "expected": null
+        }),
+    ));
+    let untouched = ok(mcp(
+        &mut session,
+        "setGroup",
+        json!({"agent": "claude", "groupId": "remote-group", "enabled": true}),
+    ));
+    assert_eq!(untouched, json!([]));
+    let claude = read_json(&root.join(".claude.json"));
+    assert_eq!(
+        claude["mcpServers"]["remote-tool"]["command"],
+        "/nonexistent/remote-tool"
+    );
+    assert_eq!(
+        claude["mcpServers"]["remote-tool"]["env"]["TOKEN"],
+        "private-env"
+    );
+    let status = ok(mcp(&mut session, "list", Value::Null));
+    assert_eq!(
+        status["activeGroups"]["claude"][0]["groupId"],
+        "remote-group"
+    );
+    ok(mcp(
+        &mut session,
+        "setGroup",
+        json!({"agent": "claude", "groupId": "remote-group", "enabled": false}),
+    ));
+    assert!(read_json(&root.join(".claude.json"))["mcpServers"]
+        .get("remote-tool")
+        .is_none());
+
+    // 项目：成员只保存一次，按 Agent 写进服务器上的项目目录
+    let project = ok(session.call(
+        "create_project",
+        json!({"name": "Remote project", "root": project_root}),
+    ));
+    let project_id = project["id"].clone();
+    ok(mcp(
+        &mut session,
+        "saveProject",
+        json!({
+            "projectId": project_id, "entryIds": ["remote-tool"], "groupIds": [],
+            "claudeLocal": false, "imports": [], "expected": null
+        }),
+    ));
+    ok(mcp(
+        &mut session,
+        "activateProject",
+        json!({"projectId": project_id, "agent": "codex", "enabled": true}),
+    ));
+    let project_config = project_root.join(".codex/config.toml");
+    assert!(std::fs::read_to_string(&project_config)
+        .unwrap()
+        .contains("/nonexistent/remote-tool"));
+    ok(mcp(
+        &mut session,
+        "activateProject",
+        json!({"projectId": project_id, "agent": "codex", "enabled": false}),
+    ));
+    assert!(!std::fs::read_to_string(&project_config)
+        .unwrap_or_default()
+        .contains("/nonexistent/remote-tool"));
+    let backups = ok(mcp(&mut session, "listBackups", Value::Null));
+    assert!(!backups["backups"].as_array().unwrap().is_empty());
+
+    // 网关和浏览器授权只在本机：写入前就拒绝，说明原因，Hub 里不多出条目
+    let mut gateway = direct(
+        "remote-gateway",
+        json!({"type": "http", "url": "https://gateway.invalid/mcp"}),
+    );
+    gateway["mode"] = json!("gateway");
+    let refused = save_to_hub(&mut session, gateway);
+    assert!(
+        error(&refused).contains("服务器上暂不支持 Studio 网关"),
+        "{refused}"
+    );
+    for method in ["start", "stop", "test", "login", "loginStatus", "apply"] {
+        let refused = mcp(&mut session, method, json!({"id": "remote-tool"}));
+        assert!(
+            error(&refused).contains("服务器上暂不支持 Studio 网关"),
+            "{method}: {refused}"
+        );
+    }
+    assert!(error(&mcp(
+        &mut session,
+        "searchRegistry",
+        json!({"query": "github"})
+    ))
+    .contains("桌面应用"));
+
+    // 连接测试在服务器上执行：启动失败时如实报错，协议继续可用
+    let started = std::time::Instant::now();
+    let failed = mcp(&mut session, "testDirect", json!({"id": "remote-tool"}));
+    assert!(failed.get("error").is_some(), "{failed}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(30));
+    assert_eq!(ok(session.call("hello", Value::Null))["writable"], true);
+
+    // 重新连接后仍是同一份托管状态
+    drop(session);
+    let mut session = Session::start(root, true);
+    let status = ok(mcp(&mut session, "list", Value::Null));
+    let ids: Vec<_> = status["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ids.len(), 2, "{status}");
+    assert!(ids.contains(&"remote-shared".to_string()) && ids.contains(&"remote-tool".to_string()));
+
+    // 移出 Hub 并还原：原有配置原样留在服务器上
+    let removal = ok(mcp(
+        &mut session,
+        "removeEntry",
+        json!({"id": "remote-shared", "restore": true}),
+    ));
+    assert_eq!(removal["foreign"], json!([]));
+    let codex = std::fs::read_to_string(root.join(".codex/config.toml")).unwrap();
+    assert!(
+        codex.starts_with("# preserved\nmodel = \"fixture\"\n"),
+        "{codex}"
+    );
+    assert!(codex.contains("[mcp_servers.shared]") && codex.contains("Bearer private-header"));
+
+    // 服务器的设置里关掉 MCP 管理后，所有 MCP 请求都停下
+    ok(session.call("update_settings", json!({"patch": {"manageMcp": false}})));
+    assert!(error(&mcp(&mut session, "list", Value::Null)).contains("MCP 管理已关闭"));
+}
+
+/// 连接测试与服务器上的 Agent 一样，在服务器上启动 stdio 服务并列出工具
+#[cfg(unix)]
+#[test]
+fn remote_connection_test_starts_the_stdio_service_on_the_server() {
+    let home = tempfile::tempdir().unwrap();
+    let marker = home.path().join("started-on-server");
+    let script = format!(
+        r#"import json,pathlib,sys
+pathlib.Path({marker:?}).write_text('ok')
+for line in sys.stdin:
+    r=json.loads(line)
+    if 'id' not in r: continue
+    method=r['method']
+    if method=='initialize': result={{'protocolVersion':r['params']['protocolVersion'],'capabilities':{{'tools':{{}}}},'serverInfo':{{'name':'fixture','version':'1'}}}}
+    elif method=='tools/list': result={{'tools':[{{'name':'stdio-echo','inputSchema':{{'type':'object'}}}}]}}
+    else: result={{}}
+    print(json.dumps({{'jsonrpc':'2.0','id':r['id'],'result':result}}),flush=True)
+"#,
+        marker = marker.to_string_lossy()
+    );
+    let mut session = Session::start(home.path(), true);
+    ok(save_to_hub(
+        &mut session,
+        direct(
+            "stdio-echo",
+            json!({"type": "stdio", "command": "python3", "args": ["-u", "-c", script]}),
+        ),
+    ));
+    let tools = ok(mcp(&mut session, "testDirect", json!({"id": "stdio-echo"})));
+    assert_eq!(tools[0]["name"], "stdio-echo", "{tools}");
+    assert!(marker.is_file());
+    // 服务的输出没有混进协议：下一次请求照常应答
+    assert_eq!(ok(session.call("hello", Value::Null))["writable"], true);
 }

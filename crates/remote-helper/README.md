@@ -21,10 +21,15 @@
 目录选择器浏览，Skill 也可从本机上传。市场下载由桌面完成后上传，适用于
 服务器不能访问外网的场景。连接失败不会回退到本机操作。
 
-MCP Hub 通过 `scan_mcp` 只读展示服务器的 MCP 名称及所属 Agent，不提供远程
-托管、分组、网关或授权操作。响应仅含 `servers: [{id, name, agents}]` 与
-`warnings`；原始连接配置、凭据和启动参数不会返回桌面。即使在可写 Skill
-会话中，这个接口也不会进行配置恢复或启动第三方进程。
+MCP 管理走 `mcp_request`（`{"method": …, "params": …}`），与桌面应用的同名命令共用
+`skill_studio_service::mcp::requests` 的分派：Hub、托管与还原、分组、项目、备份和解析
+与本机一致。服务器上只管理 Agent 直连的 MCP：网关的启停、授权和网关模式的保存都会被
+拒绝并说明原因；`testDirect` 在服务器上启动服务完成握手，启动最多等待 75 秒，以免超过
+桌面等一次响应的时限；官方目录由桌面搜索。查看和编辑需要完整配置，连接定义经 SSH
+返回桌面，与本机一样只在内存中使用。
+
+`scan_mcp` 仍是只读会话可用的名称清单：响应仅含 `servers: [{id, name, agents}]` 与
+`warnings`，不返回原始连接配置、凭据和启动参数，也不进行配置恢复或启动第三方进程。
 
 ## 构建
 
@@ -59,7 +64,7 @@ cargo build --locked --release -p skill-studio-remote
 上传分块最多 64 KiB，拒绝绝对路径和父目录穿越，安装复用核心校验。
 
 手动启动默认只读，仅允许握手、扫描、Agent 探测和目录浏览，不执行配置迁移、
-事务恢复或第三方 Agent CLI。`--allow-writes` 开启 Skill 管理，MCP 始终只读。
+事务恢复或第三方 Agent CLI。`--allow-writes` 开启 Skill 与 Agent 直连 MCP 的管理。
 写入会话持有进程锁，EOF 后退出。超时不会自动重试写入，需重连后确认结果。
 
 `--sandbox-home /absolute/fixture/home` 为测试指定 HOME，并清除继承的
@@ -80,6 +85,6 @@ cargo test -p skill-studio --lib live_desktop_ssh_deploy_and_project_roundtrip -
 实机测试使用实际桌面 SSH 后端部署组件，并在远程 `/tmp` 独立配置中验证
 启停、Hub、分组、项目、备份、上传和重连。
 
-只验证远程 MCP 展示时，将上述测试名替换为
-`live_desktop_ssh_mcp_inventory_is_read_only`。此测试仅在生成的临时 HOME 中
-创建 MCP 样例，验证只读扫描、操作拒绝及配置文件哈希不变。
+只验证远程 MCP 时，将上述测试名替换为 `live_desktop_ssh_mcp_management_roundtrip`。
+此测试仅在生成的临时 HOME 中创建 MCP 样例，验证名称清单不含凭据、直连 MCP 经分组
+写入并撤回、网关请求被拒绝，以及未涉及的配置文件内容不变。

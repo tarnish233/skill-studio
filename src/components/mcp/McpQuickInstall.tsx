@@ -17,7 +17,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DetailHeader } from "@/components/common/DetailHeader";
 import { useUnsavedProject } from "@/components/common/NavigationGuard";
+import { useTarget } from "@/components/targets/TargetProvider";
 import { mcpRequest } from "@/lib/api/mcp";
+import { REMOTE_GATEWAY_REASON } from "@/lib/mcpDisplay";
 import {
   managementApi,
   type ManagedMcp,
@@ -47,6 +49,7 @@ export function McpQuickInstall({
   onBack: () => void;
   onSaved: (entry: ManagedMcp, result?: McpInstallResult) => void;
 }) {
+  const remote = useTarget().id !== "local";
   const [text, setText] = useState("");
   const [source, setSource] = useState<"manual" | "registry">("manual");
   const [registryQuery, setRegistryQuery] = useState("");
@@ -433,6 +436,9 @@ export function McpQuickInstall({
                       title: "Studio 代理",
                       description:
                         "由 Studio 连接服务，可让多个 Agent 共用登录。",
+                      disabledReason: remote
+                        ? REMOTE_GATEWAY_REASON
+                        : undefined,
                     },
                   ]}
                 />

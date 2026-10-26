@@ -16,7 +16,7 @@ import {
 } from "@/lib/mcpAgents";
 import { useSettings } from "@/hooks/useData";
 import { queryKeys } from "@/lib/queryKeys";
-import { mcpTarget } from "@/lib/mcpDisplay";
+import { mcpTarget, REMOTE_GATEWAY_REASON } from "@/lib/mcpDisplay";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -63,7 +63,6 @@ import {
 } from "@/components/mcp/McpEntryDetail";
 import { McpQuickInstall } from "@/components/mcp/McpQuickInstall";
 import { McpBackupsDialog } from "@/components/mcp/McpBackupsDialog";
-import { RemoteMcpPage } from "@/pages/RemoteMcpPage";
 import { mcpRequest } from "@/lib/api/mcp";
 import {
   managementApi,
@@ -81,16 +80,16 @@ import {
  * 「添加 MCP」同样在页内展开；标题栏与项目、分组详情同一套。
  */
 export function McpPage() {
-  const target = useTarget();
-  if (target.id !== "local") return <RemoteMcpPage key={target.id} />;
   return (
     <NavigationGuard>
-      <LocalMcpPage />
+      <McpHub />
     </NavigationGuard>
   );
 }
-function LocalMcpPage() {
+/** 本机与服务器同一个页面；服务器上只有 Studio 网关不可用（见 REMOTE_GATEWAY_REASON） */
+function McpHub() {
   const requestNavigation = useNavigationGuard();
+  const remote = useTarget().id !== "local";
   const { data: settings } = useSettings();
   const visibleMcpAgents = MCP_AGENTS.filter(
     (a) => !settings?.disabledAgents?.includes(a.appId),
@@ -99,8 +98,9 @@ function LocalMcpPage() {
     queryKey: queryKeys.mcpStatus,
     queryFn: managementApi.list,
     // Keep polling in the background without fetching again on every Agent switch.
+    // 服务器的数据由连接自己每 30 秒整体刷新一次，这里不再重复扫描
     staleTime: MCP_STATUS_STALE_TIME,
-    refetchInterval: MCP_STATUS_POLL_INTERVAL,
+    refetchInterval: remote ? false : MCP_STATUS_POLL_INTERVAL,
   });
   const allRows = rows(status.data);
   const catalog = allRows.filter(
@@ -638,17 +638,26 @@ function LocalMcpPage() {
             <Button
               variant="ghost"
               size="sm"
-              className={`${summaryPillClass} border-transparent`}
+              className={`${summaryPillClass} border-transparent ${remote ? "cursor-not-allowed opacity-50 hover:bg-transparent" : ""}`}
               aria-label="MCP 网关"
               aria-pressed={running}
-              title={running ? "点击关闭网关" : "点击开启网关"}
+              // 服务器上留在原位、可以看提示，但不能开启
+              aria-disabled={remote || undefined}
+              title={
+                remote
+                  ? REMOTE_GATEWAY_REASON
+                  : running
+                    ? "点击关闭网关"
+                    : "点击开启网关"
+              }
               disabled={busy || status.isLoading || !!status.error}
-              onClick={() =>
+              onClick={() => {
+                if (remote) return;
                 void run(async () => {
                   await mcpRequest(running ? "stop" : "start");
                   toast.success(running ? "网关已关闭" : "网关已开启");
-                })
-              }
+                });
+              }}
             >
               <span
                 className={`h-2 w-2 rounded-full ${running ? "bg-emerald-500" : "bg-muted-foreground"}`}
