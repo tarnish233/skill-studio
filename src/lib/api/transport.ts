@@ -101,7 +101,9 @@ export async function invoke<T>(
     if (method === "update_settings") {
       const patch = { ...(params.patch as Record<string, unknown>) };
       const globalPatch: Record<string, unknown> = {};
-      for (const key of ["theme", "language"])
+      // CLI and bundled skill belong to this desktop installation, even when
+      // the current management target is a remote server.
+      for (const key of ["theme", "language", "cliSkillEnabled"])
         if (key in patch) {
           globalPatch[key] = patch[key];
           delete patch[key];
@@ -130,9 +132,22 @@ export async function invoke<T>(
 async function settings(id: string) {
   const [remote, local] = await Promise.all([
     requestRemote<Record<string, unknown>>(id, "get_settings"),
-    nativeInvoke<{ theme: string; language: string }>("get_settings"),
+    nativeInvoke<{
+      theme: string;
+      language: string;
+      cliSkillEnabled?: boolean;
+      cliSkillWarning?: string;
+    }>("get_settings"),
   ]);
-  return { ...remote, theme: local.theme, language: local.language };
+  return {
+    ...remote,
+    theme: local.theme,
+    language: local.language,
+    ...(local.cliSkillEnabled !== undefined && {
+      cliSkillEnabled: local.cliSkillEnabled,
+    }),
+    ...(local.cliSkillWarning && { cliSkillWarning: local.cliSkillWarning }),
+  };
 }
 
 /** Bind the upload to the server before opening the desktop picker. */

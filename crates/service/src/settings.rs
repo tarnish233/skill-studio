@@ -12,7 +12,27 @@ pub fn get_config(state: &AppState) -> Result<AppConfig, String> {
 }
 
 pub fn get_settings(state: &AppState) -> Result<Settings, String> {
-    Ok(state.config().settings.clone())
+    let config = state.config();
+    let mut settings = config.settings.clone();
+    if !settings.cli_skill_enabled && !config.builtin_skills.is_empty() {
+        let remaining = match state.studio().builtin_retained(&config) {
+            Ok(remaining) if remaining.is_empty() => None,
+            Ok(remaining) => Some(
+                remaining
+                    .iter()
+                    .map(|skill| format!("「{}」{}", skill.name, skill.reason))
+                    .collect::<Vec<_>>()
+                    .join("；"),
+            ),
+            Err(error) => Some(format!("无法检查内置 skill：{error}")),
+        };
+        settings.cli_skill_warning = remaining.map(|text| {
+            format!(
+                "内置 skill 仍留在 Hub：{text}。CLI 已关闭；请处理上述原因或等待下次启动自动清理。"
+            )
+        });
+    }
+    Ok(settings)
 }
 
 /// 设置的增量补丁。字段为 `None` 表示不改动。
@@ -25,6 +45,7 @@ pub struct SettingsPatch {
     pub disabled_agents: Option<Vec<String>>,
     pub show_codex_builtin_mcp: Option<bool>,
     pub manage_mcp: Option<bool>,
+    pub cli_skill_enabled: Option<bool>,
     pub default_link_mode: Option<LinkMode>,
     pub preserve_manual_skills: Option<bool>,
     pub language: Option<String>,
@@ -37,6 +58,17 @@ pub struct SettingsPatch {
 }
 
 pub fn update_settings(state: &AppState, patch: SettingsPatch) -> Result<Settings, String> {
+    update_settings_with_builtin(state, patch, None, "")
+}
+
+/// `source` is the desktop app's bundled resource directory; the remote helper
+/// has no copy and is never expected to install the builtin on its own.
+pub fn update_settings_with_builtin(
+    state: &AppState,
+    patch: SettingsPatch,
+    source: Option<&std::path::Path>,
+    version: &str,
+) -> Result<Settings, String> {
     if let Some(ids) = &patch.disabled_agents {
         if patch.default_link_mode.is_some()
             || patch.preserve_manual_skills.is_some()
@@ -48,11 +80,12 @@ pub fn update_settings(state: &AppState, patch: SettingsPatch) -> Result<Setting
             || patch.backup_keep.is_some()
             || patch.show_codex_builtin_mcp.is_some()
             || patch.manage_mcp.is_some()
+            || patch.cli_skill_enabled.is_some()
         {
             return Err("应用管理开关需单独保存".into());
         }
         state.set_managed_agents(ids).map_err(String::from)?;
-        return Ok(state.config().settings.clone());
+        return get_settings(state);
     }
     if let Some(preserve) = patch.preserve_manual_skills {
         if patch.default_link_mode.is_some()
@@ -64,13 +97,14 @@ pub fn update_settings(state: &AppState, patch: SettingsPatch) -> Result<Setting
             || patch.backup_keep.is_some()
             || patch.show_codex_builtin_mcp.is_some()
             || patch.manage_mcp.is_some()
+            || patch.cli_skill_enabled.is_some()
         {
             return Err("保留手动 skill 策略需单独保存".into());
         }
         state
             .set_manual_skill_policy(preserve)
             .map_err(String::from)?;
-        return Ok(state.config().settings.clone());
+        return get_settings(state);
     }
     if let Some(enabled) = patch.manage_mcp {
         if patch.show_codex_builtin_mcp.is_some()
@@ -81,11 +115,29 @@ pub fn update_settings(state: &AppState, patch: SettingsPatch) -> Result<Setting
             || patch.hub_dir.is_some()
             || patch.clear_hub_dir.is_some()
             || patch.backup_keep.is_some()
+            || patch.cli_skill_enabled.is_some()
         {
             return Err("MCP 管理开关需单独保存".into());
         }
         state.set_mcp_management(enabled).map_err(String::from)?;
-        return Ok(state.config().settings.clone());
+        return get_settings(state);
+    }
+    if let Some(enabled) = patch.cli_skill_enabled {
+        if patch.show_codex_builtin_mcp.is_some()
+            || patch.default_link_mode.is_some()
+            || patch.language.is_some()
+            || patch.theme.is_some()
+            || patch.agent_dir_overrides.is_some()
+            || patch.hub_dir.is_some()
+            || patch.clear_hub_dir.is_some()
+            || patch.backup_keep.is_some()
+        {
+            return Err("CLI 与内置 skill 开关需单独保存".into());
+        }
+        state
+            .set_cli_skill_enabled(enabled, source, version)
+            .map_err(String::from)?;
+        return get_settings(state);
     }
     state
         .mutate(|studio, config| {
@@ -133,13 +185,13 @@ pub fn update_settings(state: &AppState, patch: SettingsPatch) -> Result<Setting
                 // 上限兜一下，避免用户填个天文数字把磁盘写满
                 s.backup_keep = k.min(100);
             }
-            let result = s.clone();
             if paths_changed {
                 validate_hub_change(&old_hub, &studio.store().hub_dir(config), config)?;
             }
-            Ok(result)
+            Ok(())
         })
-        .map_err(Into::into)
+        .map_err(String::from)?;
+    get_settings(state)
 }
 
 /// 配置备份列表，最新在前

@@ -25,12 +25,20 @@ pub struct Ctx {
 impl Ctx {
     /// 查看：只读打开，不恢复事务、不写任何文件（Agent 沙箱里只能读时也能用）
     pub fn reader(&self) -> Result<AppState, CliError> {
-        AppState::read_only_waiting(self.store.clone(), self.wait).map_err(Into::into)
+        let state = AppState::read_only_waiting(self.store.clone(), self.wait)?;
+        if !state.config().settings.cli_skill_enabled {
+            return Err(crate::cli_disabled());
+        }
+        Ok(state)
     }
 
     /// 修改：和桌面应用启动时一样加载（含恢复中断的事务），写入时持配置锁
     pub fn writer(&self) -> Result<AppState, CliError> {
-        AppState::bootstrap_waiting(self.store.clone(), self.wait).map_err(Into::into)
+        let state = AppState::bootstrap_waiting(self.store.clone(), self.wait)?;
+        if !state.config().settings.cli_skill_enabled {
+            return Err(crate::cli_disabled());
+        }
+        Ok(state.for_interactive_cli())
     }
 }
 

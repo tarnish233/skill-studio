@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use serde_json::json;
 use skill_studio_core::models::agent::AGENTS;
-use skill_studio_core::services::store::Store;
+use skill_studio_core::services::store::{lock_existing, Store};
 
 use redact::{hide, secret_name, HIDDEN};
 
@@ -57,9 +57,14 @@ where
             return error.exit_code();
         }
     };
+    let store = Store::default();
+    if let Err(error) = ensure_cli_enabled(&store) {
+        print_error(err, cli.json, &error);
+        return error.exit_code();
+    }
     let ctx = commands::Ctx {
         yes: cli.yes,
-        store: Store::default(),
+        store,
         wait: lock_wait(),
         ignored_env: isolate_agent_env(),
     };
@@ -83,6 +88,28 @@ where
             error.exit_code()
         }
     }
+}
+
+pub(crate) fn cli_disabled() -> CliError {
+    CliError::failed("命令行工具已在 Skill Studio 设置中关闭")
+        .hint("前往 Skill Studio 设置 › 通用重新开启「启用 CLI 与内置 skill」")
+}
+
+fn ensure_cli_enabled(store: &Store) -> Result<(), CliError> {
+    // This is a usage preference, not a security boundary. `serve` is used by
+    // the desktop over SSH and intentionally bypasses the interactive CLI.
+    // A read-only check never creates a config directory or recovery journal.
+    let _lock = lock_existing(&store.lock_path(), lock_wait(), false)?;
+    let config = store.read()?;
+    if config.is_none() && store.pending_transactions() {
+        return Err(CliError::failed(
+            "Skill Studio 有一项写入还没完成，请先打开 Skill Studio 完成恢复，再查看",
+        ));
+    }
+    if config.is_some_and(|config| !config.settings.cli_skill_enabled) {
+        return Err(cli_disabled());
+    }
+    Ok(())
 }
 
 fn print_error(err: &mut dyn Write, json: bool, error: &CliError) {

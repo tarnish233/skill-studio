@@ -126,6 +126,33 @@ fn deployed(home: &Home, root: &str, name: &str) -> bool {
 
 #[test]
 #[serial]
+fn disabling_cli_rejects_read_and_write_commands_without_audit_or_side_effects() {
+    let home = Home::new();
+    let store = skill_studio_core::services::store::Store::new(home.path(".skill-studio"));
+    let state = skill_studio_service::state::AppState::bootstrap(store).unwrap();
+    state
+        .mutate(|_, config| {
+            config.settings.cli_skill_enabled = false;
+            Ok(())
+        })
+        .unwrap();
+
+    let text = home.run(&["status"]);
+    assert_eq!(text.code, 1);
+    assert!(text.err.contains("设置中关闭"), "{}", text.err);
+    let json = home.json(&["groups", "create", "should-not-exist"]);
+    assert_eq!(json.code, 1);
+    assert_eq!(json.json()["error"]["code"], "failed");
+    assert!(home.config()["groups"].as_array().unwrap().is_empty());
+    assert!(!home.path(".skill-studio/logs/cli.log").exists());
+
+    // 安装包探测和阅读帮助仍可用，远程辅助协议另走 serve 入口。
+    assert_eq!(home.run(&["--help"]).code, 0);
+    assert_eq!(home.run(&["--version"]).code, 0);
+}
+
+#[test]
+#[serial]
 fn help_is_chinese_and_exit_codes_follow_the_contract() {
     let home = Home::new();
     let help = home.run(&["--help"]);

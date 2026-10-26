@@ -81,11 +81,15 @@ export function hubSourceIds(card: HubCard): string[] {
     /(^|\/)\.agents?(\/|$)/.test(path.replace(/\\/g, "/"));
   for (const source of card.sources) {
     if (source.sourceIds) {
-      source.sourceIds.forEach((id) => ids.add(id));
+      source.sourceIds.forEach((id) =>
+        ids.add(id === "builtin" ? "studio" : id),
+      );
       continue;
     }
     if (source.provenance) {
-      source.provenance.sourceIds.forEach((id) => ids.add(id));
+      source.provenance.sourceIds.forEach((id) =>
+        ids.add(id === "builtin" ? "studio" : id),
+      );
       continue;
     }
     // Older backends cannot prove the origins of existing Hub content.

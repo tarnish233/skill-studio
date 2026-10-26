@@ -15,7 +15,7 @@ use tauri::Manager;
 
 /// 内置 skill 的资源目录：打包后读 `Resources/resources/builtin-skills`，
 /// 开发时退回仓库里的 `src-tauri/resources/builtin-skills`
-fn builtin_skills_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+pub(crate) fn builtin_skills_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     if let Ok(dir) = app.path().resource_dir() {
         let dir = dir.join("resources/builtin-skills");
         if dir.is_dir() {

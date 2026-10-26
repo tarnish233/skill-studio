@@ -23,13 +23,22 @@ const quoted = (path: string) => `"${path.replace(/(["\\$`])/g, "\\$1")}"`;
  * 设置页「命令行工具」：终端和 Agent 能不能直接运行 skill-studio。
  * 还没放进 PATH 时给出 App 自带程序的位置和链接命令；这个版本没有附带命令行时不显示。
  */
-export function CommandLineCard() {
+export function CommandLineCard({ enabled = true }: { enabled?: boolean }) {
   const { data: cli } = useQuery({
     queryKey: queryKeys.cliInfo,
     queryFn: () => systemApi.getCliInfo(),
     staleTime: 60_000,
   });
   if (!cli?.bundled) return null;
+  if (!enabled) {
+    return (
+      <SettingCard
+        title="命令行工具"
+        icon={<SquareTerminal />}
+        description="命令行已关闭。程序仍随安装包保留，但普通命令会提示在通用设置里重新开启；远程 SSH 辅助连接不受影响。"
+      />
+    );
+  }
   if (cli.command) {
     const example = `${cli.command} status`;
     return (

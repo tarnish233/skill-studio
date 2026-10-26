@@ -119,6 +119,22 @@ describe("remote target routing", () => {
         ),
     ).toBe(false);
     expect(getTarget().id).toBe("node2");
+
+    // The switch controls the desktop's installed CLI and bundled skill,
+    // never a remote helper which is currently serving this connection.
+    await invoke("update_settings", { patch: { cliSkillEnabled: false } });
+    expect(
+      calls.filter((c) => c.command === "update_settings").slice(-1)[0]?.args,
+    ).toEqual({
+      patch: { cliSkillEnabled: false },
+    });
+    expect(
+      calls.filter(
+        (c) =>
+          c.command === "remote_request" &&
+          (c.args as { method: string }).method === "update_settings",
+      ),
+    ).toHaveLength(0);
   });
 });
 

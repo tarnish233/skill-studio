@@ -301,6 +301,8 @@ export function useUpdateSettings() {
     mutationFn: (patch: SettingsPatch) => settingsApi.update(patch),
     onSuccess: (settings, patch) => {
       qc.setQueryData(queryKeys.settings, settings);
+      if (patch.cliSkillEnabled === false && settings.cliSkillWarning)
+        toast.warning(settings.cliSkillWarning);
       // 每次保存都会先备份当前配置，并按保留份数轮转
       void qc.invalidateQueries({ queryKey: queryKeys.backups });
       const visibilityOnly = patch.disabledAgents !== undefined;
@@ -336,7 +338,8 @@ export function useUpdateSettings() {
       if (
         visibilityOnly ||
         pathsChanged ||
-        patch.preserveManualSkills !== undefined
+        patch.preserveManualSkills !== undefined ||
+        patch.cliSkillEnabled !== undefined
       ) {
         void qc.invalidateQueries({ queryKey: queryKeys.groups, refetchType });
         void qc.invalidateQueries({ queryKey: queryKeys.skills, refetchType });

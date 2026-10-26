@@ -51,6 +51,12 @@ pub struct Settings {
     pub disabled_agents: Vec<String>,
     #[serde(default)]
     pub show_codex_builtin_mcp: bool,
+    /// CLI commands and the bundled skill are opt-out. Older configs remain enabled.
+    #[serde(default = "default_cli_skill_enabled")]
+    pub cli_skill_enabled: bool,
+    /// Non-persistent explanation when an in-use or edited builtin cannot be removed.
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub cli_skill_warning: Option<String>,
     /// Whether Studio manages MCP connections. Existing installations stay enabled.
     #[serde(default = "default_manage_mcp")]
     pub manage_mcp: bool,
@@ -85,6 +91,10 @@ fn default_manage_mcp() -> bool {
     true
 }
 
+fn default_cli_skill_enabled() -> bool {
+    true
+}
+
 fn default_language() -> String {
     "zh".to_string()
 }
@@ -102,6 +112,8 @@ impl Default for Settings {
         Self {
             disabled_agents: Vec::new(),
             show_codex_builtin_mcp: false,
+            cli_skill_enabled: true,
+            cli_skill_warning: None,
             manage_mcp: true,
             default_link_mode: LinkMode::default(),
             preserve_manual_skills: true,
@@ -384,6 +396,8 @@ mod tests {
         assert_eq!(cfg.settings.language, "zh");
         assert_eq!(cfg.settings.default_link_mode, LinkMode::Auto);
         assert_eq!(cfg.settings.backup_keep, 10);
+        assert!(cfg.settings.cli_skill_enabled);
+        assert!(cfg.settings.cli_skill_warning.is_none());
         assert!(cfg.groups.is_empty());
     }
 

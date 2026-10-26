@@ -66,6 +66,14 @@ import { skillsApi, systemApi } from "@/lib/api";
 import type { SkillView } from "@/types";
 import { formatTokens, sumTokens, tokenIndex, tokenTitle } from "@/lib/tokens";
 
+/** 名称里的空格、点、斜杠和连字符不应让同一个 skill 搜不到。 */
+function compactSearchText(value: string) {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s._/\\-]+/g, "");
+}
+
 export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
   const { data: skills = [], isLoading } = useSkills();
   const { data: agents = [] } = useAgents();
@@ -126,12 +134,19 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
   const selectedSourceCard = sourceCard
     ? (catalog.find((c) => c.key === sourceCard.key) ?? null)
     : null;
-  const matches = (card: HubCard) =>
-    card.sources.some((s) =>
-      `${s.name} ${s.displayName ?? ""} ${s.description ?? ""} ${s.sourcePath}`
-        .toLowerCase()
-        .includes(query.trim().toLowerCase()),
-    );
+  const matches = (card: HubCard) => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return true;
+    const compactNeedle = compactSearchText(needle);
+    return card.sources.some((s) => {
+      const text =
+        `${s.name} ${s.displayName ?? ""} ${s.description ?? ""} ${s.sourcePath}`.toLowerCase();
+      return (
+        text.includes(needle) ||
+        (!!compactNeedle && compactSearchText(text).includes(compactNeedle))
+      );
+    });
+  };
   const available = catalog.filter((c) => !c.unavailable);
   const tokens = useMemo(() => tokenIndex(skills), [skills]);
   // 与「全部」的数量一致：合并的多来源 skill 只计一次，筛选不改变总量。
@@ -165,7 +180,7 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
         title: `筛选 ${a.displayName} 来源`,
       }),
     ),
-    ...(["studio", "builtin", "agent", "unknown", "external"] as const)
+    ...(["studio", "agent", "unknown", "external"] as const)
       // 待确认与外部来源只在确实有（或正筛着它）时出现
       .filter(
         (id) =>

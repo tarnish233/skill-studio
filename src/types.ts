@@ -203,6 +203,9 @@ export interface Settings {
   disabledAgents?: string[];
   manageMcp?: boolean;
   showCodexBuiltinMcp?: boolean;
+  cliSkillEnabled?: boolean;
+  /** 关闭时因用户修改或现有引用而保留的内置 skill（未持久化） */
+  cliSkillWarning?: string | null;
   defaultLinkMode: LinkMode;
   preserveManualSkills?: boolean;
   language: string;
@@ -265,6 +268,7 @@ export interface SettingsPatch {
   disabledAgents?: string[];
   manageMcp?: boolean;
   showCodexBuiltinMcp?: boolean;
+  cliSkillEnabled?: boolean;
   defaultLinkMode?: LinkMode;
   preserveManualSkills?: boolean;
   language?: string;

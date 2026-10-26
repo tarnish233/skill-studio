@@ -100,6 +100,9 @@ pub struct AppState {
     /// 因为别的进程写过而重新读了配置，还没通知界面
     external: Arc<AtomicBool>,
     lock_wait: Duration,
+    /// Only direct CLI commands honor this preference; SSH serve and the desktop
+    /// keep working so a remote management session cannot lock itself out.
+    interactive_cli: bool,
 }
 
 /// 读配置的守卫。只是内存里的一份快照：读写双方都不必为它排队（写入是原子替换，读到的
@@ -167,6 +170,7 @@ impl AppState {
             mode,
             external: Arc::new(AtomicBool::new(false)),
             lock_wait: LOCK_WAIT,
+            interactive_cli: false,
         }
     }
 
@@ -237,6 +241,13 @@ impl AppState {
     /// 等另一个进程写完配置的上限，默认 30 秒
     pub fn with_lock_wait(mut self, wait: Duration) -> Self {
         self.lock_wait = wait;
+        self
+    }
+
+    /// CLI commands hold this marker until their mutation acquires the config
+    /// lock, so an already-started command cannot write after the switch is off.
+    pub fn for_interactive_cli(mut self) -> Self {
+        self.interactive_cli = true;
         self
     }
 
@@ -346,6 +357,9 @@ impl AppState {
                 guard.disk = disk(&path);
                 self.external.store(true, Ordering::Release);
             }
+        }
+        if self.interactive_cli && !guard.config.settings.cli_skill_enabled {
+            return Err(Error::invalid("命令行工具已在 Skill Studio 设置中关闭"));
         }
         let start = guard.disk.clone();
         Ok(ConfigMut {
@@ -521,6 +535,19 @@ impl AppState {
             studio.reconcile_manual_policy(&mut next, true)?;
             *config = next;
             Ok(())
+        })
+    }
+
+    /// The preference and any removable bundled files must be committed under one
+    /// cross-process lock; the core owns their rollback journal and config save.
+    pub fn set_cli_skill_enabled(
+        &self,
+        enabled: bool,
+        source: Option<&std::path::Path>,
+        version: &str,
+    ) -> Result<()> {
+        self.transactional(|studio, config| {
+            studio.set_cli_skill_enabled(config, enabled, source, version)
         })
     }
 

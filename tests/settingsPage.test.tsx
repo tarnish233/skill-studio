@@ -254,6 +254,50 @@ it("defaults builtin MCP visibility off and saves the display preference", async
   expect(settings.showCodexBuiltinMcp).toBe(false);
 });
 
+it("controls CLI and the bundled skill with one switch, explains retained files and does not advertise a disabled CLI", async () => {
+  let settings = { ...defaultSettings(), cliSkillEnabled: true };
+  handlers.set("get_settings", () => settings);
+  handlers.set("get_cli_info", () => ({
+    bundled: "/Applications/Skill Studio.app/Contents/MacOS/skill-studio-cli",
+    command: "skill-studio",
+    location: "/opt/homebrew/bin/skill-studio",
+    stable: true,
+  }));
+  handlers.set("update_settings", ({ patch }) => {
+    settings = {
+      ...settings,
+      ...patch,
+      cliSkillWarning:
+        patch.cliSkillEnabled === false
+          ? "内置 skill「skill-studio」已修改，保留在 Hub；请自行处理。"
+          : undefined,
+    };
+    return settings;
+  });
+  const user = userEvent.setup();
+  renderWithProviders(<SettingsPage />);
+  const toggle = await screen.findByRole("switch", {
+    name: "启用 CLI 与内置 skill",
+  });
+  expect(toggle).toBeChecked();
+  await user.click(toggle);
+  await waitFor(() => expect(toggle).not.toBeChecked());
+  expect(calls.find((c) => c.command === "update_settings")?.args).toEqual({
+    patch: { cliSkillEnabled: false },
+  });
+  expect(screen.getByText(/已修改，保留在 Hub/)).toBeVisible();
+  await user.click(await screen.findByRole("tab", { name: "关于" }));
+  expect(await screen.findByText(/命令行已关闭/)).toBeVisible();
+  expect(screen.queryByRole("button", { name: "复制示例命令" })).toBeNull();
+  await user.click(screen.getByRole("tab", { name: "通用" }));
+  const restoredToggle = screen.getByRole("switch", {
+    name: "启用 CLI 与内置 skill",
+  });
+  await user.click(restoredToggle);
+  await waitFor(() => expect(restoredToggle).toBeChecked());
+  expect(screen.queryByText(/已修改，保留在 Hub/)).toBeNull();
+});
+
 it("switches MCP management independently and hides MCP-only preferences while off", async () => {
   let settings = { ...defaultSettings(), manageMcp: true };
   handlers.set("get_settings", () => settings);

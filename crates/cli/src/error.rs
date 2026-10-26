@@ -115,6 +115,9 @@ impl From<String> for CliError {
             .strip_prefix("无效输入: ")
             .map(str::to_string)
             .unwrap_or(message);
+        if message.contains("命令行工具已在 Skill Studio 设置中关闭") {
+            return crate::cli_disabled();
+        }
         if message.contains(CONFIG_BUSY) {
             return Self::new(Kind::Busy, message).hint("稍后重新运行同一条命令");
         }

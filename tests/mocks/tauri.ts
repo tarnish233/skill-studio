@@ -177,6 +177,7 @@ export function makeProject(
 export function defaultSettings(): Settings {
   return {
     manageMcp: true,
+    cliSkillEnabled: true,
     defaultLinkMode: "auto",
     language: "zh",
     theme: "system",

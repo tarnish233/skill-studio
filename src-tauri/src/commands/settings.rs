@@ -24,8 +24,14 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String
 #[tauri::command(rename_all = "camelCase")]
 pub async fn update_settings(
     state: State<'_, AppState>,
+    app: tauri::AppHandle,
     patch: SettingsPatch,
 ) -> Result<Settings, String> {
+    let bundle = if patch.cli_skill_enabled == Some(true) {
+        Some(crate::builtin_skills_dir(&app).ok_or("找不到应用内置 skill 资源，不能启用")?)
+    } else {
+        None
+    };
     let changed_mcp = patch.manage_mcp;
     let changed_keep = patch.backup_keep.is_some();
     let mcp_dir = state.studio().store().dir().join("mcp");
@@ -53,7 +59,12 @@ pub async fn update_settings(
     }
     let state = state.inner().clone();
     let updated = tauri::async_runtime::spawn_blocking(move || {
-        skill_studio_service::settings::update_settings(&state, patch)
+        skill_studio_service::settings::update_settings_with_builtin(
+            &state,
+            patch,
+            bundle.as_deref(),
+            env!("CARGO_PKG_VERSION"),
+        )
     })
     .await
     .map_err(|e| e.to_string())?;

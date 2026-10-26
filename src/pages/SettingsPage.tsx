@@ -25,6 +25,7 @@ import {
   Settings2,
   Plug,
   Power,
+  SquareTerminal,
   Eye,
   Eraser,
   Archive,
@@ -215,6 +216,39 @@ export function SettingsPage() {
                   />
                 </SettingCard>
               )}
+            </SettingsSection>
+            <SettingsSection
+              title="命令行与内置 skill"
+              icon={<SquareTerminal />}
+            >
+              <SettingCard
+                title={
+                  <label htmlFor="cli-skill-enabled">
+                    启用 CLI 与内置 skill
+                  </label>
+                }
+                description="仅影响本机。关闭后普通命令行操作会被拒绝，内置 skill 不再自动同步；未修改、未被使用的内置副本会从 Hub 移除。已修改或仍被引用的副本会保留并提示原因。命令行程序仍随安装包保留，远程 SSH 辅助连接不受影响；此开关不是安全隔离。"
+                icon={<SquareTerminal />}
+                details={
+                  settings.cliSkillWarning && (
+                    <p
+                      role="status"
+                      className="text-xs text-amber-700 dark:text-amber-400"
+                    >
+                      {settings.cliSkillWarning}
+                    </p>
+                  )
+                }
+              >
+                <Switch
+                  id="cli-skill-enabled"
+                  checked={settings.cliSkillEnabled ?? true}
+                  disabled={update.isPending}
+                  onCheckedChange={(value) =>
+                    update.mutate({ cliSkillEnabled: value })
+                  }
+                />
+              </SettingCard>
             </SettingsSection>
             <SettingsSection title="分组与安装" icon={<LayoutGrid />}>
               <SettingCard
@@ -551,7 +585,7 @@ export function SettingsPage() {
                 icon={<FolderCog />}
                 description="在 Agent 中切换 skill 分组，为项目选择独立的 skill 组合。手动安装的 skill 按通用设置保留或暂时停用。"
               />
-              <CommandLineCard />
+              <CommandLineCard enabled={settings.cliSkillEnabled ?? true} />
             </SettingsSection>
           </TabsContent>
         </div>

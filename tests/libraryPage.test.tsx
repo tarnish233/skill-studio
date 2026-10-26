@@ -156,7 +156,7 @@ describe("Skill Hub", () => {
       expect(pill).toHaveClass("border-border-default");
   });
 
-  it("内置 skill 的来源写「Skill Studio 内置」，胶囊和卡片都写名称", async () => {
+  it("内置 skill 与普通 Studio 来源共用一枚筛选胶囊和图标，仍受删除保护", async () => {
     setup([
       makeSkill({
         id: "builtin",
@@ -165,21 +165,41 @@ describe("Skill Hub", () => {
         sourceIds: ["builtin"],
         agents: {},
       }),
+      makeSkill({
+        id: "installed",
+        name: "normal-skill",
+        origin: { kind: "hub" },
+        sourceIds: ["studio"],
+        agents: {},
+      }),
     ]);
     renderWithProviders(<LibraryPage />);
+    const studioFilter = await screen.findByRole("button", {
+      name: "Skill Studio 2",
+    });
+    expect(studioFilter).toHaveTextContent(/^2$/);
     expect(
-      await screen.findByRole("button", { name: "Skill Studio 内置 1" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /Skill Studio 内置/ }),
+    ).toBeNull();
     expect(
-      screen.getByText(
-        (_, element) => element?.textContent === "来源：Skill Studio 内置",
-      ),
-    ).toBeInTheDocument();
+      screen.getAllByRole("img", { name: "来源：Skill Studio" }),
+    ).toHaveLength(2);
+    const user = userEvent.setup();
+    await user.click(studioFilter);
+    expect(screen.getByText("skill-studio")).toBeInTheDocument();
+    expect(screen.getByText("normal-skill")).toBeInTheDocument();
+
+    // 名称里的空格、连字符只是排版差异，搜 skillstudio 也应找到 skill-studio。
+    const search = screen.getByPlaceholderText("按名称或描述搜索…");
+    await user.type(search, "skillstudio");
+    expect(screen.getByText("skill-studio")).toBeInTheDocument();
+    expect(screen.queryByText("normal-skill")).toBeNull();
+    await user.clear(search);
+
     // 内置 skill 跟着应用走：不给删除按钮，来源说明也不能说「无法确认原始来源」
     expect(
       screen.queryByRole("button", { name: "删除 skill-studio" }),
     ).toBeNull();
-    const user = userEvent.setup();
     await user.click(
       screen.getByRole("button", { name: "查看 skill-studio 的来源" }),
     );
