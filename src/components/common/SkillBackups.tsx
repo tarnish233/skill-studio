@@ -126,11 +126,14 @@ export function DeleteSkillButton({
   scope,
   path,
   name,
+  label,
   disabled = false,
 }: {
   scope: string;
   path: string;
   name: string;
+  /** 来源详情中显示文字，并以具体路径区分同名来源。 */
+  label?: string;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -147,14 +150,15 @@ export function DeleteSkillButton({
   return (
     <>
       <Button
-        variant="ghost"
-        size="icon"
+        variant={label ? "outline" : "ghost"}
+        size={label ? "sm" : "icon"}
         title={`删除 ${path}`}
-        aria-label={`删除 ${name}`}
+        aria-label={label ? `删除 ${name} 的来源 ${path}` : `删除 ${name}`}
         disabled={disabled || mutation.isPending}
         onClick={() => setOpen(true)}
       >
         <Trash2 className="h-4 w-4" />
+        {label}
       </Button>
       <ConfirmDialog
         open={open}

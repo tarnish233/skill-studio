@@ -19,7 +19,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { PageTools } from "@/components/common/PageTools";
 import { useEffect, useMemo, useState } from "react";
-import { FolderOpen, PackagePlus, PackageMinus, Link2 } from "lucide-react";
+import {
+  FolderOpen,
+  PackagePlus,
+  PackageMinus,
+  Link2,
+  Trash2,
+} from "lucide-react";
 import { AgentIcon } from "@/components/common/AgentIcon";
 import {
   SOURCE_LABELS,
@@ -65,6 +71,11 @@ import {
 import { skillsApi, systemApi } from "@/lib/api";
 import type { SkillView } from "@/types";
 import { formatTokens, sumTokens, tokenIndex, tokenTitle } from "@/lib/tokens";
+
+/** 删除仍按来源处理；外部与随应用提供的内置内容不提供删除入口。 */
+function canDeleteSource(source: SkillView) {
+  return source.origin.kind !== "external" && !isBuiltinSource(source);
+}
 
 /** 名称里的空格、点、斜杠和连字符不应让同一个 skill 搜不到。 */
 function compactSearchText(value: string) {
@@ -430,36 +441,54 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
                         <PackageMinus className="h-4 w-4" />
                       </Button>
                     )}
-                  {card.sources.length === 1 &&
-                    skill.origin.kind === "inPlace" && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        title="托管到 Hub"
-                        aria-label={`托管 ${skill.name} 到 Hub`}
-                        disabled={adopt.isPending}
-                        onClick={() => setAdoptTarget(skill)}
-                      >
-                        <PackagePlus className="h-4 w-4" />
-                      </Button>
-                    )}
-                  {card.sources.map(
-                    (source) =>
-                      source.origin.kind !== "external" &&
-                      !isBuiltinSource(source) && (
-                        <DeleteSkillButton
-                          key={source.id}
-                          scope={
-                            source.origin.kind === "hub"
-                              ? "hub"
-                              : `agent:${source.origin.ownerAgent}`
-                          }
-                          path={source.sourcePath}
-                          name={source.name}
-                        />
-                      ),
+                  {card.sources.some(
+                    (source) => source.origin.kind === "inPlace",
+                  ) && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      title={
+                        card.sources.length > 1
+                          ? "选择要托管的来源"
+                          : "托管到 Hub"
+                      }
+                      aria-label={`托管 ${skill.name} 到 Hub`}
+                      disabled={adopt.isPending}
+                      onClick={() =>
+                        card.sources.length > 1
+                          ? setSourceCard(card)
+                          : setAdoptTarget(skill)
+                      }
+                    >
+                      <PackagePlus className="h-4 w-4" />
+                    </Button>
                   )}
+                  {card.sources.length > 1
+                    ? card.sources.some(canDeleteSource) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          title="选择要删除的来源"
+                          aria-label={`删除 ${skill.name}`}
+                          onClick={() => setSourceCard(card)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )
+                    : canDeleteSource(skill) && (
+                        <DeleteSkillButton
+                          key={skill.id}
+                          scope={
+                            skill.origin.kind === "inPlace"
+                              ? `agent:${skill.origin.ownerAgent}`
+                              : "hub"
+                          }
+                          path={skill.sourcePath}
+                          name={skill.name}
+                        />
+                      )}
                 </RowActions>
               </ListItemRow>
             );
@@ -537,12 +566,19 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
             <DialogDescription>
               {selectedSourceCard?.unavailable
                 ? "查看失效入口与目标路径；不会自动删除链接。"
-                : "相同内容合并展示，各来源文件与分组引用保持独立。"}
+                : selectedSourceCard && selectedSourceCard.sources.length > 1
+                  ? "相同内容合并展示；托管或删除时只处理选中的来源，其他来源文件与分组引用保持不变。"
+                  : "各来源文件与分组引用保持独立。"}
             </DialogDescription>
           </DialogHeader>
           <div className="min-h-0 space-y-3 overflow-y-auto px-6 py-4">
             {selectedSourceCard?.sources.map((source) => (
-              <div key={source.id} className="rounded-xl border p-4">
+              <div
+                key={source.id}
+                role="group"
+                aria-label={`来源 ${source.sourcePath}`}
+                className="rounded-xl border p-4"
+              >
                 <div className="mb-2 flex items-center gap-2">
                   {sourceAgentIds(source).map((id) => (
                     <span
@@ -623,7 +659,7 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
                     {message}
                   </p>
                 ))}
-                <div className="mt-3 flex justify-end gap-2">
+                <div className="mt-3 flex flex-wrap justify-end gap-2">
                   {selectedSourceCard.unavailable ? (
                     sourceAgentIds(source).flatMap((id) =>
                       (source.agents[id]?.entryPaths ?? []).map((path) => (
@@ -680,6 +716,19 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
                         <PackagePlus className="h-4 w-4" />
                         托管此来源
                       </Button>
+                    )}
+                  {!selectedSourceCard.unavailable &&
+                    canDeleteSource(source) && (
+                      <DeleteSkillButton
+                        scope={
+                          source.origin.kind === "inPlace"
+                            ? `agent:${source.origin.ownerAgent}`
+                            : "hub"
+                        }
+                        path={source.sourcePath}
+                        name={source.name}
+                        label="删除此来源"
+                      />
                     )}
                 </div>
               </div>
