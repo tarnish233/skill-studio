@@ -33,6 +33,7 @@ impl Home {
     fn path(&self, path: &str) -> PathBuf {
         self.0.path().join(path)
     }
+    #[cfg(unix)]
     fn skill(&self, path: &str, name: &str) -> PathBuf {
         let path = self.path(path);
         std::fs::create_dir_all(&path).unwrap();
@@ -43,6 +44,7 @@ impl Home {
         .unwrap();
         path
     }
+    #[cfg(unix)]
     fn run(&self, args: &[&str]) -> (i32, String, String) {
         let mut out = vec![];
         let mut err = vec![];
@@ -57,6 +59,7 @@ impl Home {
             String::from_utf8(err).unwrap(),
         )
     }
+    #[cfg(unix)]
     fn ok(&self, args: &[&str]) -> String {
         let (code, out, err) = self.run(args);
         assert_eq!(code, 0, "{args:?}: {out}{err}");
@@ -65,6 +68,7 @@ impl Home {
     fn state(&self) -> AppState {
         AppState::bootstrap(Store::new(self.path(".skill-studio"))).unwrap()
     }
+    #[cfg(unix)]
     fn project(&self) {
         std::fs::create_dir_all(self.path("work")).unwrap();
         self.ok(&[
