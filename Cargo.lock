@@ -4340,7 +4340,7 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "skill-studio"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -4374,12 +4374,14 @@ dependencies = [
 
 [[package]]
 name = "skill-studio-cli"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
+ "base64 0.23.1",
  "chrono",
  "clap",
  "dunce",
  "fs2",
+ "percent-encoding",
  "serde",
  "serde_json",
  "serial_test",
@@ -4393,7 +4395,7 @@ dependencies = [
 
 [[package]]
 name = "skill-studio-core"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4417,13 +4419,14 @@ dependencies = [
 
 [[package]]
 name = "skill-studio-mcp"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "anyhow",
  "async-trait",
  "axum",
  "fs2",
  "jsonc-parser",
+ "process-wrap",
  "reqwest 0.13.5",
  "rmcp",
  "serde",
@@ -4440,7 +4443,7 @@ dependencies = [
 
 [[package]]
 name = "skill-studio-remote"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "fs2",
  "serde_json",
@@ -4452,7 +4455,7 @@ dependencies = [
 
 [[package]]
 name = "skill-studio-service"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "anyhow",
  "fs2",

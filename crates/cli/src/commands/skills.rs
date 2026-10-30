@@ -36,6 +36,11 @@ pub fn run(command: &SkillsCommand, ctx: &Ctx) -> Result<Report, CliError> {
             paths,
         } => install(ctx, source, skill.as_deref(), paths),
         SkillsCommand::Import { path } => import(ctx, path),
+        SkillsCommand::Adopt { skill } => super::skill_files::adopt(ctx, skill),
+        SkillsCommand::Release { skill } => super::skill_files::release(ctx, skill),
+        SkillsCommand::Delete { skill } => super::skill_files::delete(ctx, skill),
+        SkillsCommand::Prune => super::skill_files::prune(ctx),
+        SkillsCommand::Discover { path } => super::skill_files::discover(ctx, path),
     }
 }
 

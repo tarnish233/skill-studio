@@ -18,6 +18,9 @@ use crate::view::{self, Data};
 pub fn run(command: &ProjectsCommand, ctx: &Ctx) -> Result<Report, CliError> {
     match command {
         ProjectsCommand::List => list_projects(ctx),
+        ProjectsCommand::Skills(command) => super::project_skills::run(command, ctx),
+        ProjectsCommand::Set { project, link_mode } => set_mode(ctx, project, (*link_mode).into()),
+        ProjectsCommand::Gitignore { project } => gitignore(ctx, project),
         ProjectsCommand::Show { project } => show(ctx, project),
         ProjectsCommand::Create { dir, name } => create(ctx, dir, name.as_deref()),
         ProjectsCommand::Add {
@@ -226,6 +229,58 @@ fn show(ctx: &Ctx, input: &str) -> Result<Report, CliError> {
         "states": states.iter().map(|s| json!({"agent": s.agent, "pending": s.pending, "issues": s.issues})).collect::<Vec<_>>(),
     });
     Ok(Report::new(text, json))
+}
+
+fn set_mode(ctx: &Ctx, input: &str, mode: LinkMode) -> Result<Report, CliError> {
+    let state = ctx.writer()?;
+    retry(|| {
+        let data = view::load(&state)?;
+        let project = resolve::project(&data.config, input)?;
+        if project.link_mode == mode {
+            return Ok(Report::write(
+                "项目写入方式没有变化",
+                false,
+                false,
+                &[],
+                json!({}),
+            ));
+        }
+        let mut members = current(project);
+        members.link_mode = mode;
+        let report = checked(projects::save_project(
+            &state,
+            project.id.clone(),
+            members,
+            Some(current(project)),
+        )?)?;
+        Ok(Report::write(
+            format!(
+                "已将项目「{}」的写入方式改为{}，并应用到已启用的 Agent",
+                project.name,
+                link_mode(mode)
+            ),
+            true,
+            !view::project_agents(project).is_empty(),
+            &report.untouched,
+            json!({"project":project.id,"linkMode":mode}),
+        ))
+    })
+}
+fn gitignore(ctx: &Ctx, input: &str) -> Result<Report, CliError> {
+    let state = ctx.writer()?;
+    let project = resolve::project(&state.config(), input)?.clone();
+    let changed = projects::write_project_gitignore(&state, project.id.clone())?;
+    Ok(Report::write(
+        if changed {
+            "已写入 .gitignore，原有规则已保留"
+        } else {
+            ".gitignore 已包含这些规则，没有变化"
+        },
+        changed,
+        false,
+        &[],
+        json!({"project":project.id}),
+    ))
 }
 
 fn create(ctx: &Ctx, dir: &Path, name: Option<&str>) -> Result<Report, CliError> {

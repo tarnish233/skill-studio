@@ -11,6 +11,150 @@ fn run(home: &std::path::Path, args: &[&str]) -> std::process::Output {
 }
 
 #[test]
+#[cfg(unix)]
+fn stdio_server_stderr_cannot_leak_into_cli_json_or_logs() {
+    let home = tempfile::tempdir().unwrap();
+    let marker = "review-dummy-credential";
+    let added = run(
+        home.path(),
+        &[
+            "mcp",
+            "add",
+            "stderr-test",
+            "--env",
+            &format!("TOKEN={marker}"),
+            "--",
+            "sh",
+            "-c",
+            "printf '%s\\n' \"$TOKEN\" >&2; exit 1",
+        ],
+    );
+    assert!(added.status.success());
+    let failed = run(
+        home.path(),
+        &["--json", "mcp", "test", "stderr-test", "--timeout", "1"],
+    );
+    assert_eq!(failed.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert!(
+        !stderr.contains(marker),
+        "upstream stderr reached the CLI: {stderr}"
+    );
+    assert!(
+        serde_json::from_slice::<serde_json::Value>(&failed.stderr).is_ok(),
+        "stderr must be one JSON error: {stderr}"
+    );
+}
+
+#[cfg(unix)]
+fn process_is_alive(pid: u32) -> bool {
+    let output = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "stat="])
+        .output()
+        .unwrap();
+    let state = String::from_utf8_lossy(&output.stdout);
+    !state.trim().is_empty() && !state.contains('Z')
+}
+
+#[test]
+#[cfg(unix)]
+fn a_timed_out_stdio_probe_does_not_leave_descendants_running() {
+    let home = tempfile::tempdir().unwrap();
+    let pidfile = home.path().join("child.pid");
+    let script = "sleep 3 >/dev/null 2>&1 & printf '%s' \"$!\" > \"$PIDFILE\"; exec sleep 3";
+    let added = run(
+        home.path(),
+        &[
+            "mcp",
+            "add",
+            "timeout-test",
+            "--env",
+            &format!("PIDFILE={}", pidfile.display()),
+            "--",
+            "sh",
+            "-c",
+            script,
+        ],
+    );
+    assert!(added.status.success());
+    let failed = run(
+        home.path(),
+        &["mcp", "test", "timeout-test", "--timeout", "1"],
+    );
+    assert_eq!(failed.status.code(), Some(1));
+    let pid = std::fs::read_to_string(pidfile)
+        .unwrap()
+        .parse::<u32>()
+        .unwrap();
+    let alive_at_return = process_is_alive(pid);
+    // The fixture is bounded even on the old implementation: wait for its natural exit before
+    // reporting a failure, so a red regression run does not leave any process behind.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    while process_is_alive(pid) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    }
+    assert!(
+        !alive_at_return,
+        "stdio descendant remained alive after the CLI returned"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn interrupted_cli_probes_cancel_without_leaving_their_process_group_running() {
+    let home = tempfile::tempdir().unwrap();
+    let pidfile = home.path().join("interrupt-child.pid");
+    let script = "sleep 3 >/dev/null 2>&1 & printf '%s' \"$!\" > \"$PIDFILE\"; exec sleep 3";
+    let added = run(
+        home.path(),
+        &[
+            "mcp",
+            "add",
+            "interrupt-test",
+            "--env",
+            &format!("PIDFILE={}", pidfile.display()),
+            "--",
+            "sh",
+            "-c",
+            script,
+        ],
+    );
+    assert!(added.status.success());
+    let child = Command::new(env!("CARGO_BIN_EXE_skill-studio-cli"))
+        .args(["--json", "mcp", "test", "interrupt-test", "--timeout", "10"])
+        .env("SKILL_STUDIO_TEST_HOME", home.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !pidfile.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let pid = std::fs::read_to_string(&pidfile)
+        .unwrap()
+        .parse::<u32>()
+        .unwrap();
+    assert!(Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap()
+        .success());
+    let result = child.wait_with_output().unwrap();
+    let alive_at_return = process_is_alive(pid);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    while process_is_alive(pid) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    }
+    assert!(
+        !alive_at_return,
+        "SIGTERM left the stdio descendant running"
+    );
+    assert_eq!(result.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("已取消"));
+}
+
+#[test]
 fn the_bundled_command_line_program_runs_without_the_desktop() {
     let home = tempfile::tempdir().unwrap();
     let version = run(home.path(), &["--version"]);

@@ -21,7 +21,7 @@ use rmcp::{
         streamable_http_server::{
             session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
         },
-        StreamableHttpClientTransport, TokioChildProcess,
+        StreamableHttpClientTransport,
     },
     ErrorData, RoleClient, RoleServer, ServerHandler, ServiceExt,
 };
@@ -132,11 +132,11 @@ async fn connect_with_timeout(runtime: &Runtime, timeout: Duration) -> Result<Up
                 cwd,
             } => {
                 let mut cmd = tokio::process::Command::new(command);
-                cmd.args(args).envs(env).kill_on_drop(true);
+                cmd.args(args).envs(env);
                 if let Some(cwd) = cwd {
                     cmd.current_dir(cwd);
                 }
-                Ok(info.serve(TokioChildProcess::new(cmd)?).await?)
+                Ok(info.serve(crate::subprocess::transport(cmd)?).await?)
             }
             Connection::Http { url, headers } => {
                 let cfg = StreamableHttpClientTransportConfig::with_uri(url.clone());

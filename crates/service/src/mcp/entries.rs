@@ -10,7 +10,7 @@ use skill_studio_mcp::{
     native,
 };
 
-use super::{after_write, command, dir, ensure_writable};
+use super::{after_write, command, ensure_writable, with_write};
 use crate::state::AppState;
 
 /// 扫描到的一处原有配置：按 id 重新扫描定位，定义必须和提交时一样
@@ -51,11 +51,11 @@ pub fn save(
     placement: &Placement,
 ) -> Result<(), String> {
     ensure_writable(state)?;
-    let dir = dir(state);
-    let catalog = management::read(&dir).map_err(|e| e.to_string())?;
-    let targets = targets(state, &dir, placement, &entry, &catalog).map_err(|e| e.to_string())?;
-    management::save(&dir, entry, targets, command(executable), expected.as_ref())
-        .map_err(|e| e.to_string())?;
+    with_write(state, |dir, config| {
+        let catalog = management::read(dir)?;
+        let targets = targets(config, dir, placement, &entry, &catalog)?;
+        management::save(dir, entry, targets, command(executable), expected.as_ref())
+    })?;
     after_write(state);
     Ok(())
 }
@@ -64,7 +64,7 @@ pub fn save(
 /// 接入原样留下（见返回值的 `foreign`）
 pub fn remove(state: &AppState, id: &str, restore: bool) -> Result<Removal, String> {
     ensure_writable(state)?;
-    let removal = management::remove(&dir(state), id, restore).map_err(|e| e.to_string())?;
+    let removal = with_write(state, |dir, _| management::remove(dir, id, restore))?;
     after_write(state);
     Ok(removal)
 }
@@ -72,22 +72,22 @@ pub fn remove(state: &AppState, id: &str, restore: bool) -> Result<Removal, Stri
 /// 删除扫描到的原有配置（不在 Hub 里的），不动配置文件里的其他内容
 pub fn remove_sources(state: &AppState, sources: &[SourceRef]) -> Result<(), String> {
     ensure_writable(state)?;
-    let dir = dir(state);
     let placement = Placement {
         sources: sources.to_vec(),
         ..Default::default()
     };
-    let catalog = management::read(&dir).map_err(|e| e.to_string())?;
-    let targets =
-        targets(state, &dir, &placement, &Entry::default(), &catalog).map_err(|e| e.to_string())?;
-    management::remove_sources(&dir, targets).map_err(|e| e.to_string())?;
+    with_write(state, |dir, config| {
+        let catalog = management::read(dir)?;
+        let targets = targets(config, dir, &placement, &Entry::default(), &catalog)?;
+        management::remove_sources(dir, targets)
+    })?;
     after_write(state);
     Ok(())
 }
 
 /// 按 `placement` 算出要写的位置
 fn targets(
-    state: &AppState,
+    config: &skill_studio_core::models::config::AppConfig,
     dir: &Path,
     placement: &Placement,
     entry: &Entry,
@@ -111,7 +111,7 @@ fn targets(
         });
     }
     if !placement.sources.is_empty() {
-        let (files, _) = discovery::scan_files(&state.config());
+        let (files, _) = discovery::scan_files(config);
         let scanned = discovery::scan(&files, &[], dir);
         for source in &placement.sources {
             let found = scanned
@@ -135,7 +135,6 @@ fn targets(
             });
         }
     }
-    let config = state.config();
     let overrides = &config.settings.agent_dir_overrides;
     let scope = placement.scope.as_deref().unwrap_or("user");
     if !matches!(scope, "user" | "project" | "local") {

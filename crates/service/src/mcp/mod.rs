@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use skill_studio_core::models::config::Settings;
+use skill_studio_core::models::config::{AppConfig, Settings};
 use skill_studio_mcp::{
     config::{self, Server},
     discovery::{self, ScanResult},
@@ -53,6 +53,23 @@ fn ensure_writable(state: &AppState) -> Result<(), String> {
     ensure_enabled(state)
 }
 
+/// All MCP writes take configuration -> MCP locks in that order. The immutable
+/// configuration passed to the operation avoids re-entering AppState while its lock is held.
+fn with_write<T>(
+    state: &AppState,
+    operation: impl FnOnce(&Path, &AppConfig) -> anyhow::Result<T>,
+) -> Result<T, String> {
+    let directory = dir(state);
+    state
+        .with_exclusive(|_, config| {
+            if !config.settings.manage_mcp {
+                return Err(skill_studio_core::Error::invalid(DISABLED));
+            }
+            operation(&directory, config).map_err(skill_studio_core::Error::from)
+        })
+        .map_err(Into::into)
+}
+
 /// MCP 用 `claude`，Skill 与设置里用 `claude-code`
 pub fn app_agent(agent: &str) -> &str {
     if agent == "claude" {
@@ -62,13 +79,8 @@ pub fn app_agent(agent: &str) -> &str {
     }
 }
 
-/// 设置里退出管理的 Agent 不再写入；停用（撤回）不受限制
-fn ensure_managed(state: &AppState, agent: &str) -> Result<(), String> {
-    ensure_managed_in(&state.config().settings, agent)
-}
-
-/// 同 [`ensure_managed`]，用一份已经取好的设置判断。持有 MCP 锁的调用方必须走这个：
-/// 锁内再读配置会和 `AppState::set_mcp_management`（持配置写锁等 MCP 锁）互相等
+/// 设置里退出管理的 Agent 不再写入；停用（撤回）不受限制。
+/// 只检查调用方在配置锁内取得的快照，不在 MCP 锁内重新读取 AppState。
 fn ensure_managed_in(settings: &Settings, agent: &str) -> Result<(), String> {
     let app = app_agent(agent);
     if settings.disabled_agents.iter().any(|a| a == app) {
@@ -199,7 +211,7 @@ pub struct ImportRef {
 
 /// 按 [`ImportRef`] 从重新扫描的结果里取出原有配置
 fn scanned_imports(
-    state: &AppState,
+    config: &AppConfig,
     dir: &Path,
     requested: &[ImportRef],
 ) -> anyhow::Result<Vec<Entry>> {
@@ -207,7 +219,7 @@ fn scanned_imports(
     if requested.is_empty() {
         return Ok(vec![]);
     }
-    let (files, _) = discovery::scan_files(&state.config());
+    let (files, _) = discovery::scan_files(config);
     let scanned = discovery::scan(&files, &[], dir);
     let mut imports = vec![];
     for requested in requested {

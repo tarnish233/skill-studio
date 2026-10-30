@@ -34,9 +34,30 @@ pub fn list(state: &AppState) -> Result<Backups, String> {
     ensure_enabled(state)?;
     let dir = dir(state);
     Ok(Backups {
-        backups: backups::list(&dir).map_err(|e| e.to_string())?,
-        legacy: backups::legacy(&dir, &configs(state)).map_err(|e| e.to_string())?,
+        backups: if state.is_read_only() {
+            backups::list_read_only(&dir)
+        } else {
+            backups::list(&dir)
+        }
+        .map_err(|e| e.to_string())?,
+        legacy: if state.is_read_only() {
+            backups::legacy_read_only(&dir, &configs(state))
+        } else {
+            backups::legacy(&dir, &configs(state))
+        }
+        .map_err(|e| e.to_string())?,
     })
+}
+
+/// 文件写入持有配置锁后再拿 MCP 锁，复核最新的 CLI/MCP 开关和目录快照。
+fn write<T>(
+    state: &AppState,
+    operation: impl FnOnce(
+        &std::path::Path,
+        &skill_studio_core::models::config::AppConfig,
+    ) -> anyhow::Result<T>,
+) -> Result<T, String> {
+    super::with_write(state, operation)
 }
 
 /// 删除备份：`which` 为 unrestorable（已无法恢复的）、all（全部），否则按 `ids`
@@ -52,19 +73,26 @@ pub fn delete(
         Some(other) => return Err(format!("未知的删除范围：{other}")),
         None => Selection::Ids(ids.ok_or("缺少备份 ID")?),
     };
-    backups::delete(&dir(state), &selection).map_err(|e| e.to_string())
+    write(state, |dir, _| backups::delete(dir, &selection))
 }
 
 /// 删除旧版本留在配置文件旁边的备份文件
 pub fn delete_legacy(state: &AppState) -> Result<usize, String> {
     ensure_writable(state)?;
-    backups::delete_legacy(&dir(state), &configs(state)).map_err(|e| e.to_string())
+    write(state, |dir, config| {
+        let files = discovery::scan_files(config)
+            .0
+            .into_iter()
+            .map(|file| file.path)
+            .collect::<Vec<_>>();
+        backups::delete_legacy(dir, &files)
+    })
 }
 
 /// 恢复一次写入前的样子；之后又改过的配置不覆盖
 pub fn restore(state: &AppState, id: &str) -> Result<(), String> {
     ensure_writable(state)?;
-    management::restore_backup(&dir(state), id).map_err(|e| e.to_string())?;
+    write(state, |dir, _| management::restore_backup(dir, id))?;
     after_write(state);
     Ok(())
 }

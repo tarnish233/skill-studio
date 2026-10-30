@@ -27,8 +27,12 @@ use crate::redact::{redact_url, secret_name, HIDDEN};
 use crate::report::{agent_name, home};
 use crate::view::AgentState;
 
+mod runtime;
+
 pub fn run(command: &McpCommand, ctx: &Ctx) -> Result<crate::report::Report, CliError> {
     match command {
+        McpCommand::Search { query, cursor } => runtime::search(ctx, query, cursor.as_deref()),
+        McpCommand::Test { mcp, timeout } => runtime::test(ctx, mcp, *timeout),
         McpCommand::List { agent, query } => hub::list(ctx, agent.as_deref(), query.as_deref()),
         McpCommand::Show { mcp } => hub::show(ctx, mcp),
         McpCommand::Add {
@@ -53,6 +57,7 @@ pub fn run(command: &McpCommand, ctx: &Ctx) -> Result<crate::report::Report, Cli
         ),
         McpCommand::Set {
             mcp,
+            advanced,
             name,
             env,
             unset_env,
@@ -64,6 +69,7 @@ pub fn run(command: &McpCommand, ctx: &Ctx) -> Result<crate::report::Report, Cli
             ctx,
             mcp,
             hub::Change {
+                advanced,
                 name: name.as_deref(),
                 env,
                 unset_env,
@@ -399,6 +405,10 @@ fn redact_args(args: &[Value]) -> Vec<Value> {
 /// MCP 定义去掉密钥：环境变量与请求头只留名字，网址参数和像令牌的参数换成 <已隐藏>
 pub fn redact(definition: &Value) -> Value {
     let mut value = definition.clone();
+    if let Some(items) = value.as_array_mut() {
+        *items = items.iter().map(redact).collect();
+        return value;
+    }
     let Some(map) = value.as_object_mut() else {
         return value;
     };
@@ -416,6 +426,13 @@ pub fn redact(definition: &Value) -> Value {
     if let Some(Value::Array(args)) = map.get("args") {
         let args = redact_args(args);
         map.insert("args".into(), json!(args));
+    }
+    for (key, value) in map.iter_mut() {
+        if secret_name(key) {
+            *value = json!(HIDDEN);
+        } else if value.is_object() || value.is_array() {
+            *value = redact(value);
+        }
     }
     value
 }

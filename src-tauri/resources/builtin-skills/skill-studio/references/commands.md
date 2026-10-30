@@ -12,10 +12,12 @@ Skill Studio 命令行：查看和管理 Skill 与 MCP 的 Hub、分组与项目
 命令：
   status    总览：Agent、分组与各 Agent 的启用、项目、需要检查和有待应用的修改
   agents    列出 Agent：是否安装、是否在管理中、skill 目录
-  skills    Skill Hub 里的 skill：列出、查看、搜索、安装、导入
+  skills    Skill Hub：查看、搜索、安装、导入、托管与移出、文件删除
   groups    分组：一组 skill，可为每个 Agent 单独启用，多个分组可以叠加
   projects  项目：把 skill 和分组写进项目目录，按 Agent 启用
   mcp       MCP：Hub 里的 MCP、MCP 分组与项目里的 MCP
+  settings  设置：查看与修改管理策略、目录和备份保留份数
+  backups   备份：配置、删除的 skill、托管完整快照与 MCP 配置
   doctor    自检：配置能否读取、有没有未完成的写入、Agent 目录、需要检查的问题
 
 选项：
@@ -54,16 +56,21 @@ Agent 写 claude-code（或 claude）、codex、opencode、pi、grok。
 
 ## skill-studio skills
 
-Skill Hub 里的 skill：列出、查看、搜索、安装、导入
+Skill Hub：查看、搜索、安装、导入、托管与移出、文件删除
 
 用法：skill-studio skills [选项] <命令>
 
 命令：
-  list     列出 skill
-  show     查看一个 skill：来源、所在分组与项目、在各 Agent 上的状态
-  search   在 skills.sh 上搜索
-  install  从 GitHub 安装到 Skill Hub；只放进 Hub，不会启用到任何 Agent
-  import   把本地的 skill 目录导入 Skill Hub
+  list      列出 skill
+  show      查看一个 skill：来源、所在分组与项目、在各 Agent 上的状态
+  search    在 skills.sh 上搜索
+  install   从 GitHub 安装到 Skill Hub；只放进 Hub，不会启用到任何 Agent
+  adopt     托管已有原件到 Hub 并在 Agent 私有目录留入口（需要 --yes）；多来源须指定路径或 ID
+  release   移出 Hub 并还原原件（需要 --yes）
+  delete    删除具体来源的文件（需要 --yes）；非软链接保留备份，内置和外部来源不可删
+  prune     清理已不存在 skill 留下的分组与注册引用（需要 --yes）
+  discover  扫描本地目录，列出候选与错误，不导入
+  import    把本地的 skill 目录导入 Skill Hub
 
 选项：
       --json  输出 JSON，给脚本和 Agent 解析
@@ -129,6 +136,73 @@ Skill Hub 里的 skill：列出、查看、搜索、安装、导入
       --path <路径>   有多个版本时，选择仓库里的路径（可重复）
   -y, --yes         确认删除这类不可撤销的操作
   -h, --help        显示帮助
+
+## skill-studio skills adopt
+
+托管已有原件到 Hub 并在 Agent 私有目录留入口（需要 --yes）；多来源须指定路径或 ID
+
+用法：skill-studio skills adopt [选项] <skill名称、ID或目录>
+
+参数：
+  <skill名称、ID或目录>
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio skills release
+
+移出 Hub 并还原原件（需要 --yes）
+
+用法：skill-studio skills release [选项] <skill名称、ID或目录>
+
+参数：
+  <skill名称、ID或目录>
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio skills delete
+
+删除具体来源的文件（需要 --yes）；非软链接保留备份，内置和外部来源不可删
+
+用法：skill-studio skills delete [选项] <skill名称、ID或目录>
+
+参数：
+  <skill名称、ID或目录>
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio skills prune
+
+清理已不存在 skill 留下的分组与注册引用（需要 --yes）
+
+用法：skill-studio skills prune [选项]
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio skills discover
+
+扫描本地目录，列出候选与错误，不导入
+
+用法：skill-studio skills discover [选项] <目录>
+
+参数：
+  <目录>
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
 
 ## skill-studio skills import
 
@@ -318,15 +392,139 @@ Skill Hub 里的 skill：列出、查看、搜索、安装、导入
 用法：skill-studio projects [选项] <命令>
 
 命令：
-  list     列出项目
-  show     查看一个项目：成员、在哪些 Agent 上启用、需要检查的问题
-  create   添加项目
-  add      加入成员，并写入项目已启用的 Agent
-  remove   移出成员，并写入项目已启用的 Agent
-  enable   为 Agent 启用项目：把成员写进项目里这个 Agent 的 skill 目录
-  disable  为 Agent 停用项目：撤回写进项目目录的 skill
-  apply    应用修改：按最新成员重新写入项目已启用的 Agent
-  delete   移除项目（需要 --yes）：只删记录，项目目录里的文件不动
+  skills     项目已有 skill：列出、单项启停、收录与删除
+  set        修改项目写入方式，并应用到已启用的 Agent
+  gitignore  把 Skill Studio 的本机溯源/事务文件写进项目 .gitignore
+  list       列出项目
+  show       查看一个项目：成员、在哪些 Agent 上启用、需要检查的问题
+  create     添加项目
+  add        加入成员，并写入项目已启用的 Agent
+  remove     移出成员，并写入项目已启用的 Agent
+  enable     为 Agent 启用项目：把成员写进项目里这个 Agent 的 skill 目录
+  disable    为 Agent 停用项目：撤回写进项目目录的 skill
+  apply      应用修改：按最新成员重新写入项目已启用的 Agent
+  delete     移除项目（需要 --yes）：只删记录，项目目录里的文件不动
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio projects skills
+
+项目已有 skill：列出、单项启停、收录与删除
+
+用法：skill-studio projects skills [选项] <命令>
+
+命令：
+  list     列出项目里的原件、部署副本与停用记录
+  adopt    收录一个项目原件到 Hub，保留项目文件（与全局 skills adopt 的搬移不同）
+  enable   恢复项目里被 Studio 暂存停用的原件
+  disable  暂存停用一个项目原件，不影响其他成员或 Agent
+  delete   删除一个项目原件（需要 --yes）；非软链接保留可恢复备份
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio projects skills list
+
+列出项目里的原件、部署副本与停用记录
+
+用法：skill-studio projects skills list [选项] <项目>
+
+参数：
+  <项目>
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio projects skills adopt
+
+收录一个项目原件到 Hub，保留项目文件（与全局 skills adopt 的搬移不同）
+
+用法：skill-studio projects skills adopt [选项] <PROJECT> <skill名称或路径>
+
+参数：
+  <PROJECT>
+  <skill名称或路径>
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio projects skills enable
+
+恢复项目里被 Studio 暂存停用的原件
+
+用法：skill-studio projects skills enable [选项] <PROJECT> <skill名称或路径>
+
+参数：
+  <PROJECT>
+  <skill名称或路径>
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio projects skills disable
+
+暂存停用一个项目原件，不影响其他成员或 Agent
+
+用法：skill-studio projects skills disable [选项] <PROJECT> <skill名称或路径>
+
+参数：
+  <PROJECT>
+  <skill名称或路径>
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio projects skills delete
+
+删除一个项目原件（需要 --yes）；非软链接保留可恢复备份
+
+用法：skill-studio projects skills delete [选项] <PROJECT> <skill名称或路径>
+
+参数：
+  <PROJECT>
+  <skill名称或路径>
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio projects set
+
+修改项目写入方式，并应用到已启用的 Agent
+
+用法：skill-studio projects set [选项] --link-mode <LINK_MODE> <项目>
+
+参数：
+  <项目>
+
+选项：
+      --json                   输出 JSON，给脚本和 Agent 解析
+      --link-mode <LINK_MODE>  [possible values: auto, symlink, copy]
+  -y, --yes                    确认删除这类不可撤销的操作
+  -h, --help                   显示帮助
+
+## skill-studio projects gitignore
+
+把 Skill Studio 的本机溯源/事务文件写进项目 .gitignore
+
+用法：skill-studio projects gitignore [选项] <项目>
+
+参数：
+  <项目>
 
 选项：
       --json  输出 JSON，给脚本和 Agent 解析
@@ -470,6 +668,8 @@ MCP：Hub 里的 MCP、MCP 分组与项目里的 MCP
 用法：skill-studio mcp [选项] <命令>
 
 命令：
+  search    搜索官方 MCP Registry；只查询，不安装，支持分页
+  test      一次性测试握手与工具列表，不改配置；不代表 Agent 已重新加载或完成登录
   list      列出 MCP：Hub 里的，以及各 Agent 配置里原有的
   show      查看一个 MCP：连接方式、所在分组与项目、配置在哪些地方（密钥一律隐藏）
   add       添加到 MCP Hub；只放进 Hub，不会写进任何 Agent，之后在分组或项目里选用
@@ -482,6 +682,36 @@ MCP：Hub 里的 MCP、MCP 分组与项目里的 MCP
       --json  输出 JSON，给脚本和 Agent 解析
   -y, --yes   确认删除这类不可撤销的操作
   -h, --help  显示帮助
+
+## skill-studio mcp search
+
+搜索官方 MCP Registry；只查询，不安装，支持分页
+
+用法：skill-studio mcp search [选项] <搜索词>
+
+参数：
+  <搜索词>
+
+选项：
+      --cursor <CURSOR>
+      --json             输出 JSON，给脚本和 Agent 解析
+  -y, --yes              确认删除这类不可撤销的操作
+  -h, --help             显示帮助
+
+## skill-studio mcp test
+
+一次性测试握手与工具列表，不改配置；不代表 Agent 已重新加载或完成登录
+
+用法：skill-studio mcp test [选项] <MCP>
+
+参数：
+  <MCP>
+
+选项：
+      --json               输出 JSON，给脚本和 Agent 解析
+      --timeout <TIMEOUT>  [default: 30]
+  -y, --yes                确认删除这类不可撤销的操作
+  -h, --help               显示帮助
 
 ## skill-studio mcp list
 
@@ -547,15 +777,25 @@ MCP：Hub 里的 MCP、MCP 分组与项目里的 MCP
   [命令]...  换启动命令和参数，写在 -- 之后（本地启动的 MCP）
 
 选项：
-      --json               输出 JSON，给脚本和 Agent 解析
-      --name <新名称>         改名
-  -e, --env <KEY=值>        设置环境变量 KEY=值，可重复
-  -y, --yes                确认删除这类不可撤销的操作
-  -h, --help               显示帮助
-      --unset-env <KEY>    删掉环境变量，可重复
-  -H, --header <请求头>       设置请求头，写成 "名称: 值" 或 名称=值，可重复
-      --unset-header <名称>  删掉请求头，可重复
-      --url <网址>           换网址（远程 MCP）
+      --config <CONFIG>        替换完整连接定义（JSON、TOML 或安装命令）；密钥不写入输出/日志
+      --json                   输出 JSON，给脚本和 Agent 解析
+      --transport <TRANSPORT>  服务类型；切换时清除原类型的专属连接字段 [possible values: stdio, http, sse]
+  -y, --yes                    确认删除这类不可撤销的操作
+  -h, --help                   显示帮助
+      --mode <MODE>            修改直连/网关模式；网关需安装桌面应用，不自动启动或授权 [possible values: direct, gateway]
+      --cwd <CWD>              本地 MCP 工作目录
+      --clear-cwd              清除工作目录
+      --client-id <CLIENT_ID>  OAuth Client ID（网关 HTTP 服务）
+      --clear-client-id        清除 OAuth Client ID
+      --scopes <SCOPES>        OAuth scopes，逗号分隔
+      --clear-scopes           清除 OAuth scopes
+      --oauth <OAUTH>          明确要求 OAuth true/false；未设置时保留自动检查授权需求 [possible values: true, false]
+      --name <新名称>             改名
+  -e, --env <KEY=值>            设置环境变量 KEY=值，可重复
+      --unset-env <KEY>        删掉环境变量，可重复
+  -H, --header <请求头>           设置请求头，写成 "名称: 值" 或 名称=值，可重复
+      --unset-header <名称>      删掉请求头，可重复
+      --url <网址>               换网址（远程 MCP）
 
 
 例子：
@@ -865,6 +1105,138 @@ MCP 分组：一组 MCP，可为每个 Agent 单独启用，多个分组可以�
       --json  输出 JSON，给脚本和 Agent 解析
   -y, --yes   确认删除这类不可撤销的操作
   -h, --help  显示帮助
+
+## skill-studio settings
+
+设置：查看与修改管理策略、目录和备份保留份数
+
+用法：skill-studio settings [选项] <命令>
+
+命令：
+  show  查看完整设置（只读）
+  set   修改设置；管理开关与手动 skill 策略必须单独保存
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio settings show
+
+查看完整设置（只读）
+
+用法：skill-studio settings show [选项]
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio settings set
+
+修改设置；管理开关与手动 skill 策略必须单独保存
+
+用法：skill-studio settings set [选项]
+
+选项：
+      --json
+          输出 JSON，给脚本和 Agent 解析
+      --manage-agent <MANAGE_AGENT>
+          开启这个 Agent 的管理；每次只切换一个，不自动启用分组
+      --unmanage-agent <UNMANAGE_AGENT>
+          退出这个 Agent 的管理；每次只切换一个（需要 --yes）
+  -y, --yes
+          确认删除这类不可撤销的操作
+  -h, --help
+          显示帮助
+      --manage-mcp <MANAGE_MCP>
+          MCP 管理总开关 true/false（需要 --yes） [possible values: true, false]
+      --preserve-manual-skills <PRESERVE_MANUAL_SKILLS>
+          是否保留手动 skill true/false（需要 --yes） [possible values: true, false]
+      --cli-enabled <CLI_ENABLED>
+          CLI 与内置 skill 总开关（关闭需要 --yes；关闭后须在桌面重新开启） [possible values: true, false]
+      --default-link-mode <DEFAULT_LINK_MODE>
+          默认安装链接方式 [possible values: auto, symlink, copy]
+      --agent-dir <AGENT_DIR>
+          Agent 配置目录，写成 Agent=目录，可重复
+      --clear-agent-dir <CLEAR_AGENT_DIR>
+          取消这个 Agent 的目录覆盖，可重复
+      --hub-dir <HUB_DIR>
+          Hub 目录；不会迁移文件，非空 Hub 不能切换
+      --clear-hub-dir
+          恢复默认 Hub 目录
+      --backup-keep <BACKUP_KEEP>
+          配置备份保留份数 0–100；调小会清理备份，需要 --yes
+      --show-codex-builtin-mcp <SHOW_CODEX_BUILTIN_MCP>
+          显示 Codex App 内置 MCP true/false（仍只读） [possible values: true, false]
+      --theme <THEME>
+          桌面主题 [possible values: light, dark, system]
+      --language <LANGUAGE>
+          界面语言
+
+## skill-studio backups
+
+备份：配置、删除的 skill、托管完整快照与 MCP 配置
+
+用法：skill-studio backups [选项] <命令>
+
+命令：
+  list     列出备份；不指定种类时分别列出全部，MCP 管理关闭时跳过 MCP
+  restore  从备份恢复（需要 --yes）；hub 完整备份由移出 Hub 流程还原
+  delete   删除备份（需要 --yes）；仍在使用的 hub 完整备份不能删
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio backups list
+
+列出备份；不指定种类时分别列出全部，MCP 管理关闭时跳过 MCP
+
+用法：skill-studio backups list [选项] [种类]
+
+参数：
+  [种类]  [possible values: config, skill, hub, mcp]
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio backups restore
+
+从备份恢复（需要 --yes）；hub 完整备份由移出 Hub 流程还原
+
+用法：skill-studio backups restore [选项] <种类> <备份ID>
+
+参数：
+  <种类>    [possible values: config, skill, hub, mcp]
+  <备份ID>
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio backups delete
+
+删除备份（需要 --yes）；仍在使用的 hub 完整备份不能删
+
+用法：skill-studio backups delete [选项] <种类> [备份ID]...
+
+参数：
+  <种类>       [possible values: config, skill, hub, mcp]
+  [备份ID]...
+
+选项：
+      --all           删除这个种类的全部备份
+      --json          输出 JSON，给脚本和 Agent 解析
+      --unused        只删除未被引用的 hub 完整备份
+  -y, --yes           确认删除这类不可撤销的操作
+  -h, --help          显示帮助
+      --unrestorable  只删除已无法恢复的 MCP 备份
+      --legacy        清理旧版本写在 Agent 配置旁边的 MCP 备份
 
 ## skill-studio doctor
 

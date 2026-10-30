@@ -8,6 +8,12 @@ use clap::{ArgAction, CommandFactory, Parser, Subcommand};
 
 use crate::error::CliError;
 
+mod management;
+pub use management::{
+    BackupKind, BackupsCommand, LinkChoice, McpAdvanced, ProjectSkillsCommand, SettingsCommand,
+    SettingsSet,
+};
+
 const ABOUT: &str =
     "Skill Studio 命令行：查看和管理 Skill 与 MCP 的 Hub、分组与项目，按 Agent 启用。\n\
                      与桌面应用共用同一份配置，改动会实时出现在 Skill Studio 里。";
@@ -60,7 +66,7 @@ pub enum Command {
         #[arg(long)]
         probe: bool,
     },
-    /// Skill Hub 里的 skill：列出、查看、搜索、安装、导入
+    /// Skill Hub：查看、搜索、安装、导入、托管与移出、文件删除
     #[command(subcommand, arg_required_else_help = true)]
     Skills(SkillsCommand),
     /// 分组：一组 skill，可为每个 Agent 单独启用，多个分组可以叠加
@@ -72,6 +78,12 @@ pub enum Command {
     /// MCP：Hub 里的 MCP、MCP 分组与项目里的 MCP
     #[command(subcommand, arg_required_else_help = true)]
     Mcp(McpCommand),
+    /// 设置：查看与修改管理策略、目录和备份保留份数
+    #[command(subcommand, arg_required_else_help = true)]
+    Settings(SettingsCommand),
+    /// 备份：配置、删除的 skill、托管完整快照与 MCP 配置
+    #[command(subcommand, arg_required_else_help = true)]
+    Backups(BackupsCommand),
     /// 自检：配置能否读取、有没有未完成的写入、Agent 目录、需要检查的问题
     Doctor,
     /// 生成命令行参考；内置 skill 的 references/commands.md 由它产出
@@ -122,6 +134,28 @@ pub enum SkillsCommand {
         /// 有多个版本时，选择仓库里的路径（可重复）
         #[arg(long = "path", value_name = "路径")]
         paths: Vec<String>,
+    },
+    /// 托管已有原件到 Hub 并在 Agent 私有目录留入口（需要 --yes）；多来源须指定路径或 ID
+    Adopt {
+        #[arg(value_name = "skill名称、ID或目录")]
+        skill: String,
+    },
+    /// 移出 Hub 并还原原件（需要 --yes）
+    Release {
+        #[arg(value_name = "skill名称、ID或目录")]
+        skill: String,
+    },
+    /// 删除具体来源的文件（需要 --yes）；非软链接保留备份，内置和外部来源不可删
+    Delete {
+        #[arg(value_name = "skill名称、ID或目录")]
+        skill: String,
+    },
+    /// 清理已不存在 skill 留下的分组与注册引用（需要 --yes）
+    Prune,
+    /// 扫描本地目录，列出候选与错误，不导入
+    Discover {
+        #[arg(value_name = "目录")]
+        path: PathBuf,
     },
     /// 把本地的 skill 目录导入 Skill Hub
     Import {
@@ -231,6 +265,21 @@ pub enum GroupsCommand {
 
 #[derive(Subcommand, Debug)]
 pub enum ProjectsCommand {
+    /// 项目已有 skill：列出、单项启停、收录与删除
+    #[command(subcommand, arg_required_else_help = true)]
+    Skills(ProjectSkillsCommand),
+    /// 修改项目写入方式，并应用到已启用的 Agent
+    Set {
+        #[arg(value_name = "项目")]
+        project: String,
+        #[arg(long)]
+        link_mode: LinkChoice,
+    },
+    /// 把 Skill Studio 的本机溯源/事务文件写进项目 .gitignore
+    Gitignore {
+        #[arg(value_name = "项目")]
+        project: String,
+    },
     /// 列出项目
     List,
     /// 查看一个项目：成员、在哪些 Agent 上启用、需要检查的问题
@@ -332,6 +381,20 @@ pub struct Agents {
 
 #[derive(Subcommand, Debug)]
 pub enum McpCommand {
+    /// 搜索官方 MCP Registry；只查询，不安装，支持分页
+    Search {
+        #[arg(value_name = "搜索词")]
+        query: String,
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+    /// 一次性测试握手与工具列表，不改配置；不代表 Agent 已重新加载或完成登录
+    Test {
+        #[arg(value_name = "MCP")]
+        mcp: String,
+        #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=120))]
+        timeout: u64,
+    },
     /// 列出 MCP：Hub 里的，以及各 Agent 配置里原有的
     List {
         /// 只列这个 Agent 配置里有的
@@ -387,6 +450,8 @@ pub enum McpCommand {
         /// MCP 名称或 ID
         #[arg(value_name = "MCP")]
         mcp: String,
+        #[command(flatten)]
+        advanced: Box<McpAdvanced>,
         /// 改名
         #[arg(long, value_name = "新名称")]
         name: Option<String>,
@@ -579,19 +644,44 @@ pub enum McpProjectsCommand {
 
 impl Command {
     /// 会改动配置或文件的命令：以可写方式打开，并记入命令行日志
+    pub fn config_recovery(&self) -> bool {
+        matches!(
+            self,
+            Command::Backups(BackupsCommand::List {
+                kind: Some(BackupKind::Config)
+            }) | Command::Backups(BackupsCommand::Restore {
+                kind: BackupKind::Config,
+                ..
+            })
+        )
+    }
+
     pub fn writes(&self) -> bool {
         match self {
             Command::Status | Command::Agents { .. } | Command::Doctor | Command::Docs => false,
             Command::Skills(c) => matches!(
                 c,
-                SkillsCommand::Install { .. } | SkillsCommand::Import { .. }
+                SkillsCommand::Install { .. }
+                    | SkillsCommand::Import { .. }
+                    | SkillsCommand::Adopt { .. }
+                    | SkillsCommand::Release { .. }
+                    | SkillsCommand::Delete { .. }
+                    | SkillsCommand::Prune
             ),
             Command::Groups(c) => !matches!(c, GroupsCommand::List | GroupsCommand::Show { .. }),
-            Command::Projects(c) => {
-                !matches!(c, ProjectsCommand::List | ProjectsCommand::Show { .. })
-            }
+            Command::Projects(c) => !matches!(
+                c,
+                ProjectsCommand::List
+                    | ProjectsCommand::Show { .. }
+                    | ProjectsCommand::Skills(ProjectSkillsCommand::List { .. })
+            ),
+            Command::Settings(c) => matches!(c, SettingsCommand::Set(_)),
+            Command::Backups(c) => !matches!(c, BackupsCommand::List { .. }),
             Command::Mcp(c) => match c {
-                McpCommand::List { .. } | McpCommand::Show { .. } => false,
+                McpCommand::List { .. }
+                | McpCommand::Show { .. }
+                | McpCommand::Search { .. }
+                | McpCommand::Test { .. } => false,
                 McpCommand::Add { .. } | McpCommand::Set { .. } | McpCommand::Remove { .. } => true,
                 McpCommand::Groups(c) => {
                     !matches!(c, McpGroupsCommand::List | McpGroupsCommand::Show { .. })
@@ -647,7 +737,17 @@ pub enum Exit {
 pub fn reference() -> String {
     fn walk(command: &clap::Command, path: &str, out: &mut String) {
         out.push_str(&format!("## {path}\n\n"));
-        out.push_str(command.clone().render_help().to_string().trim_end());
+        // Clap pads argument rows with empty descriptions; don't carry that padding
+        // into the generated Markdown (or future command additions break diff checks).
+        let help = command.clone().render_help().to_string();
+        out.push_str(
+            &help
+                .trim_end()
+                .lines()
+                .map(str::trim_end)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
         out.push_str("\n\n");
         for sub in command.get_subcommands() {
             if !sub.is_hide_set() {

@@ -35,11 +35,25 @@ pub fn main() -> i32 {
     }
     let mut out = std::io::stdout().lock();
     let mut err = std::io::stderr().lock();
-    run(args, &mut out, &mut err)
+    run_with_mode(args, &mut out, &mut err, true)
 }
 
 /// 执行一条命令，返回退出码。结果写到 `out`，错误写到 `err`
 pub fn run<I, T>(args: I, out: &mut dyn Write, err: &mut dyn Write) -> i32
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString>,
+{
+    // Embedded callers must not have their process-global signal handlers changed.
+    run_with_mode(args, out, err, false)
+}
+
+fn run_with_mode<I, T>(
+    args: I,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    capture_signals: bool,
+) -> i32
 where
     I: IntoIterator<Item = T>,
     T: Into<OsString>,
@@ -58,7 +72,7 @@ where
         }
     };
     let store = Store::default();
-    if let Err(error) = ensure_cli_enabled(&store) {
+    if let Err(error) = ensure_cli_enabled(&store, cli.command.config_recovery()) {
         print_error(err, cli.json, &error);
         return error.exit_code();
     }
@@ -67,6 +81,7 @@ where
         store,
         wait: lock_wait(),
         ignored_env: isolate_agent_env(),
+        capture_signals,
     };
     // MCP 托管状态有自己的锁，等别的进程写完的上限与配置锁一致
     skill_studio_mcp::management::set_lock_wait(ctx.wait);
@@ -91,16 +106,22 @@ where
 }
 
 pub(crate) fn cli_disabled() -> CliError {
-    CliError::failed("命令行工具已在 Skill Studio 设置中关闭")
+    CliError::disabled_cli("命令行工具已在 Skill Studio 设置中关闭")
         .hint("前往 Skill Studio 设置 › 通用重新开启「启用 CLI 与内置 skill」")
 }
 
-fn ensure_cli_enabled(store: &Store) -> Result<(), CliError> {
+fn ensure_cli_enabled(store: &Store, config_recovery: bool) -> Result<(), CliError> {
     // This is a usage preference, not a security boundary. `serve` is used by
     // the desktop over SSH and intentionally bypasses the interactive CLI.
     // A read-only check never creates a config directory or recovery journal.
     let _lock = lock_existing(&store.lock_path(), lock_wait(), false)?;
-    let config = store.read()?;
+    let config = match store.read() {
+        Ok(config) => config,
+        // A corrupt config cannot reveal the preference. Permit only explicit backup listing/repair;
+        // never use a default config to grant other management operations.
+        Err(_) if config_recovery => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
     if config.is_none() && store.pending_transactions() {
         return Err(CliError::failed(
             "Skill Studio 有一项写入还没完成，请先打开 Skill Studio 完成恢复，再查看",
@@ -183,6 +204,11 @@ fn caller() -> &'static str {
 /// 修改命令记到 `~/.skill-studio/logs/cli.log`：谁、什么时候、做了什么、结果如何。
 /// 记不下来不影响命令本身
 fn audit(ctx: &commands::Ctx, args: &[OsString], result: &Result<report::Report, CliError>) {
+    // A command already in flight can be refused by the switch under the write lock.
+    // That refusal has the same no-audit contract as the initial CLI gate.
+    if matches!(result, Err(error) if error.is_cli_disabled()) {
+        return;
+    }
     let command = logged(args)
         .into_iter()
         .map(|a| {
@@ -264,19 +290,22 @@ fn logged(args: &[OsString]) -> Vec<String> {
                 pending = Some("--config");
                 out.push(arg);
             }
-            "--env" | "-e" | "--header" | "-H" | "--config" | "--url" => {
+            "--env" | "-e" | "--header" | "-H" | "--config" | "--url" | "--client-id"
+            | "--scopes" => {
                 pending = Some(match arg.as_str() {
                     "--env" | "-e" => "--env",
                     "--header" | "-H" => "--header",
-                    "--config" => "--config",
-                    _ => "--url",
+                    "--url" => "--url",
+                    _ => "--config",
                 });
                 out.push(arg);
             }
             _ => match arg.split_once('=') {
-                Some((flag @ ("--env" | "--header" | "--config" | "--url"), value)) => {
-                    out.push(format!("{flag}={}", hide(flag, value)))
-                }
+                Some((
+                    flag @ ("--env" | "--header" | "--config" | "--url" | "--client-id"
+                    | "--scopes"),
+                    value,
+                )) => out.push(format!("{flag}={}", hide(flag, value))),
                 Some((flag @ ("--unset-env" | "--unset-header"), _)) => {
                     out.push(format!("{flag}={HIDDEN}"))
                 }
@@ -309,6 +338,48 @@ fn attached(arg: &str) -> Option<(&'static str, String)> {
 #[cfg(test)]
 mod tests {
     use super::logged;
+
+    #[test]
+    fn client_metadata_is_hidden_for_separate_and_equals_option_values() {
+        for options in [
+            vec![
+                "--client-id",
+                "review-client-value",
+                "--scopes",
+                "review-scope-value",
+            ],
+            vec![
+                "--client-id=review-client-value",
+                "--scopes=review-scope-value",
+            ],
+        ] {
+            let args: Vec<std::ffi::OsString> = ["skill-studio", "mcp", "set", "demo"]
+                .into_iter()
+                .chain(options)
+                .map(Into::into)
+                .collect();
+            let logged = logged(&args).join(" ");
+            assert!(
+                !logged.contains("review-client-value") && !logged.contains("review-scope-value"),
+                "{logged}"
+            );
+        }
+    }
+    #[test]
+    fn a_command_rejected_by_the_cli_switch_never_creates_an_audit_log() {
+        let home = tempfile::tempdir().unwrap();
+        let ctx = crate::commands::Ctx {
+            yes: true,
+            store: skill_studio_core::services::store::Store::new(home.path().into()),
+            wait: std::time::Duration::ZERO,
+            ignored_env: vec![],
+            capture_signals: false,
+        };
+        let args =
+            ["skill-studio", "skills", "delete", "alpha", "--yes"].map(std::ffi::OsString::from);
+        super::audit(&ctx, &args, &Err(super::cli_disabled()));
+        assert!(!home.path().join("logs").exists());
+    }
 
     #[test]
     fn secrets_never_reach_the_command_log() {

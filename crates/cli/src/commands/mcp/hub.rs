@@ -203,7 +203,8 @@ pub fn show(ctx: &Ctx, input: &str) -> Result<Report, CliError> {
     }
     let json = json!({
         "id": row.entry.id, "name": row.entry.name, "hub": row.managed, "mode": row.entry.mode,
-        "definition": redact(definition),
+        "definition": redact(definition), "oauth": row.entry.oauth,
+        "clientId": row.entry.client_id, "scopes": row.entry.scopes,
         "groups": used_json(&usage.groups), "projects": used_json(&usage.projects),
         "sources": row.sources.iter().map(source_json).collect::<Vec<_>>(),
     });
@@ -401,6 +402,7 @@ pub fn add(ctx: &Ctx, input: Input) -> Result<Report, CliError> {
 }
 
 pub struct Change<'a> {
+    pub advanced: &'a crate::args::McpAdvanced,
     pub name: Option<&'a str>,
     pub env: &'a [String],
     pub unset_env: &'a [String],
@@ -453,11 +455,88 @@ pub fn set(ctx: &Ctx, input: &str, change: Change) -> Result<Report, CliError> {
             "「{}」是 Agent 配置里原有的 MCP，不在 Hub 里",
             row.entry.name
         ))
-        .hint("在 Skill Studio 的 MCP Hub 里把它纳入管理后再改，或直接改 Agent 的配置文件"));
+        .hint("在桌面应用的 MCP Hub 里把它纳入托管后再改；不要绕过配置锁手改 Agent 文件"));
     }
     let current = row.entry.clone();
     let mut entry = current.clone();
-    let local = entry.definition.get("url").is_none();
+    let advanced = change.advanced;
+    if let Some(config) = &advanced.config {
+        let parsed = service::parse(config)
+            .map_err(|_| CliError::usage("完整配置读不懂；请提供一个有效的 MCP 定义"))?;
+        let definitions = parsed
+            .as_array()
+            .ok_or_else(|| CliError::usage("完整配置必须包含一个 MCP 定义"))?;
+        if definitions.len() != 1 {
+            return Err(CliError::usage("一次只能替换一个 MCP 的完整定义"));
+        }
+        entry.definition = definitions[0]["definition"].clone();
+    }
+    if let Some(transport) = advanced.transport {
+        entry.definition["type"] = json!(transport.name());
+        let object = entry
+            .definition
+            .as_object_mut()
+            .ok_or_else(|| CliError::usage("连接定义必须为对象"))?;
+        let clear: &[&str] = if transport.name() == "stdio" {
+            &["url", "headers", "http_headers"]
+        } else {
+            &["command", "args", "env", "environment", "cwd"]
+        };
+        for key in clear {
+            object.remove(*key);
+        }
+    }
+    if let Some(mode) = advanced.mode {
+        entry.mode = mode.name().into();
+    }
+    let local = entry.definition.get("url").is_none()
+        && entry.definition["type"] != "http"
+        && entry.definition["type"] != "sse";
+    if !local && (advanced.cwd.is_some() || advanced.clear_cwd) {
+        return Err(CliError::usage("工作目录只用于本地进程 MCP"));
+    }
+    if let Some(cwd) = &advanced.cwd {
+        entry.definition["cwd"] = json!(crate::resolve::absolute(cwd));
+    }
+    if advanced.clear_cwd {
+        entry.definition.as_object_mut().unwrap().remove("cwd");
+    }
+    if advanced.client_id.is_some()
+        || advanced.clear_client_id
+        || advanced.scopes.is_some()
+        || advanced.clear_scopes
+        || advanced.oauth.is_some()
+    {
+        if entry.mode != "gateway" || local {
+            return Err(CliError::usage(
+                "OAuth 设置仅用于网关 HTTP MCP，Agent 直连的登录由 Agent 管理",
+            ));
+        }
+        if let Some(id) = &advanced.client_id {
+            entry.client_id = Some(id.clone());
+        }
+        if advanced.clear_client_id {
+            entry.client_id = None;
+        }
+        if let Some(scopes) = &advanced.scopes {
+            entry.scopes = scopes
+                .iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+        if advanced.clear_scopes {
+            entry.scopes.clear();
+        }
+        if let Some(oauth) = advanced.oauth {
+            entry.oauth = oauth;
+        }
+    }
+    if entry.mode == "direct" || local {
+        entry.oauth = false;
+        entry.client_id = None;
+        entry.scopes.clear();
+    }
     if let Some(name) = change.name.map(str::trim).filter(|n| !n.is_empty()) {
         if let Some(other) = mcp
             .catalog
@@ -512,7 +591,7 @@ pub fn set(ctx: &Ctx, input: &str, change: Change) -> Result<Report, CliError> {
             object.insert("args".into(), json!(args));
         }
     }
-    if entry.name == current.name && entry.definition == current.definition {
+    if serde_json::to_value(&entry).unwrap() == serde_json::to_value(&current).unwrap() {
         return Ok(written(
             format!("「{}」没有变化", current.name),
             false,
@@ -523,7 +602,10 @@ pub fn set(ctx: &Ctx, input: &str, change: Change) -> Result<Report, CliError> {
     }
     if entry.mode == "gateway" {
         if let Some(issue) = service::gateway_issue(&entry) {
-            return Err(CliError::failed(format!("改动后不能由网关转发：{issue}")));
+            return Err(CliError::failed(format!(
+                "改动后不能由网关转发：{}",
+                super::runtime::safe_error(&issue, &entry.definition)
+            )));
         }
     }
     // 它自己的接入（纳入管理时保留的原位置）照常保留，按新定义重写
@@ -537,7 +619,8 @@ pub fn set(ctx: &Ctx, input: &str, change: Change) -> Result<Report, CliError> {
         entry.clone(),
         Some(current.clone()),
         &placement,
-    )?;
+    )
+    .map_err(|error| super::runtime::safe_cli_error(&error, &entry.definition))?;
     notify_gateway(&service::dir(&state));
     // 用到它的分组和项目：部署里的还是旧定义，要应用修改才会写进 Agent
     let mcp = load(&state)?;

@@ -108,6 +108,11 @@ pub fn list(dir: &Path) -> Result<Vec<BackupView>> {
     views(&read_unlocked(dir)?)
 }
 
+/// 查看备份，不创建锁文件、不恢复事务（CLI 查看命令也可在只读沙箱运行）。
+pub fn list_read_only(dir: &Path) -> Result<Vec<BackupView>> {
+    views(&super::read_only(dir)?)
+}
+
 /// 删除选中的备份，返回删掉的记录数。「无法恢复」按删除这一刻的状态判断。
 pub fn delete(dir: &Path, selection: &Selection) -> Result<usize> {
     let _lock = lock(dir)?;
@@ -247,6 +252,11 @@ fn sweep(dir: &Path, catalog: &Catalog, errors: &mut Vec<String>) {
 pub fn legacy(dir: &Path, configs: &[PathBuf]) -> Result<Vec<LegacyBackup>> {
     let _lock = lock(dir)?;
     Ok(find_legacy(&read_unlocked(dir)?, configs))
+}
+
+/// 只读地找旧备份，不创建锁文件或恢复事务。
+pub fn legacy_read_only(dir: &Path, configs: &[PathBuf]) -> Result<Vec<LegacyBackup>> {
+    Ok(find_legacy(&super::read_only(dir)?, configs))
 }
 
 /// 删除 [`legacy`] 找到的文件，返回删掉的个数

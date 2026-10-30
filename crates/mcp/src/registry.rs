@@ -92,11 +92,16 @@ fn page(payload: &Value) -> Result<SearchPage> {
     })
 }
 
-pub async fn search(query: &str, cursor: Option<&str>) -> Result<SearchPage> {
+pub fn validate_query(query: &str) -> Result<&str> {
     let query = query.trim();
-    if query.len() < 2 || query.len() > 100 {
+    if !(2..=100).contains(&query.chars().count()) {
         bail!("请输入 2 到 100 个字符的服务名称");
     }
+    Ok(query)
+}
+
+pub async fn search(query: &str, cursor: Option<&str>) -> Result<SearchPage> {
+    let query = validate_query(query)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .user_agent(format!("SkillStudio/{}", env!("CARGO_PKG_VERSION")))
@@ -119,6 +124,14 @@ pub async fn search(query: &str, cursor: Option<&str>) -> Result<SearchPage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn query_limits_count_unicode_characters_instead_of_utf8_bytes() {
+        let query = "字".repeat(100);
+        assert_eq!(validate_query(&format!("  {query}  ")).unwrap(), query);
+        assert!(validate_query(&"字".repeat(101)).is_err());
+        assert!(validate_query("字").is_err());
+    }
 
     #[test]
     fn only_prefills_complete_safe_connections() {

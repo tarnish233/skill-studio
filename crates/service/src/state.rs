@@ -358,6 +358,14 @@ impl AppState {
                 self.external.store(true, Ordering::Release);
             }
         }
+        if self.mode == Mode::Recovery {
+            // Another process may have repaired the config while this recovery view was open.
+            // Recheck its active deployments and CLI preference under the same write lock.
+            if let Ok(Some(current)) = self.studio.store().read() {
+                guard.config = current;
+                guard.disk = disk(&self.studio.store().config_path());
+            }
+        }
         if self.interactive_cli && !guard.config.settings.cli_skill_enabled {
             return Err(Error::invalid("命令行工具已在 Skill Studio 设置中关闭"));
         }
@@ -600,6 +608,13 @@ impl AppState {
             }
             other => other,
         }
+    }
+
+    pub fn set_managed_agent(&self, agent: &str, enabled: bool) -> Result<()> {
+        self.transactional(|studio, config| {
+            skill_studio_core::models::agent::require_agent(agent)?;
+            studio.set_agent_management(config, agent, enabled)
+        })
     }
 
     pub fn set_managed_agents(&self, disabled: &[String]) -> Result<()> {

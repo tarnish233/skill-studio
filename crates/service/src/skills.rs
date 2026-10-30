@@ -88,11 +88,8 @@ pub fn list_hub_backups(state: &AppState) -> Result<Vec<HubBackup>, String> {
 /// 删除未被引用的完整备份。持有配置读锁：托管和移出 Hub 要拿写锁，
 /// 不会在判断「是否仍被引用」之后才写下新的引用。
 pub fn delete_hub_backups(state: &AppState, ids: Vec<String>) -> Result<usize, String> {
-    state.ensure_writable().map_err(String::from)?;
-    let config = state.config();
     state
-        .studio()
-        .delete_hub_backups(&config, &ids)
+        .with_exclusive(|studio, config| studio.delete_hub_backups(config, &ids))
         .map_err(Into::into)
 }
 

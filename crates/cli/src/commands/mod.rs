@@ -1,7 +1,11 @@
+mod backups;
 mod doctor;
 mod groups;
 mod mcp;
+mod project_skills;
 mod projects;
+mod settings;
+mod skill_files;
 mod skills;
 mod status;
 
@@ -20,9 +24,30 @@ pub struct Ctx {
     pub wait: Duration,
     /// 被忽略的 Agent 目录环境变量，交给 doctor 提示
     pub ignored_env: Vec<(String, String)>,
+    /// Only the standalone executable handles cancellation signals, not embedded API users.
+    pub capture_signals: bool,
 }
 
 impl Ctx {
+    pub fn confirm(&self, message: impl Into<String>) -> Result<(), CliError> {
+        if self.yes {
+            Ok(())
+        } else {
+            Err(CliError::confirm(message).hint("先核对影响的来源，再加 --yes 运行"))
+        }
+    }
+
+    /// Explicit config repair is the only command allowed to use recovery state.
+    pub fn config_backups(&self, write: bool) -> Result<AppState, CliError> {
+        match if write { self.writer() } else { self.reader() } {
+            Ok(state) => Ok(state),
+            Err(_error) if self.store.read().is_err() => Ok(AppState::recovery(self.store.clone())
+                .with_lock_wait(self.wait)
+                .for_interactive_cli()),
+            Err(error) => Err(error),
+        }
+    }
+
     /// 查看：只读打开，不恢复事务、不写任何文件（Agent 沙箱里只能读时也能用）
     pub fn reader(&self) -> Result<AppState, CliError> {
         let state = AppState::read_only_waiting(self.store.clone(), self.wait)?;
@@ -53,6 +78,8 @@ pub fn run(command: &Command, ctx: &Ctx) -> Result<Report, CliError> {
         Command::Projects(command) => projects::run(command, ctx),
         Command::Mcp(command) => mcp::run(command, ctx),
         Command::Doctor => doctor::run(ctx),
+        Command::Settings(command) => settings::run(command, ctx),
+        Command::Backups(command) => backups::run(command, ctx),
     }
 }
 

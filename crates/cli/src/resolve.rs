@@ -84,7 +84,7 @@ pub fn group<'a>(config: &'a AppConfig, input: &str) -> Result<&'a Group, CliErr
     })
 }
 
-fn looks_like_path(input: &str) -> bool {
+pub(crate) fn looks_like_path(input: &str) -> bool {
     input == "."
         || input == ".."
         || input.contains('/')
@@ -121,18 +121,50 @@ fn canonical(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Normalize parent-directory aliases without following the selected entry itself.
+/// A request to remove a symlink must never become a request to remove its target.
+pub(crate) fn entry_path(path: &Path) -> PathBuf {
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => dunce::canonicalize(parent)
+            .unwrap_or_else(|_| parent.to_path_buf())
+            .join(name),
+        _ => canonical(path),
+    }
+}
+
 pub fn skill<'a>(skills: &'a [SkillView], input: &str) -> Result<&'a SkillView, CliError> {
+    select_skill(skills, input, true)
+}
+
+/// File lifecycle operations must select one source, even when a same-named Hub copy exists.
+pub fn skill_source<'a>(skills: &'a [SkillView], input: &str) -> Result<&'a SkillView, CliError> {
+    select_skill(skills, input, false)
+}
+
+fn select_skill<'a>(
+    skills: &'a [SkillView],
+    input: &str,
+    prefer_hub: bool,
+) -> Result<&'a SkillView, CliError> {
     let input = input.trim();
     if let Some(view) = skills.iter().find(|v| v.skill.id == input) {
         return Ok(view);
     }
     if looks_like_path(input) {
-        let wanted = canonical(&absolute(input));
+        let normalize = if prefer_hub { canonical } else { entry_path };
+        let wanted = normalize(&absolute(input));
         if let Some(view) = skills
             .iter()
-            .find(|v| canonical(&v.skill.source_path) == wanted)
+            .find(|v| normalize(&v.skill.source_path) == wanted)
         {
             return Ok(view);
+        }
+        if !prefer_hub {
+            return Err(CliError::not_found(
+                "这不是列表中的 Skill 来源；不会跟随末级软链接操作其目标",
+            )
+            .candidates(skills.iter().map(|v| home(&v.skill.source_path)).collect())
+            .hint("请使用 skills list 列出的实际来源路径或 ID"));
         }
     }
     let named = |exact: bool| -> Vec<&'a SkillView> {
@@ -176,7 +208,7 @@ pub fn skill<'a>(skills: &'a [SkillView], input: &str) -> Result<&'a SkillView, 
                 .iter()
                 .filter(|v| matches!(v.skill.origin, SkillOrigin::Hub))
                 .collect();
-            if hub.len() == 1 {
+            if prefer_hub && hub.len() == 1 {
                 return Ok(hub[0]);
             }
             Err(

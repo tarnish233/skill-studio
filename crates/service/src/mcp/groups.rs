@@ -8,7 +8,8 @@ use skill_studio_mcp::{
 };
 
 use super::{
-    after_write, command, dir, ensure_managed_in, ensure_writable, scanned_imports, ImportRef,
+    after_write, command, ensure_managed_in, ensure_writable, scanned_imports, with_write,
+    ImportRef,
 };
 use crate::state::AppState;
 
@@ -21,9 +22,10 @@ pub fn save(
     expected: Option<&GroupSnapshot>,
 ) -> Result<(), String> {
     ensure_writable(state)?;
-    let dir = dir(state);
-    let imports = scanned_imports(state, &dir, imports).map_err(|e| e.to_string())?;
-    groups::save_group(&dir, group, imports, expected).map_err(|e| e.to_string())?;
+    with_write(state, |dir, config| {
+        let imports = scanned_imports(config, dir, imports)?;
+        groups::save_group(dir, group, imports, expected)
+    })?;
     after_write(state);
     Ok(())
 }
@@ -31,14 +33,14 @@ pub fn save(
 /// 删除分组记录，不删 Hub 里的 MCP；还有 Agent 在用时先停用
 pub fn remove(state: &AppState, id: &str) -> Result<(), String> {
     ensure_writable(state)?;
-    groups::remove_group(&dir(state), id).map_err(|e| e.to_string())?;
+    with_write(state, |dir, _| groups::remove_group(dir, id))?;
     after_write(state);
     Ok(())
 }
 
 pub fn reorder(state: &AppState, ids: &[String]) -> Result<(), String> {
     ensure_writable(state)?;
-    groups::reorder(&dir(state), ids).map_err(|e| e.to_string())?;
+    with_write(state, |dir, _| groups::reorder(dir, ids))?;
     after_write(state);
     Ok(())
 }
@@ -53,20 +55,20 @@ pub fn set(
     enabled: bool,
 ) -> Result<Vec<Untouched>, String> {
     ensure_writable(state)?;
-    // 设置先拷一份：MCP 锁内不再读配置（见 ensure_managed_in 的说明）
-    let settings = state.config().settings.clone();
-    if enabled {
-        ensure_managed_in(&settings, agent)?;
-    }
-    let untouched = groups::set_active(
-        &dir(state),
-        agent,
-        group_id,
-        enabled,
-        || mcp_agents::write_path(agent, &settings.agent_dir_overrides, None),
-        command(executable),
-    )
-    .map_err(|e| e.to_string())?;
+    let untouched = with_write(state, |dir, config| {
+        let settings = &config.settings;
+        if enabled {
+            ensure_managed_in(settings, agent).map_err(anyhow::Error::msg)?;
+        }
+        groups::set_active(
+            dir,
+            agent,
+            group_id,
+            enabled,
+            || mcp_agents::write_path(agent, &settings.agent_dir_overrides, None),
+            command(executable),
+        )
+    })?;
     after_write(state);
     Ok(untouched)
 }
@@ -78,19 +80,18 @@ pub fn reapply(
     agent: &str,
 ) -> Result<Vec<Untouched>, String> {
     ensure_writable(state)?;
-    // 设置先拷一份：MCP 锁内不再读配置（见 ensure_managed_in 的说明）
-    let settings = state.config().settings.clone();
-    let untouched = groups::reapply(
-        &dir(state),
-        agent,
-        // 没有启用的分组时什么也不写，也就不用管它是否在管理中
-        || {
-            ensure_managed_in(&settings, agent).map_err(anyhow::Error::msg)?;
-            mcp_agents::write_path(agent, &settings.agent_dir_overrides, None)
-        },
-        command(executable),
-    )
-    .map_err(|e| e.to_string())?;
+    let untouched = with_write(state, |dir, config| {
+        let settings = &config.settings;
+        groups::reapply(
+            dir,
+            agent,
+            || {
+                ensure_managed_in(settings, agent).map_err(anyhow::Error::msg)?;
+                mcp_agents::write_path(agent, &settings.agent_dir_overrides, None)
+            },
+            command(executable),
+        )
+    })?;
     after_write(state);
     Ok(untouched)
 }

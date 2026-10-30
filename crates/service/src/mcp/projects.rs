@@ -12,7 +12,8 @@ use skill_studio_mcp::management::{
 };
 
 use super::{
-    after_write, command, dir, ensure_managed, ensure_writable, scanned_imports, ImportRef,
+    after_write, command, ensure_managed_in, ensure_writable, scanned_imports, with_write,
+    ImportRef,
 };
 use crate::state::AppState;
 
@@ -29,14 +30,16 @@ pub struct Members {
     pub claude_local: bool,
 }
 
-fn root(state: &AppState, project_id: &str) -> Result<PathBuf, String> {
-    state
-        .config()
+fn root(
+    config: &skill_studio_core::models::config::AppConfig,
+    project_id: &str,
+) -> anyhow::Result<PathBuf> {
+    config
         .projects
         .iter()
         .find(|p| p.id == project_id)
         .map(|p| p.root.clone())
-        .ok_or_else(|| "项目不存在".to_string())
+        .ok_or_else(|| anyhow::anyhow!("项目不存在"))
 }
 
 /// 保存成员和设置，并立即重新写入已启用的 Agent；成员清空时已启用的 Agent 一并撤回。
@@ -50,25 +53,23 @@ pub fn save(
     expected: Option<&Snapshot>,
 ) -> Result<Vec<Untouched>, String> {
     ensure_writable(state)?;
-    let dir = dir(state);
-    let root = root(state, project_id)?;
-    let overrides = state.config().settings.agent_dir_overrides.clone();
-    let imports = scanned_imports(state, &dir, imports).map_err(|e| e.to_string())?;
-    let untouched = projects::save(
-        &dir,
-        project_id,
-        projects::Input {
-            root,
-            entry_ids: members.entry_ids,
-            group_ids: members.group_ids,
-            claude_local: members.claude_local,
-        },
-        imports,
-        &overrides,
-        command(executable),
-        expected,
-    )
-    .map_err(|e| e.to_string())?;
+    let untouched = with_write(state, |dir, config| {
+        let imports = scanned_imports(config, dir, imports)?;
+        projects::save(
+            dir,
+            project_id,
+            projects::Input {
+                root: root(config, project_id)?,
+                entry_ids: members.entry_ids,
+                group_ids: members.group_ids,
+                claude_local: members.claude_local,
+            },
+            imports,
+            &config.settings.agent_dir_overrides,
+            command(executable),
+            expected,
+        )
+    })?;
     after_write(state);
     Ok(untouched)
 }
@@ -82,20 +83,20 @@ pub fn activate(
     enabled: bool,
 ) -> Result<Vec<Untouched>, String> {
     ensure_writable(state)?;
-    root(state, project_id)?;
-    if enabled {
-        ensure_managed(state, agent)?;
-    }
-    let overrides = state.config().settings.agent_dir_overrides.clone();
-    let untouched = projects::activate(
-        &dir(state),
-        project_id,
-        agent,
-        enabled,
-        &overrides,
-        command(executable),
-    )
-    .map_err(|e| e.to_string())?;
+    let untouched = with_write(state, |dir, config| {
+        root(config, project_id)?;
+        if enabled {
+            ensure_managed_in(&config.settings, agent).map_err(anyhow::Error::msg)?;
+        }
+        projects::activate(
+            dir,
+            project_id,
+            agent,
+            enabled,
+            &config.settings.agent_dir_overrides,
+            command(executable),
+        )
+    })?;
     after_write(state);
     Ok(untouched)
 }
@@ -103,7 +104,7 @@ pub fn activate(
 /// 删除项目的 MCP 记录（成员选择）；还有 Agent 在用时先停用
 pub fn remove(state: &AppState, project_id: &str) -> Result<(), String> {
     ensure_writable(state)?;
-    projects::remove(&dir(state), project_id).map_err(|e| e.to_string())?;
+    with_write(state, |dir, _| projects::remove(dir, project_id))?;
     after_write(state);
     Ok(())
 }
@@ -112,9 +113,9 @@ pub fn remove(state: &AppState, project_id: &str) -> Result<(), String> {
 /// 过的原样留下
 pub fn remove_bindings(state: &AppState, project_id: &str) -> Result<Removal, String> {
     ensure_writable(state)?;
-    let root = root(state, project_id)?;
-    let removal =
-        management::remove_project_bindings(&dir(state), &root).map_err(|e| e.to_string())?;
+    let removal = with_write(state, |dir, config| {
+        management::remove_project_bindings(dir, &root(config, project_id)?)
+    })?;
     after_write(state);
     Ok(removal)
 }

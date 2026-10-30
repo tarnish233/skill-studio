@@ -39,10 +39,18 @@ pub fn get_settings(state: &AppState) -> Result<Settings, String> {
 ///
 /// 用一个结构体而不是一长串可选参数：Tauri 命令参数超过 7 个 clippy 会报警，
 /// 而且前端只想改一项时也不必凑齐全部参数。
-#[derive(Debug, Default, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct ManagedAgentPatch {
+    pub agent: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SettingsPatch {
     pub disabled_agents: Option<Vec<String>>,
+    /// 单个 Agent 的管理开关，在锁内按最新状态增量处理。
+    pub managed_agent: Option<ManagedAgentPatch>,
     pub show_codex_builtin_mcp: Option<bool>,
     pub manage_mcp: Option<bool>,
     pub cli_skill_enabled: Option<bool>,
@@ -51,10 +59,21 @@ pub struct SettingsPatch {
     pub language: Option<String>,
     pub theme: Option<String>,
     pub agent_dir_overrides: Option<HashMap<String, PathBuf>>,
+    /// 按 Agent 增量修改，None 取消覆盖；在配置锁内合并，避免覆盖其他 Agent 的修改。
+    pub agent_dir_updates: Option<HashMap<String, Option<PathBuf>>>,
     pub hub_dir: Option<PathBuf>,
     /// 显式把 Hub 目录恢复为默认值（`hub_dir: None` 只是"不改动"）
     pub clear_hub_dir: Option<bool>,
     pub backup_keep: Option<usize>,
+}
+
+/// CLI backup-retention update with the value observed during confirmation preflight.
+pub fn update_settings_with_backup_snapshot(
+    state: &AppState,
+    patch: SettingsPatch,
+    expected_backup_keep: Option<usize>,
+) -> Result<Settings, String> {
+    update_settings_with_builtin_snapshot(state, patch, None, "", expected_backup_keep)
 }
 
 pub fn update_settings(state: &AppState, patch: SettingsPatch) -> Result<Settings, String> {
@@ -69,71 +88,63 @@ pub fn update_settings_with_builtin(
     source: Option<&std::path::Path>,
     version: &str,
 ) -> Result<Settings, String> {
-    if let Some(ids) = &patch.disabled_agents {
-        if patch.default_link_mode.is_some()
-            || patch.preserve_manual_skills.is_some()
-            || patch.language.is_some()
-            || patch.theme.is_some()
-            || patch.agent_dir_overrides.is_some()
-            || patch.hub_dir.is_some()
-            || patch.clear_hub_dir.is_some()
-            || patch.backup_keep.is_some()
-            || patch.show_codex_builtin_mcp.is_some()
-            || patch.manage_mcp.is_some()
-            || patch.cli_skill_enabled.is_some()
-        {
-            return Err("应用管理开关需单独保存".into());
+    update_settings_with_builtin_snapshot(state, patch, source, version, None)
+}
+
+fn update_settings_with_builtin_snapshot(
+    state: &AppState,
+    patch: SettingsPatch,
+    source: Option<&std::path::Path>,
+    version: &str,
+    expected_backup_keep: Option<usize>,
+) -> Result<Settings, String> {
+    let fields = serde_json::to_value(&patch).map_err(|e| e.to_string())?;
+    let count = fields
+        .as_object()
+        .unwrap()
+        .values()
+        .filter(|v| !v.is_null())
+        .count();
+    for (present, label) in [
+        (
+            patch.disabled_agents.is_some() || patch.managed_agent.is_some(),
+            "应用管理开关",
+        ),
+        (
+            patch.preserve_manual_skills.is_some(),
+            "保留手动 skill 策略",
+        ),
+        (patch.manage_mcp.is_some(), "MCP 管理开关"),
+        (patch.cli_skill_enabled.is_some(), "CLI 与内置 skill 开关"),
+    ] {
+        if present && count > 1 {
+            return Err(format!("{label}需单独保存"));
         }
+    }
+    if patch.agent_dir_overrides.is_some() && patch.agent_dir_updates.is_some() {
+        return Err("目录全量覆盖与逐项修改不能同时保存".into());
+    }
+    if let Some(agent) = &patch.managed_agent {
+        state
+            .set_managed_agent(&agent.agent, agent.enabled)
+            .map_err(String::from)?;
+        return get_settings(state);
+    }
+    if let Some(ids) = &patch.disabled_agents {
         state.set_managed_agents(ids).map_err(String::from)?;
         return get_settings(state);
     }
     if let Some(preserve) = patch.preserve_manual_skills {
-        if patch.default_link_mode.is_some()
-            || patch.language.is_some()
-            || patch.theme.is_some()
-            || patch.agent_dir_overrides.is_some()
-            || patch.hub_dir.is_some()
-            || patch.clear_hub_dir.is_some()
-            || patch.backup_keep.is_some()
-            || patch.show_codex_builtin_mcp.is_some()
-            || patch.manage_mcp.is_some()
-            || patch.cli_skill_enabled.is_some()
-        {
-            return Err("保留手动 skill 策略需单独保存".into());
-        }
         state
             .set_manual_skill_policy(preserve)
             .map_err(String::from)?;
         return get_settings(state);
     }
     if let Some(enabled) = patch.manage_mcp {
-        if patch.show_codex_builtin_mcp.is_some()
-            || patch.default_link_mode.is_some()
-            || patch.language.is_some()
-            || patch.theme.is_some()
-            || patch.agent_dir_overrides.is_some()
-            || patch.hub_dir.is_some()
-            || patch.clear_hub_dir.is_some()
-            || patch.backup_keep.is_some()
-            || patch.cli_skill_enabled.is_some()
-        {
-            return Err("MCP 管理开关需单独保存".into());
-        }
         state.set_mcp_management(enabled).map_err(String::from)?;
         return get_settings(state);
     }
     if let Some(enabled) = patch.cli_skill_enabled {
-        if patch.show_codex_builtin_mcp.is_some()
-            || patch.default_link_mode.is_some()
-            || patch.language.is_some()
-            || patch.theme.is_some()
-            || patch.agent_dir_overrides.is_some()
-            || patch.hub_dir.is_some()
-            || patch.clear_hub_dir.is_some()
-            || patch.backup_keep.is_some()
-        {
-            return Err("CLI 与内置 skill 开关需单独保存".into());
-        }
         state
             .set_cli_skill_enabled(enabled, source, version)
             .map_err(String::from)?;
@@ -141,28 +152,52 @@ pub fn update_settings_with_builtin(
     }
     state
         .mutate(|studio, config| {
+            if patch.backup_keep.is_some()
+                && expected_backup_keep
+                    .is_some_and(|observed| observed != config.settings.backup_keep)
+            {
+                return Err(skill_studio_core::Error::Other(
+                    crate::state::CHANGED_ELSEWHERE.into(),
+                ));
+            }
             let paths_changed = patch.hub_dir.is_some()
                 || patch.clear_hub_dir.unwrap_or(false)
-                || patch.agent_dir_overrides.is_some();
+                || patch.agent_dir_overrides.is_some()
+                || patch.agent_dir_updates.is_some();
             let old_hub = studio.store().hub_dir(config);
             let s = &mut config.settings;
             if let Some(show) = patch.show_codex_builtin_mcp {
                 s.show_codex_builtin_mcp = show;
             }
-            if let Some(m) = patch.default_link_mode {
-                s.default_link_mode = m;
+            if let Some(mode) = patch.default_link_mode {
+                s.default_link_mode = mode;
             }
-            if let Some(l) = patch.language {
-                s.language = l;
+            if let Some(language) = patch.language {
+                s.language = language;
             }
-            if let Some(t) = patch.theme {
-                s.theme = t;
+            if let Some(theme) = patch.theme {
+                s.theme = theme;
             }
-            if let Some(o) = patch.agent_dir_overrides {
-                // 空路径视为取消该 agent 的覆盖
-                let next: HashMap<_, _> = o
+            let mut overrides = patch.agent_dir_overrides;
+            if let Some(updates) = patch.agent_dir_updates {
+                let mut next = s.agent_dir_overrides.clone();
+                for (agent, path) in updates {
+                    skill_studio_core::models::agent::require_agent(&agent)?;
+                    match path {
+                        Some(path) => {
+                            next.insert(agent, path);
+                        }
+                        None => {
+                            next.remove(&agent);
+                        }
+                    }
+                }
+                overrides = Some(next);
+            }
+            if let Some(overrides) = overrides {
+                let next: HashMap<_, _> = overrides
                     .into_iter()
-                    .filter(|(_, v)| !v.as_os_str().is_empty())
+                    .filter(|(_, path)| !path.as_os_str().is_empty())
                     .collect();
                 if config
                     .active_groups
@@ -178,12 +213,11 @@ pub fn update_settings_with_builtin(
             }
             if patch.clear_hub_dir.unwrap_or(false) {
                 s.hub_dir = None;
-            } else if let Some(h) = patch.hub_dir {
-                s.hub_dir = Some(h);
+            } else if let Some(hub) = patch.hub_dir {
+                s.hub_dir = Some(hub);
             }
-            if let Some(k) = patch.backup_keep {
-                // 上限兜一下，避免用户填个天文数字把磁盘写满
-                s.backup_keep = k.min(100);
+            if let Some(keep) = patch.backup_keep {
+                s.backup_keep = keep.min(100);
             }
             if paths_changed {
                 validate_hub_change(&old_hub, &studio.store().hub_dir(config), config)?;
@@ -214,11 +248,8 @@ pub fn restore_backup(state: &AppState, path: String) -> Result<AppConfig, Strin
 
 /// 删除一份配置备份。恢复模式下不删：那时备份是唯一的退路。
 pub fn delete_backup(state: &AppState, path: String) -> Result<(), String> {
-    state.ensure_writable().map_err(String::from)?;
     state
-        .studio()
-        .store()
-        .delete_backup(std::path::Path::new(&path))
+        .with_exclusive(|studio, _| studio.store().delete_backup(std::path::Path::new(&path)))
         .map_err(Into::into)
 }
 

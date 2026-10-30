@@ -38,10 +38,10 @@ pub fn delete_project_local_skill(
     project_id: String,
     path: PathBuf,
 ) -> Result<(), String> {
-    state.ensure_writable().map_err(String::from)?;
     state
-        .studio()
-        .delete_project_local_skill(&state.config(), &project_id, &path)
+        .with_exclusive(|studio, config| {
+            studio.delete_project_local_skill(config, &project_id, &path)
+        })
         .map_err(Into::into)
 }
 
@@ -316,14 +316,14 @@ pub fn unapply_project(
 /// 项目级默认 Copy，会在每个 skill 目录里留下 `.skill-studio-copy.json`。
 /// 那是本机溯源信息，不该进版本库。
 pub fn write_project_gitignore(state: &AppState, project_id: String) -> Result<bool, String> {
-    state.ensure_writable().map_err(String::from)?;
-    let root = state
-        .config()
-        .project(&project_id)
-        .map(|p| p.root.clone())
-        .ok_or_else(|| format!("项目 {project_id} 不存在"))?;
-
-    write_skill_gitignore(&root).map_err(|e| e.to_string())
+    state
+        .with_exclusive(|_, config| {
+            let project = config
+                .project(&project_id)
+                .ok_or_else(|| Error::NotFound(format!("项目 {project_id}")))?;
+            write_skill_gitignore(&project.root)
+        })
+        .map_err(Into::into)
 }
 
 fn write_skill_gitignore(root: &std::path::Path) -> skill_studio_core::Result<bool> {
@@ -487,32 +487,29 @@ pub fn list_skill_backups(
         .map_err(Into::into)
 }
 pub fn delete_skill_file(state: &AppState, scope: String, path: PathBuf) -> Result<(), String> {
-    state.ensure_writable().map_err(String::from)?;
     state
-        .studio()
-        .stash_skill(&state.config(), &scope, &path, false)
+        .with_exclusive(|studio, config| studio.stash_skill(config, &scope, &path, false))
         .map_err(Into::into)
 }
 pub fn restore_skill_file(state: &AppState, id: String) -> Result<(), String> {
-    state.ensure_writable().map_err(String::from)?;
     state
-        .studio()
-        .restore_skill_backup(&state.config(), &id)
+        .with_exclusive(|studio, config| studio.restore_skill_backup(config, &id))
         .map_err(Into::into)
 }
 pub fn purge_skill_file(state: &AppState, id: String) -> Result<(), String> {
-    state.ensure_writable().map_err(String::from)?;
-    let record = state
-        .studio()
-        .skill_backups()
-        .map_err(String::from)?
-        .into_iter()
-        .find(|r| r.id == id)
-        .ok_or("备份不存在")?;
-    if record.disabled {
-        return Err("不能直接清除停用文件，请先删除 skill".into());
-    }
-    state.studio().purge_skill_backup(&id).map_err(Into::into)
+    state
+        .with_exclusive(|studio, _| {
+            let record = studio
+                .skill_backups()?
+                .into_iter()
+                .find(|r| r.id == id)
+                .ok_or_else(|| Error::NotFound("备份不存在".into()))?;
+            if record.disabled {
+                return Err(Error::invalid("不能直接清除停用文件，请先删除 skill"));
+            }
+            studio.purge_skill_backup(&id)
+        })
+        .map_err(Into::into)
 }
 pub fn set_project_skill_enabled(
     state: &AppState,
@@ -520,26 +517,21 @@ pub fn set_project_skill_enabled(
     path: PathBuf,
     enabled: bool,
 ) -> Result<(), String> {
-    state.ensure_writable().map_err(String::from)?;
-    let scope = format!("project:{project_id}");
-    if enabled {
-        let r = state
-            .studio()
-            .skill_backups()
-            .map_err(String::from)?
-            .into_iter()
-            .find(|r| r.disabled && r.scope == scope && r.original_path == path)
-            .ok_or("停用记录不存在")?;
-        state
-            .studio()
-            .restore_skill_backup(&state.config(), &r.id)
-            .map_err(Into::into)
-    } else {
-        state
-            .studio()
-            .stash_skill(&state.config(), &scope, &path, true)
-            .map_err(Into::into)
-    }
+    state
+        .with_exclusive(|studio, config| {
+            let scope = format!("project:{project_id}");
+            if enabled {
+                let r = studio
+                    .skill_backups()?
+                    .into_iter()
+                    .find(|r| r.disabled && r.scope == scope && r.original_path == path)
+                    .ok_or_else(|| Error::NotFound("停用记录不存在".into()))?;
+                studio.restore_skill_backup(config, &r.id)
+            } else {
+                studio.stash_skill(config, &scope, &path, true)
+            }
+        })
+        .map_err(Into::into)
 }
 
 pub fn collect_project_skill(

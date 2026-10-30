@@ -7,6 +7,8 @@ use skill_studio_service::state::CHANGED_ELSEWHERE;
 pub enum Kind {
     /// 操作本身失败（1）
     Failed,
+    /// CLI 偏好关闭：退出码仍是 1，但不能记录审计日志
+    CliDisabled,
     /// 命令或参数写错了（2）
     Usage,
     /// 找不到，或名称对应多个（3）
@@ -42,6 +44,12 @@ impl CliError {
     pub fn failed(message: impl Into<String>) -> Self {
         Self::new(Kind::Failed, message)
     }
+    pub(crate) fn disabled_cli(message: impl Into<String>) -> Self {
+        Self::new(Kind::CliDisabled, message)
+    }
+    pub(crate) fn is_cli_disabled(&self) -> bool {
+        self.kind == Kind::CliDisabled
+    }
 
     pub fn usage(message: impl Into<String>) -> Self {
         Self::new(Kind::Usage, message)
@@ -73,7 +81,7 @@ impl CliError {
 
     pub fn exit_code(&self) -> i32 {
         match self.kind {
-            Kind::Failed => 1,
+            Kind::Failed | Kind::CliDisabled => 1,
             Kind::Usage => 2,
             Kind::NotFound => 3,
             Kind::Busy => 4,
@@ -84,7 +92,7 @@ impl CliError {
     /// JSON 里的 `error.code`
     pub fn code(&self) -> &'static str {
         match self.kind {
-            Kind::Failed => "failed",
+            Kind::Failed | Kind::CliDisabled => "failed",
             Kind::Usage => "usage",
             Kind::NotFound => "not_found",
             Kind::Busy => "busy",
