@@ -174,9 +174,10 @@ fn cli_isolates_and_reports_both_harness_home_variables() {
         .iter()
         .find(|a| a["id"] == "deepseek-harness")
         .unwrap();
+    let roots: Vec<PathBuf> = serde_json::from_value(harness["skillDirs"].clone()).unwrap();
     assert_eq!(
-        harness["skillDirs"],
-        json!([home.path(".dsh/skills"), home.path(".agents/skills")]),
+        roots,
+        vec![home.path(".dsh/skills"), home.path(".agents/skills")],
         "interactive CLI must isolate both Harness roots"
     );
     let details: Vec<&str> = doctor["checks"]
