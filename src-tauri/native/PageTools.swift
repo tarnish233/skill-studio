@@ -129,11 +129,12 @@ private struct NativeAddButton: View {
     @ViewBuilder var body: some View {
         #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
+            // Accent focus halo draws a green ring around this circular control.
             button
-                .buttonStyle(.glassProminent)
+                .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
-                .tint(.blue)
                 .controlSize(.regular)
+                .focusEffectDisabled()
         } else {
             legacyButton
         }
@@ -168,6 +169,7 @@ private final class ToolController: NSObject {
         search = NSHostingView(rootView: AnyView(NativeSearchControl(model: model).ignoresSafeArea()))
         add = NSHostingView(rootView: AnyView(NativeAddButton(model: model).ignoresSafeArea()))
         super.init()
+        add.focusRingType = .none
         for view in [search as NSView, add as NSView] {
             view.isHidden = true
             view.autoresizingMask = [.minXMargin, .minYMargin]
