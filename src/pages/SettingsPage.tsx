@@ -67,8 +67,7 @@ type SettingsTab =
   "general" | "directories" | "maintenance" | "servers" | "about";
 
 /**
- * 设置页。布局对齐 cc-switch：上方一条分段标签栏、下方内容区，**没有侧栏**
- * —— 侧栏由 App 在这个视图里收起，靠顶栏的返回键退出。
+ * 设置页。上方一条分段标签栏、下方内容区。离开设置走侧栏，顶栏不放返回键。
  */
 export function SettingsPage() {
   const { data: settings } = useSettings();

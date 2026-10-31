@@ -21,11 +21,10 @@ import {
 import { InstallSkillsPage } from "@/pages/InstallSkillsPage";
 import { useNativePageTools } from "@/hooks/useNativePageTools";
 import { PageToolsContext } from "@/components/common/PageTools";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, useReducedMotion } from "framer-motion";
 import {
-  ArrowLeft,
   FolderGit2,
   Layers,
   LayoutGrid,
@@ -95,16 +94,14 @@ function AppContent() {
     `${target.id}:${activeResource}:${view}`,
   );
 
-  // 设置页的返回目标 = 进入设置之前停留的那个视图
-  const backTarget = useRef<ViewId>("hub");
   useEffect(() => {
     if (settings?.manageMcp !== false) return;
     setResource("skills");
     if (view === "install") setView("hub");
   }, [settings?.manageMcp, view]);
   useEffect(() => {
+    // 设置和安装是临时页，不记成下次启动的落脚点。
     if (view !== "settings" && view !== "install") {
-      backTarget.current = view;
       localStorage.setItem(VIEW_STORAGE_KEY, view);
     }
   }, [view]);
@@ -264,19 +261,6 @@ function AppContent() {
                 className="grid h-[var(--app-toolbar-height)] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 px-6"
               >
                 <div className="flex min-w-0 items-center gap-2">
-                  {isSubpage && (
-                    <Button
-                      data-tauri-no-drag
-                      variant="ghost"
-                      size="icon"
-                      className="h-9 w-9 shrink-0 rounded-xl text-muted-foreground"
-                      title="返回"
-                      aria-label="返回"
-                      onClick={() => navigate(backTarget.current)}
-                    >
-                      <ArrowLeft className="h-5 w-5" />
-                    </Button>
-                  )}
                   {mcpEnabled && (
                     <div
                       role="group"

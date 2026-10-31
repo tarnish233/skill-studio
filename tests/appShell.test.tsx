@@ -75,7 +75,7 @@ describe("窗口壳与侧栏导航", () => {
 });
 
 describe("设置视图", () => {
-  it("进入设置后侧栏保持可见，返回键回到进入前停留的视图", async () => {
+  it("进入设置后侧栏保持可见，从侧栏回到进入前的视图", async () => {
     withAgents();
     const user = userEvent.setup();
     renderWithProviders(<App />);
@@ -91,8 +91,14 @@ describe("设置视图", () => {
     await user.click(screen.getByRole("button", { name: "设置" }));
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("设置");
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "返回" })).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "返回" }));
+    await user.click(
+      within(screen.getByRole("navigation", { name: "主导航" })).getByRole(
+        "button",
+        { name: "分组" },
+      ),
+    );
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("分组");
     expect(
       screen.getByRole("navigation", { name: "主导航" }),
@@ -144,7 +150,12 @@ it("navigation replaces the body immediately without waiting for exit animation"
   ).toBeGreaterThan(0);
   fireEvent.click(screen.getByRole("button", { name: "设置" }));
   expect(await screen.findByText("默认链接方式")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "返回" }));
+  fireEvent.click(
+    within(screen.getByRole("navigation", { name: "主导航" })).getByRole(
+      "button",
+      { name: "项目" },
+    ),
+  );
   expect(
     screen.getAllByRole("button", { name: "添加项目" }).length,
   ).toBeGreaterThan(0);
@@ -173,7 +184,7 @@ it("header search and create actions follow the current page without leaking sea
   expect(
     screen.getByRole("heading", { name: "安装 skill" }),
   ).toBeInTheDocument();
-  fireEvent.click(header.getByRole("button", { name: "返回" }));
+  expect(header.queryByRole("button", { name: "返回" })).toBeNull();
   fireEvent.click(
     within(screen.getByRole("navigation")).getByRole("button", {
       name: "分组",
@@ -300,7 +311,7 @@ it("uses the header resource toggle to scope the Groups and project pages", asyn
   expect(await screen.findByText("项目已有 MCP")).toBeInTheDocument();
   expect(screen.queryByText("项目已有 skill")).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "设置" }));
-  await user.click(screen.getByRole("button", { name: "返回" }));
+  await user.click(nav.getByRole("button", { name: "项目" }));
   // MCP 项目页与 Skill 侧、分组页一致：左侧是「按 Agent 查看」，右侧是接入统计
   expect(
     await screen.findByRole("group", { name: "按 Agent 查看" }),
@@ -375,7 +386,12 @@ it("returns from MCP settings to Skill Hub when management is turned off", async
     await screen.findByRole("switch", { name: "启用 MCP 管理" }),
   );
   await waitFor(() => expect(settings.manageMcp).toBe(false));
-  await user.click(screen.getByRole("button", { name: "返回" }));
+  await user.click(
+    within(screen.getByRole("navigation", { name: "主导航" })).getByRole(
+      "button",
+      { name: "Hub" },
+    ),
+  );
   const hub = await within(
     screen.getByRole("navigation", { name: "主导航" }),
   ).findByRole("button", { name: "Hub" });
