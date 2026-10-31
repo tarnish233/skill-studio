@@ -113,7 +113,7 @@ fn malformed_ambiguous_and_unsafe_archives_are_rejected() {
 fn catalog_discovery_and_variant_scopes_share_registry_whitelist() {
     use skill_studio_core::{models::agent::AGENTS, services::variants};
     let roots = variants::repository_roots();
-    assert_eq!(AGENTS.len(), 5);
+    assert_eq!(AGENTS.len(), 6);
     for agent in AGENTS {
         assert!(roots.values().any(|key| *key == agent.id));
     }

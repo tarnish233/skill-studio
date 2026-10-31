@@ -488,6 +488,8 @@ function GroupsContent() {
                         " Grok 默认还会读取 ~/.claude/skills（Claude Code 兼容），给 Claude Code 部署的 skill 也会被它加载：管理期间 Studio 在 ~/.grok/config.toml 写入 [compat.claude] skills = false 关闭这项读取，退出管理时恢复。"}
                       {viewAgent.id === "opencode" &&
                         " OpenCode 还会读取 ~/.claude/skills（Claude Code 兼容），给 Claude Code 部署的 skill 也会被它加载；这项读取只能通过环境变量 OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=1 关闭。"}
+                      {viewAgent.id === "deepseek-harness" &&
+                        " DeepSeek Harness 本版只管理标准目录包 <名称>/SKILL.md；平铺 .md 文件和 Profile 中自定义的 Skill Provider 不在接入范围内。默认写入 ~/.dsh/skills 和项目 .dsh/skills，支持 DSH_HOME、DSH_AGENTS_HOME 与 Studio 目录覆盖；共享目录只扫描、不部署。项目需选择最近的 Git 仓库根，name/description 和调用标志须符合 Harness 格式。MCP 暂不接入。"}
                     </HelpPopover>
                   )}
                 </>

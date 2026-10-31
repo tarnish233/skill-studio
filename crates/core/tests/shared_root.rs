@@ -4,9 +4,10 @@
 #[path = "support.rs"]
 mod support;
 use serial_test::serial;
+use skill_studio_core::models::agent::in_shared_root;
 use skill_studio_core::models::skill::LinkStatus;
 use skill_studio_core::services::studio::SkillView;
-use std::fs;
+use std::{collections::HashMap, fs};
 use support::Env;
 
 /// Agent 启动时会加载它（来源、链接或副本都算）
@@ -141,4 +142,17 @@ fn leaving_codex_cleans_a_legacy_shared_link_back_and_restores_into_its_own_root
     assert_eq!(views.len(), 1, "新入口要算作同一个 skill，不能变成两条");
     assert!(!loads(&views[0], "pi"));
     assert!(loads(&views[0], "codex"));
+}
+
+#[test]
+#[serial]
+fn shared_root_ownership_is_direct_child_only() {
+    let env = Env::new();
+    std::env::set_var("DSH_AGENTS_HOME", env.path().join("custom-shared"));
+    let root = env.path().join("custom-shared/skills");
+    let overrides = HashMap::new();
+    assert!(!in_shared_root(&root, &overrides));
+    assert!(in_shared_root(&root.join("demo"), &overrides));
+    assert!(!in_shared_root(&root.join("nested/demo"), &overrides));
+    std::env::remove_var("DSH_AGENTS_HOME");
 }

@@ -51,6 +51,8 @@ pub struct AgentDescriptor {
     pub xdg_config_subdir: Option<&'static str>,
     /// Agent 支持的附加配置目录环境变量（只扫描，不替代默认写入目录）。
     pub extra_config_env: Option<&'static str>,
+    /// 可独立覆盖共享 Agent 配置根的环境变量；其 skills 子目录只参与扫描。
+    pub shared_home_env: Option<&'static str>,
     /// 全局 skill 根，可以多个。**第一个是写入目标**，其余只参与扫描。
     pub global_roots: &'static [SkillRoot],
     /// 项目级 skill 目录（相对项目根）。`None` = 该 agent 不支持项目级。
@@ -73,10 +75,10 @@ impl AgentDescriptor {
     /// GUI 进程未必继承得到，此时需要用户手工指明。
     pub fn resolved_config_dir(&self, overrides: &HashMap<String, PathBuf>) -> PathBuf {
         if let Some(custom) = overrides.get(self.id) {
-            return custom.clone();
+            return self.normalize_home(custom.clone());
         }
-        if let Some(env) = self.home_env.and_then(paths::env_dir_override) {
-            return env;
+        if let Some(env) = self.home_env.and_then(|name| self.env_dir_override(name)) {
+            return self.normalize_home(env);
         }
         if let Some(subdir) = self.xdg_config_subdir {
             if let Some(base) = paths::env_dir_override("XDG_CONFIG_HOME") {
@@ -100,6 +102,15 @@ impl AgentDescriptor {
                         .strip_prefix(self.config_dir)
                         .expect("agent skill root must be below its config directory");
                     config_dir.join(tail)
+                } else if let Some(shared) = root
+                    .shared
+                    .then(|| {
+                        self.shared_home_env
+                            .and_then(|name| self.env_dir_override(name))
+                    })
+                    .flatten()
+                {
+                    normalize_harness_home(shared).join("skills")
                 } else {
                     home.join(root.home_relative)
                 }
@@ -134,6 +145,17 @@ impl AgentDescriptor {
             .collect()
     }
 
+    /// 该 agent 读取配置目录的三个环境变量名（主目录、追加目录、共享根）。
+    ///
+    /// 只用于「有哪些变量会被忽略」的枚举：CLI 交互模式和远程沙箱各按自己的策略
+    /// 清空/上报，解析优先级仍由 [`Self::resolved_config_dir`] 与
+    /// [`Self::resolved_global_roots`] 决定。
+    pub fn env_var_names(&self) -> impl Iterator<Item = &'static str> {
+        [self.home_env, self.extra_config_env, self.shared_home_env]
+            .into_iter()
+            .flatten()
+    }
+
     /// 该项目下这个 agent 的 skill 目录。不支持项目级时返回 `None`。
     pub fn project_root(&self, project_root: &std::path::Path) -> Option<PathBuf> {
         self.project_skill_dir.map(|rel| project_root.join(rel))
@@ -150,11 +172,86 @@ impl AgentDescriptor {
         }
     }
 
+    fn normalize_home(&self, path: PathBuf) -> PathBuf {
+        if self.home_env == Some("DSH_HOME") {
+            normalize_harness_home(path)
+        } else {
+            path
+        }
+    }
+
+    /// Harness only treats whitespace-only env values as unset; valid paths keep
+    /// their significant leading/trailing spaces. Other Agents keep the generic
+    /// trimming override semantics.
+    fn env_dir_override(&self, var: &str) -> Option<PathBuf> {
+        if self.id == "deepseek-harness" {
+            harness_env_dir_override(var)
+        } else {
+            paths::env_dir_override(var)
+        }
+    }
+
+    /// Harness only discovers the nearest Git ancestor, not an arbitrary monorepo subdirectory.
+    /// Validate writes without changing the selected project or redirecting them outside it.
+    pub fn validate_project_root(&self, root: &std::path::Path) -> crate::error::Result<()> {
+        if self.id != "deepseek-harness" {
+            return Ok(());
+        }
+        let root = root
+            .canonicalize()
+            .map_err(|e| crate::error::Error::io(root, e))?;
+        for ancestor in root.ancestors() {
+            let marker = ancestor.join(".git");
+            match std::fs::metadata(&marker) {
+                Ok(_) => {
+                    if ancestor != root {
+                        return Err(crate::error::Error::invalid(format!(
+                            "DeepSeek Harness 的项目根是 {}；请选择该仓库根目录，不能把 Skill 写入其子项目目录",
+                            ancestor.display()
+                        )));
+                    }
+                    break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(crate::error::Error::io(&marker, e)),
+            }
+        }
+        Ok(())
+    }
+
     pub fn is_reserved_dir(&self, name: &str) -> bool {
         self.reserved_dir_names
             .iter()
             .any(|r| r.eq_ignore_ascii_case(name))
     }
+}
+
+/// Harness home-paths expands current-user tilde forms and resolves relative overrides.
+fn harness_env_dir_override(var: &str) -> Option<PathBuf> {
+    std::env::var_os(var).and_then(|value| {
+        let path = PathBuf::from(value);
+        (!path.to_string_lossy().trim().is_empty()).then_some(path)
+    })
+}
+
+fn normalize_harness_home(path: PathBuf) -> PathBuf {
+    let expanded = match path.to_str() {
+        Some("~") => paths::home_dir(),
+        Some(text) => text
+            .strip_prefix("~/")
+            .or_else(|| text.strip_prefix("~\\"))
+            .map(|tail| paths::home_dir().join(tail))
+            .unwrap_or(path),
+        None => path,
+    };
+    let absolute = if expanded.is_absolute() {
+        expanded
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| paths::home_dir())
+            .join(expanded)
+    };
+    paths::normalize_path_lexically(&absolute)
 }
 
 /// Claude Code。
@@ -172,6 +269,7 @@ const CLAUDE_CODE: AgentDescriptor = AgentDescriptor {
     config_dir: ".claude",
     xdg_config_subdir: None,
     extra_config_env: None,
+    shared_home_env: None,
     global_roots: &[SkillRoot {
         home_relative: ".claude/skills",
         follows_config_dir: true,
@@ -199,6 +297,7 @@ const CODEX: AgentDescriptor = AgentDescriptor {
     config_dir: ".codex",
     xdg_config_subdir: None,
     extra_config_env: None,
+    shared_home_env: None,
     global_roots: &[
         SkillRoot {
             home_relative: ".codex/skills",
@@ -227,6 +326,7 @@ const OPENCODE: AgentDescriptor = AgentDescriptor {
     config_dir: ".config/opencode",
     xdg_config_subdir: Some("opencode"),
     extra_config_env: Some("OPENCODE_CONFIG_DIR"),
+    shared_home_env: None,
     global_roots: &[
         SkillRoot {
             home_relative: ".config/opencode/skills",
@@ -249,6 +349,7 @@ const PI: AgentDescriptor = AgentDescriptor {
     config_dir: ".pi/agent",
     xdg_config_subdir: None,
     extra_config_env: None,
+    shared_home_env: None,
     global_roots: &[
         SkillRoot {
             home_relative: ".pi/agent/skills",
@@ -271,6 +372,7 @@ const GROK: AgentDescriptor = AgentDescriptor {
     config_dir: ".grok",
     xdg_config_subdir: None,
     extra_config_env: None,
+    shared_home_env: None,
     global_roots: &[
         SkillRoot {
             home_relative: ".grok/skills",
@@ -285,6 +387,31 @@ const GROK: AgentDescriptor = AgentDescriptor {
     reserved_dir_names: &[],
 };
 
+/// deepseek-ai/deepseek-harness, dsh-v0.2.1-rc.5:
+/// packages/skill/skill-filesystem and packages/util/home-paths.
+/// This adapter manages directory bundles only, not flat .md files or custom Profile providers.
+const DEEPSEEK_HARNESS: AgentDescriptor = AgentDescriptor {
+    id: "deepseek-harness",
+    display_name: "DeepSeek Harness",
+    home_env: Some("DSH_HOME"),
+    config_dir: ".dsh",
+    xdg_config_subdir: None,
+    extra_config_env: None,
+    shared_home_env: Some("DSH_AGENTS_HOME"),
+    global_roots: &[
+        SkillRoot {
+            home_relative: ".dsh/skills",
+            follows_config_dir: true,
+            shared: false,
+        },
+        SHARED_SKILLS,
+    ],
+    project_skill_dir: Some(".dsh/skills"),
+    cli_command: "dsh",
+    toggle: ToggleMechanism::None,
+    reserved_dir_names: &[".system"],
+};
+
 const SHARED_SKILLS: SkillRoot = SkillRoot {
     home_relative: ".agents/skills",
     follows_config_dir: false,
@@ -292,7 +419,7 @@ const SHARED_SKILLS: SkillRoot = SkillRoot {
 };
 
 /// 支持 Skill 管理的 Agent；MCP 使用自己的能力白名单。
-pub static AGENTS: &[AgentDescriptor] = &[CLAUDE_CODE, CODEX, OPENCODE, PI, GROK];
+pub static AGENTS: &[AgentDescriptor] = &[CLAUDE_CODE, CODEX, OPENCODE, PI, GROK, DEEPSEEK_HARNESS];
 
 /// `path` 是否直接位于共享根下（`~/.agents/skills/<name>`）。
 ///
@@ -355,8 +482,8 @@ mod tests {
 
     #[test]
     fn registry_has_all_skill_agents() {
-        assert_eq!(AGENTS.len(), 5);
-        for id in ["opencode", "pi", "grok"] {
+        assert_eq!(AGENTS.len(), 6);
+        for id in ["opencode", "pi", "grok", "deepseek-harness"] {
             assert!(find_agent(id).is_some());
         }
         assert!(find_agent("claude-code").is_some());
@@ -452,6 +579,39 @@ mod tests {
 
         std::env::remove_var("CLAUDE_CONFIG_DIR");
         std::env::remove_var(paths::TEST_HOME_ENV);
+    }
+
+    #[test]
+    fn env_var_names_enumerate_each_descriptor_override() {
+        // 独立硬编码预期：枚举不能靠生产实现自证。
+        for (id, names) in [
+            ("claude-code", vec!["CLAUDE_CONFIG_DIR"]),
+            ("codex", vec!["CODEX_HOME"]),
+            ("opencode", vec!["OPENCODE_CONFIG_DIR"]),
+            ("pi", vec!["PI_CODING_AGENT_DIR"]),
+            ("grok", vec!["GROK_HOME"]),
+            ("deepseek-harness", vec!["DSH_HOME", "DSH_AGENTS_HOME"]),
+        ] {
+            assert_eq!(
+                find_agent(id).unwrap().env_var_names().collect::<Vec<_>>(),
+                names,
+                "{id}"
+            );
+        }
+        let mut all: Vec<_> = AGENTS.iter().flat_map(|a| a.env_var_names()).collect();
+        all.sort_unstable();
+        assert_eq!(
+            all,
+            vec![
+                "CLAUDE_CONFIG_DIR",
+                "CODEX_HOME",
+                "DSH_AGENTS_HOME",
+                "DSH_HOME",
+                "GROK_HOME",
+                "OPENCODE_CONFIG_DIR",
+                "PI_CODING_AGENT_DIR",
+            ]
+        );
     }
 
     #[test]

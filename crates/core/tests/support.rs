@@ -34,6 +34,8 @@ impl Env {
             "OPENCODE_CONFIG_DIR",
             "PI_CODING_AGENT_DIR",
             "GROK_HOME",
+            "DSH_HOME",
+            "DSH_AGENTS_HOME",
         ] {
             std::env::remove_var(var);
         }

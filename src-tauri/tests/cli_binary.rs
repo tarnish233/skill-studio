@@ -6,6 +6,8 @@ fn run(home: &std::path::Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_skill-studio-cli"))
         .args(args)
         .env("SKILL_STUDIO_TEST_HOME", home)
+        .env_remove("DSH_HOME")
+        .env_remove("DSH_AGENTS_HOME")
         .output()
         .unwrap()
 }
@@ -123,6 +125,8 @@ fn interrupted_cli_probes_cancel_without_leaving_their_process_group_running() {
     let child = Command::new(env!("CARGO_BIN_EXE_skill-studio-cli"))
         .args(["--json", "mcp", "test", "interrupt-test", "--timeout", "10"])
         .env("SKILL_STUDIO_TEST_HOME", home.path())
+        .env_remove("DSH_HOME")
+        .env_remove("DSH_AGENTS_HOME")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()

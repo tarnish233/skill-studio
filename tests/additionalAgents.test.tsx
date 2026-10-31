@@ -6,6 +6,7 @@ import { McpGroupsPage } from "@/pages/McpGroupsPage";
 import { setTarget } from "@/lib/api/transport";
 import { ProjectsPage } from "@/pages/ProjectsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { AgentIcon } from "@/components/common/AgentIcon";
 import { renderWithProviders } from "./utils/render";
 import {
   agentState,
@@ -19,6 +20,26 @@ import {
   makeSkill,
   skillOnlyAgents,
 } from "./mocks/tauri";
+
+it("renders Pi's official three-color mark at the existing Agent icon sizes", () => {
+  const { container } = renderWithProviders(
+    <>
+      <AgentIcon agentId="pi" />
+      <AgentIcon agentId="pi" size="sm" />
+    </>,
+  );
+  const marks = container.querySelectorAll("svg");
+  expect(marks).toHaveLength(2);
+  expect(marks[0]).toHaveClass("h-5", "w-5");
+  expect(marks[1]).toHaveClass("h-4", "w-4");
+  for (const mark of marks) {
+    expect(mark).toHaveAttribute("aria-hidden", "true");
+    expect(mark).toHaveAttribute("viewBox", "139.21 139.21 521.59 521.59");
+    expect(
+      Array.from(mark.querySelectorAll("path"), (p) => p.getAttribute("fill")),
+    ).toEqual(["#F09082", "#4D9ABF", "#F1BE58"]);
+  }
+});
 
 function setup() {
   handlers.set("list_agents", () => [

@@ -10,6 +10,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use skill_studio_core::fs::{atomic, paths};
+use skill_studio_core::models::agent::AGENTS;
 use skill_studio_core::models::config::{AppConfig, CONFIG_VERSION};
 use skill_studio_core::services::{store::Store, studio::Studio};
 use skill_studio_mcp::{gateway, management::GATEWAY_NEEDS_APP};
@@ -336,6 +337,19 @@ pub fn main(args: &[OsString]) -> i32 {
     }
 }
 
+/// Explicit test fixture root, not a security sandbox. Paths in fixtures must
+/// also point inside it. Never inherit live Agent directory overrides.
+fn isolate_sandbox_agent_env(path: &std::path::Path) {
+    std::env::set_var(paths::TEST_HOME_ENV, path);
+    // Descriptor-driven so a new Agent root cannot be forgotten here.
+    for name in AGENTS.iter().flat_map(|agent| agent.env_var_names()) {
+        std::env::remove_var(name);
+    }
+    for key in ["XDG_CONFIG_HOME", "OPENCODE_CONFIG"] {
+        std::env::remove_var(key);
+    }
+}
+
 fn run(args: &[OsString]) -> Result<(), String> {
     let mut writable = false;
     let mut args = args.iter();
@@ -347,24 +361,47 @@ fn run(args: &[OsString]) -> Result<(), String> {
                 if !path.is_absolute() || !path.is_dir() {
                     return Err("sandbox-home 必须是已存在的绝对目录".into());
                 }
-                // Explicit test fixture root, not a security sandbox. Paths in
-                // fixtures must also point inside it. Never inherit live overrides.
-                std::env::set_var(paths::TEST_HOME_ENV, path);
-                std::env::remove_var("CODEX_HOME");
-                std::env::remove_var("CLAUDE_CONFIG_DIR");
-                for key in [
-                    "XDG_CONFIG_HOME",
-                    "OPENCODE_CONFIG_DIR",
-                    "OPENCODE_CONFIG",
-                    "PI_CODING_AGENT_DIR",
-                    "GROK_HOME",
-                ] {
-                    std::env::remove_var(key);
-                }
+                isolate_sandbox_agent_env(&path);
             }
             _ => return Err(format!("未知参数: {}", arg.to_string_lossy())),
         }
     }
     let helper = Helper::new(writable)?;
     serve(helper, io::stdin().lock(), io::stdout().lock()).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn sandbox_home_clears_every_agent_directory_override() {
+        let home = tempfile::tempdir().unwrap();
+        let names = [
+            "CLAUDE_CONFIG_DIR",
+            "CODEX_HOME",
+            "OPENCODE_CONFIG_DIR",
+            "PI_CODING_AGENT_DIR",
+            "GROK_HOME",
+            "DSH_HOME",
+            "DSH_AGENTS_HOME",
+        ];
+        for name in names {
+            std::env::set_var(name, "/tmp/live-agent-root");
+        }
+        isolate_sandbox_agent_env(home.path());
+        for name in names {
+            assert!(
+                std::env::var_os(name).is_none(),
+                "--sandbox-home must clear {name}"
+            );
+        }
+        assert_eq!(
+            std::env::var_os(paths::TEST_HOME_ENV),
+            Some(home.path().as_os_str().to_os_string())
+        );
+        std::env::remove_var(paths::TEST_HOME_ENV);
+    }
 }

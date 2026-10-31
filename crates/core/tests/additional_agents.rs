@@ -13,10 +13,11 @@ use skill_studio_core::{
 use std::{collections::HashMap, fs};
 use support::Env;
 
-const AGENTS: [(&str, &str, &str); 3] = [
+const AGENTS: [(&str, &str, &str); 4] = [
     ("opencode", ".config/opencode/skills", ".opencode/skills"),
     ("pi", ".pi/agent/skills", ".pi/skills"),
     ("grok", ".grok/skills", ".grok/skills"),
+    ("deepseek-harness", ".dsh/skills", ".dsh/skills"),
 ];
 
 #[test]
@@ -138,6 +139,7 @@ fn manual_policy_does_not_block_group_switches_or_rewrite_native_configuration()
         let config_path = root.parent().unwrap().join(match agent {
             "opencode" => "opencode.jsonc",
             "pi" => "settings.json",
+            "deepseek-harness" => "cordis.patch.yml",
             _ => "config.toml",
         });
         let original = b"user native settings must remain byte-for-byte intact";
@@ -245,8 +247,11 @@ fn multi_agent_project_deployments_use_separate_roots_and_keep_manual_skills() {
         )
         .unwrap();
     assert!(report.failed.is_empty());
-    assert_eq!(c.projects[0].managed_entries.len(), 3);
-    assert_eq!(scanner::scan_project(&root).unwrap().len(), 6);
+    assert_eq!(c.projects[0].managed_entries.len(), AGENTS.len());
+    assert_eq!(
+        scanner::scan_project(&root).unwrap().len(),
+        AGENTS.len() * 2
+    );
     for (_, _, relative) in AGENTS {
         assert!(root.join(relative).join("demo/SKILL.md").is_file());
     }

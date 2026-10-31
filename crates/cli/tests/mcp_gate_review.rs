@@ -10,6 +10,8 @@ impl Env {
     fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();
         std::env::set_var(paths::TEST_HOME_ENV, temp.path());
+        std::env::remove_var("DSH_HOME");
+        std::env::remove_var("DSH_AGENTS_HOME");
         Self(temp)
     }
     fn state(&self) -> AppState {

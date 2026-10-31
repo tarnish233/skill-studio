@@ -39,7 +39,7 @@ AppImage 需先在文件属性中允许作为程序执行，再双击打开。
 
 - **Skill Hub**：集中查看、搜索和托管 Skills，预览内容与 Token 估算；支持在线搜索安装和本地目录导入。
 - **MCP Hub**：自动扫描 Claude Code、Codex、OpenCode v2、Pi（原生 MCP，0.99.0+）与 Grok Build 配置，支持表单、JSON／TOML 和模板添加，一次同步多个 Agent；直连管理与共享授权网关可独立使用。[使用说明](docs/mcp.md)
-- **Agent 管理**：为 Claude Code、Codex、OpenCode、Pi 和 Grok Build 配置 Skills，按使用场景分组，一键启用或停用。
+- **Agent 管理**：为 Claude Code、Codex、OpenCode、Pi、Grok Build 和 DeepSeek Harness 配置 Skills，按使用场景分组，一键启用或停用。
 - **项目配置**：为每个项目选择 Agent 和 Skills，让不同项目使用各自的配置。
 - **远程服务器**：读取 SSH config，选择 Linux 服务器后管理它的 Skills、分组、项目与备份；MCP Hub 只读展示服务器已有 MCP，在名称后标注所属 Agent。支持密钥、密码和跳板机连接。
 - **备份与恢复**：支持配置备份和已删除 Skill 的恢复；提供浅色、深色与跟随系统外观。
@@ -47,17 +47,20 @@ AppImage 需先在文件属性中允许作为程序执行，再双击打开。
 
 ## 支持的 Skill 目录
 
-| Agent       | 全局安装目录                | 项目安装目录       |
-| ----------- | --------------------------- | ------------------ |
-| Claude Code | `~/.claude/skills`          | `.claude/skills`   |
-| Codex       | `~/.codex/skills`           | `.agents/skills`   |
-| OpenCode    | `~/.config/opencode/skills` | `.opencode/skills` |
-| Pi          | `~/.pi/agent/skills`        | `.pi/skills`       |
-| Grok Build  | `~/.grok/skills`            | `.grok/skills`     |
+| Agent            | 全局安装目录                | 项目安装目录       |
+| ---------------- | --------------------------- | ------------------ |
+| Claude Code      | `~/.claude/skills`           | `.claude/skills`    |
+| Codex            | `~/.codex/skills`            | `.agents/skills`    |
+| OpenCode         | `~/.config/opencode/skills`  | `.opencode/skills`  |
+| Pi               | `~/.pi/agent/skills`         | `.pi/skills`        |
+| Grok Build       | `~/.grok/skills`             | `.grok/skills`      |
+| DeepSeek Harness | `~/.dsh/skills`              | `.dsh/skills`       |
 
-Codex、OpenCode、Pi 和 Grok Build 同时扫描共享目录 `~/.agents/skills`，写入时使用各自的专属目录。支持环境变量指定路径，以及「设置 → 目录」中的手动覆盖。OpenCode 遵循 `XDG_CONFIG_HOME`，额外扫描 `OPENCODE_CONFIG_DIR/skills`；Pi 使用 `PI_CODING_AGENT_DIR`，Grok Build 使用 `GROK_HOME`。
+默认配置下，Codex、OpenCode、Pi、Grok Build 和 DeepSeek Harness 同时扫描共享目录 `~/.agents/skills`，写入时使用各自的专属目录。支持环境变量指定路径，以及「设置 → 目录」中的手动覆盖。OpenCode 遵循 `XDG_CONFIG_HOME`，额外扫描 `OPENCODE_CONFIG_DIR/skills`；Pi 使用 `PI_CODING_AGENT_DIR`，Grok Build 使用 `GROK_HOME`。
 
 本版为 OpenCode、Pi 和 Grok Build 接入标准目录中的 `SKILL.md` Skill 管理，包括托管、安装、移除、备份恢复、分组和项目部署；Skill 管理不读取或修改它们的原生启停／权限配置。MCP 接入方式见 [MCP Hub](docs/mcp.md)。分组停用只撤回 Studio 部署的副本，手动 Skill 始终保留。修改后在对应 Agent 中重新加载 Skill 或重启会话。新 Agent 的跨厂商兼容加载、配置中额外声明的资源和插件目录不在本次接入范围内。
+
+DeepSeek Harness（`dsh`）按官方 `0.2.1-rc.5` 的 filesystem provider 接入标准目录包 `<名称>/SKILL.md`，支持桌面与 CLI 的扫描、托管还原、删除备份、分组和项目部署；Agent ID 为 `deepseek-harness`，CLI 可简写为 `dsh`。`DSH_HOME` 覆盖专属配置根，`DSH_AGENTS_HOME` 独立覆盖共享根，支持当前用户 `~` 展开；Studio 的目录设置优先覆盖专属根。共享目录只扫描、不部署。项目必须选择 Harness 发现的最近 Git 仓库根（没有 `.git` 时是启动目录）；格式不合要求的 `name`、`description` 或调用标志会在部署前拦住，不改写 Skill 内容。平铺 `.md` 文件、Profile 自定义 Provider／关闭默认根的配置，以及 MCP 均不在本次接入范围；`.system` 目录不扫描。
 
 ## 界面预览
 

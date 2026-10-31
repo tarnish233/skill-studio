@@ -171,11 +171,7 @@ fn lock_wait() -> Duration {
 /// 它们解析，就会和桌面应用管理不同的目录。按桌面应用的方式解析（以设置里的「Agent
 /// 目录覆盖」为准），被忽略的变量交给 doctor 提示。
 fn isolate_agent_env() -> Vec<(String, String)> {
-    let mut names: Vec<&str> = AGENTS
-        .iter()
-        .flat_map(|a| [a.home_env, a.extra_config_env])
-        .flatten()
-        .collect();
+    let mut names: Vec<&str> = AGENTS.iter().flat_map(|a| a.env_var_names()).collect();
     names.push("OPENCODE_CONFIG");
     let mut ignored = Vec::new();
     for name in names {
@@ -337,7 +333,41 @@ fn attached(arg: &str) -> Option<(&'static str, String)> {
 
 #[cfg(test)]
 mod tests {
-    use super::logged;
+    use super::{isolate_agent_env, logged};
+    use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn interactive_isolation_reports_every_agent_variable_and_opencode_config() {
+        // 独立硬编码判定：交互模式清理目录变量与 OPENCODE_CONFIG，并上报给 doctor；
+        // 沙箱也清理 OPENCODE_CONFIG，另清理 XDG_CONFIG_HOME。
+        let names = [
+            "CLAUDE_CONFIG_DIR",
+            "CODEX_HOME",
+            "OPENCODE_CONFIG_DIR",
+            "PI_CODING_AGENT_DIR",
+            "GROK_HOME",
+            "DSH_HOME",
+            "DSH_AGENTS_HOME",
+            "OPENCODE_CONFIG",
+        ];
+        for name in names {
+            std::env::set_var(name, "shell-only-value");
+        }
+        let ignored = isolate_agent_env();
+        assert_eq!(
+            ignored,
+            names
+                .map(|name| (name.to_string(), "shell-only-value".to_string()))
+                .to_vec()
+        );
+        for name in names {
+            assert!(
+                std::env::var_os(name).is_none(),
+                "CLI runs must resolve directories like the desktop app: {name}"
+            );
+        }
+    }
 
     #[test]
     fn client_metadata_is_hidden_for_separate_and_equals_option_values() {

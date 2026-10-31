@@ -390,9 +390,18 @@ fn groups_and_projects_record_resolved_paths_and_protect_bundle_deletion() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
-    let skill = studio
-        .install_catalog_skill(&mut c, &bundle(false))
-        .unwrap();
+    let prepared = marketplace::prepare_archive(
+        "owner/repo",
+        "demo",
+        &archive(&[
+            (".claude/skills/demo", "claude"),
+            (".codex/skills/demo", "codex"),
+            (".opencode/skills/demo", "opencode"),
+            (".dsh/skills/demo", "dsh"),
+        ]),
+    )
+    .unwrap();
+    let skill = studio.install_catalog_skill(&mut c, &prepared).unwrap();
     studio
         .save_group(&mut c, "g".into(), "Group", vec![skill.id.clone()])
         .unwrap();
@@ -411,12 +420,21 @@ fn groups_and_projects_record_resolved_paths_and_protect_bundle_deletion() {
     let root = env.path().join("project");
     fs::create_dir_all(&root).unwrap();
     let mut project = ProjectBinding::new("p".into(), "Project".into(), root.clone());
-    project.agent_ids = vec!["claude-code".into(), "codex".into()];
+    project.agent_ids = vec![
+        "claude-code".into(),
+        "codex".into(),
+        "opencode".into(),
+        "deepseek-harness".into(),
+    ];
     project.skill_ids = vec![skill.id.clone()];
+    project.group_ids = vec!["g".into()];
     c.projects.push(project);
     studio.apply_project(&mut c, "p").unwrap();
     assert_eq!(body(&root.join(".claude/skills/demo")), "claude");
     assert_eq!(body(&root.join(".agents/skills/demo")), "codex");
+    assert_eq!(body(&root.join(".opencode/skills/demo")), "opencode");
+    assert_eq!(body(&root.join(".dsh/skills/demo")), "dsh");
+    assert_eq!(c.projects[0].managed_entries.len(), 4);
     assert!(c.projects[0]
         .managed_entries
         .iter()

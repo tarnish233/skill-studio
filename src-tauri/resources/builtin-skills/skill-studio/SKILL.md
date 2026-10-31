@@ -1,6 +1,6 @@
 ---
 name: skill-studio
-description: 用 Skill Studio 命令行管理 Skill 与 MCP：安装或托管到 Hub、管理备份与设置、按分组或项目部署到 Claude Code、Codex、OpenCode、Pi、Grok，检查待应用修改与配置冲突。
+description: 用 Skill Studio 命令行管理 Skill 与 MCP：安装或托管到 Hub、管理备份与设置、按分组或项目部署到 Claude Code、Codex、OpenCode、Pi、Grok、DeepSeek Harness，检查待应用修改与配置冲突。
 ---
 
 # Skill Studio
@@ -28,6 +28,8 @@ skill-studio backups list                 # config / skill / hub / mcp 分别列
 
 加 `--json` 给脚本解析，错误也有 `error.code/message/hint/candidates`。
 同名时不要猜：Skill 文件操作需按候选路径或 ID 选具体来源。
+DeepSeek Harness 的 Agent ID 是 `deepseek-harness`（可写 `dsh`）：只管理默认目录包，不管理平铺 `.md`、自定义 Profile Provider 或 MCP。
+专属根 `DSH_HOME/skills`、共享扫描根 `DSH_AGENTS_HOME/skills`；默认是 `~/.dsh/skills`、`~/.agents/skills`。项目写 `.dsh/skills`，须选择最近 Git 仓库根；部署前校验 Harness frontmatter，不改调用标志。
 
 ## Skill 安装与生命周期
 

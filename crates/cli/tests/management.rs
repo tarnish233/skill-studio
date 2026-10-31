@@ -29,6 +29,8 @@ impl Home {
             "OPENCODE_CONFIG",
             "PI_CODING_AGENT_DIR",
             "GROK_HOME",
+            "DSH_HOME",
+            "DSH_AGENTS_HOME",
             "SKILL_STUDIO_LOCK_WAIT_MS",
             "SKILL_STUDIO_APP_EXECUTABLE",
         ] {

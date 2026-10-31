@@ -79,28 +79,40 @@ impl Studio {
         // 交还给用户。规则与分组一致，见 activate_agent_groups
         let mut kept: Vec<ProjectEntry> = Vec::new();
         let mut untouched = Vec::new();
-        for agent_id in project.agent_ids.iter().filter(|_| enabled) {
-            let agent = require_agent(agent_id)?;
-            let root = agent
-                .project_root(&project.root)
-                .ok_or_else(|| Error::invalid("Agent 不支持项目 skill"))?;
-            linker::ensure_distinct_roots(&root, &globals)?;
-            let mut ids = project.skill_ids.clone();
+        // 项目成员是显式选择与分组的并集：启用且确有目标时才解析一次。
+        // 先校验首个 Agent，保留“未知 Agent 优先于缺失分组”的既有错误顺序。
+        let mut shared_ids = Vec::new();
+        if let Some(first) = project.agent_ids.first().filter(|_| enabled) {
+            require_agent(first)?;
+            shared_ids = project.skill_ids.clone();
             for gid in &project.group_ids {
                 let group = config
                     .group(gid)
                     .ok_or_else(|| Error::NotFound(format!("分组 {gid}")))?;
-                ids.extend(group.skill_ids.clone());
+                shared_ids.extend(group.skill_ids.iter().cloned());
             }
             let mut seen = HashSet::new();
-            for sid in ids.into_iter().filter(|sid| seen.insert(sid.clone())) {
+            shared_ids.retain(|sid| seen.insert(sid.clone()));
+        }
+        // 清空所有成员是撤回：不校验新的原生 Git 根；有成员才需要目标 Agent 的写入契约。
+        for agent_id in project.agent_ids.iter().filter(|_| enabled) {
+            let agent = require_agent(agent_id)?;
+            if shared_ids.is_empty() {
+                continue;
+            }
+            agent.validate_project_root(&project.root)?;
+            let root = agent
+                .project_root(&project.root)
+                .ok_or_else(|| Error::invalid("Agent 不支持项目 skill"))?;
+            linker::ensure_distinct_roots(&root, &globals)?;
+            for sid in &shared_ids {
                 let view = views
                     .iter()
-                    .find(|v| v.skill.id == sid)
+                    .find(|v| &v.skill.id == sid)
                     .ok_or_else(|| Error::NotFound(format!("skill {sid}")))?;
                 let resolved = super::variants::for_agent(config, &view.skill, agent_id)?;
                 let skill = &resolved;
-                scanner::validate_sync_source(&skill.source_path)?;
+                scanner::validate_agent_sync_source(&skill.source_path, agent)?;
                 let dest = root.join(&skill.name);
                 if self
                     .skill_backups()?

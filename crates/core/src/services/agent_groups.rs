@@ -205,7 +205,7 @@ impl Studio {
                 .ok_or_else(|| Error::NotFound(format!("分组成员已不存在：{id}")))?;
             let mut view = view.clone();
             view.skill = super::variants::for_agent(config, &view.skill, agent_id)?;
-            scanner::validate_sync_source(&view.skill.source_path)?;
+            scanner::validate_agent_sync_source(&view.skill.source_path, agent)?;
             let state = &view.agents[agent_id];
             // 继续保留的成员：部署后被改过的副本不覆盖；用户在 Agent 里停用了它就保持停用，
             // 不替用户重新启用。两种都继续由分组管理（卡片上显示需要检查）

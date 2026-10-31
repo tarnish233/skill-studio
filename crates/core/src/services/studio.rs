@@ -288,6 +288,8 @@ impl Studio {
             .collect();
         sources.retain(|id, _| !restored.contains(id));
 
+        // 来源标注使用的共享根在一轮扫描里只解析一次，全部 skill 复用同一个切片。
+        let roots = shared_roots(config);
         let mut views: Vec<SkillView> = sources
             .into_values()
             .map(|skill| {
@@ -330,7 +332,7 @@ impl Studio {
                     provenance
                         .as_ref()
                         .map(|p| p.source_ids.clone())
-                        .unwrap_or_else(|| original_source_ids(config, &skill, &agents))
+                        .unwrap_or_else(|| original_source_ids(config, &skill, &agents, &roots))
                 };
                 SkillView {
                     source_ids,
@@ -582,6 +584,15 @@ impl Studio {
                     }
                 };
                 let skill = &resolved;
+                if let Err(error) = scanner::validate_agent_sync_source(&skill.source_path, agent) {
+                    report.push_err(result(
+                        skill,
+                        agent_id,
+                        LinkStatus::NotLinked,
+                        Some(error.to_string()),
+                    ));
+                    continue;
+                }
                 let dest = self
                     .agent_targets(config, skill, agent)
                     .into_iter()
@@ -1165,7 +1176,8 @@ impl Studio {
             .as_ref()
             .map(|p| p.source_ids.clone())
             .unwrap_or_else(|| {
-                original_source_ids(config, &skill, &self.agent_states(config, &skill))
+                let roots = shared_roots(config);
+                original_source_ids(config, &skill, &self.agent_states(config, &skill), &roots)
             });
         let record = if restore {
             saved.clone().unwrap()
@@ -1480,17 +1492,40 @@ fn result(
     }
 }
 
+/// 一次扫描/操作内解析全部共享根（精确路径去重），供来源标注同一个切片复用。
+///
+/// 只在本次调用内复用，不缓存：写时保护（迁移/回链/还原）仍走
+/// [`in_shared_root`] 自己的安全语义，两者互不替代。
+fn shared_roots(config: &AppConfig) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for agent in AGENTS {
+        for root in agent.resolved_shared_roots(&config.settings.agent_dir_overrides) {
+            if !roots.contains(&root) {
+                roots.push(root);
+            }
+        }
+    }
+    roots
+}
+
 fn original_source_ids(
     config: &AppConfig,
     skill: &Skill,
     states: &HashMap<String, AgentSkillState>,
+    roots: &[PathBuf],
 ) -> Vec<String> {
     // Historical Hub items without a collection record have unknown origins; storage is not provenance.
     if matches!(skill.origin, SkillOrigin::Hub) {
         return vec!["unknown".into()];
     }
     let shared = |path: &std::path::Path| {
-        path.components()
+        // 根本身或根的直接子项都算共享来源；别名比较保留符号链接指向同一根的情况。
+        let parent = path.parent();
+        roots.iter().any(|root| {
+            crate::fs::paths::paths_alias(root, path)
+                || parent.is_some_and(|parent| crate::fs::paths::paths_alias(root, parent))
+        }) || path
+            .components()
             .any(|c| c.as_os_str() == ".agents" || c.as_os_str() == ".agent")
     };
     let mut ids = HashSet::new();

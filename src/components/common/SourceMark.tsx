@@ -15,7 +15,7 @@ export const SOURCE_TITLES = {
   studio:
     "Skill Studio：通过 Skill Studio 安装或随应用提供的 skill；内置副本未修改时随应用更新",
   agent:
-    "Agent：共享 Agent 目录（~/.agents/skills）里的 skill。Codex、OpenCode、Pi、Grok Build 都会直接加载这里的 skill，分组管不住；Skill Studio 不会往里部署，纳入托管会把它移出共享目录。",
+    "Agent：共享 Agent 目录（默认 ~/.agents/skills）里的 skill。默认配置下 Codex、OpenCode、Pi、Grok Build 和 DeepSeek Harness 都会直接加载这里的 skill，分组管不住；Skill Studio 不会往里部署，纳入托管会把它移出共享目录。",
   unknown: "来源待确认：缺少托管记录，无法确认原始来源",
   external: "外部来源：不在任何 Agent 的 skill 目录里",
 } as const;

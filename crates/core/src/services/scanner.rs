@@ -449,29 +449,114 @@ pub fn validate_sync_source(source: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Bounded preview: raw text plus frontmatter split, never rendered or executed.
-pub fn read_skill_document(directory: &Path) -> Result<SkillDocument> {
-    use std::io::Read;
-    const LIMIT: u64 = 1024 * 1024;
+fn strip_line_eol(line: &str) -> &str {
+    let line = line.strip_suffix('\n').unwrap_or(line);
+    line.strip_suffix('\r').unwrap_or(line)
+}
+
+/// Native Harness accepts only exact `---` fence lines (LF/CRLF); BOM, padded and
+/// indented fences are ignored, and the first exact closing fence wins.
+fn harness_frontmatter(raw: &str) -> Result<&str> {
+    let (opening, rest) = raw.split_once('\n').unwrap_or((raw, ""));
+    if strip_line_eol(opening) != "---" {
+        return Err(Error::invalid(
+            "DeepSeek Harness Skill 必须包含 YAML frontmatter 的 name 和 description",
+        ));
+    }
+    let mut offset = 0usize;
+    for line in rest.split_inclusive('\n') {
+        if strip_line_eol(line) == "---" {
+            return Ok(&rest[..offset]);
+        }
+        offset += line.len();
+    }
+    Err(Error::invalid(
+        "DeepSeek Harness Skill 的 frontmatter 缺少结束标记",
+    ))
+}
+
+/// Check the target Agent's actual filesystem-provider contract before planning writes.
+/// Harness frontmatter is stricter than the generic catalog; never rewrite invocation policy.
+pub fn validate_agent_sync_source(source: &Path, agent: &AgentDescriptor) -> Result<()> {
+    validate_sync_source(source)?;
+    if agent.id != "deepseek-harness" {
+        return Ok(());
+    }
+    let fields: BTreeMap<String, serde_yaml::Value> =
+        serde_yaml::from_str(harness_frontmatter(&read_skill_raw(source)?)?)
+            .map_err(|_| Error::invalid("DeepSeek Harness Skill 的 YAML frontmatter 无效"))?;
+    let name = fields.get("name").and_then(serde_yaml::Value::as_str);
+    if !name.is_some_and(|name| {
+        name.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+    }) {
+        return Err(Error::invalid("DeepSeek Harness Skill 的 name 必须是小写字母/数字组成的 kebab-case，不能有空格、连续或首尾连字符"));
+    }
+    if !fields
+        .get("description")
+        .and_then(serde_yaml::Value::as_str)
+        .is_some_and(|text| !text.is_empty())
+    {
+        return Err(Error::invalid(
+            "DeepSeek Harness Skill 的 description 必须是非空字符串",
+        ));
+    }
+    for key in ["disableModelInvocation", "modelInvocable", "userInvocable"] {
+        if fields.contains_key(key) {
+            return Err(Error::invalid(format!("DeepSeek Harness 不接受 frontmatter 字段 {key}，请使用 disable-model-invocation / user-invocable")));
+        }
+    }
+    for key in ["disable-model-invocation", "user-invocable"] {
+        if let Some(value) = fields.get(key) {
+            let valid = match value {
+                serde_yaml::Value::Bool(_) => true,
+                serde_yaml::Value::Number(n) => matches!(n.as_f64(), Some(0.0 | 1.0)),
+                serde_yaml::Value::String(text) => matches!(
+                    text.to_ascii_lowercase().as_str(),
+                    "true" | "false" | "yes" | "no" | "on" | "off" | "0" | "1"
+                ),
+                _ => false,
+            };
+            if !valid {
+                return Err(Error::invalid(format!("DeepSeek Harness Skill 的 {key} 必须是布尔值（true/false、yes/no、on/off、0/1）")));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 预览与 DeepSeek Harness 预检共用的读取上限。
+const SKILL_DOCUMENT_LIMIT: u64 = 1024 * 1024;
+
+/// 有界读取 `SKILL.md`：普通文件、不超过 1 MiB、有效 UTF-8；预览与预检共用。
+fn read_skill_raw(directory: &Path) -> Result<String> {
     let path = directory.join(SKILL_FILE);
     let metadata = fs::metadata(&path).map_err(|e| Error::io(&path, e))?;
     if !metadata.is_file() {
         return Err(Error::invalid("SKILL.md 不是普通文件"));
     }
-    if metadata.len() > LIMIT {
+    if metadata.len() > SKILL_DOCUMENT_LIMIT {
         return Err(Error::invalid("SKILL.md 超过 1 MB，请在编辑器中打开"));
     }
     let mut bytes = Vec::new();
     fs::File::open(&path)
         .map_err(|e| Error::io(&path, e))?
-        .take(LIMIT + 1)
+        .take(SKILL_DOCUMENT_LIMIT + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| Error::io(&path, e))?;
-    if bytes.len() > LIMIT as usize {
+    if bytes.len() > SKILL_DOCUMENT_LIMIT as usize {
         return Err(Error::invalid("SKILL.md 超过预览大小限制"));
     }
-    let raw =
-        String::from_utf8(bytes).map_err(|_| Error::invalid("SKILL.md 不是有效的 UTF-8 文本"))?;
+    String::from_utf8(bytes).map_err(|_| Error::invalid("SKILL.md 不是有效的 UTF-8 文本"))
+}
+
+/// Bounded preview: raw text plus frontmatter split, never rendered or executed.
+pub fn read_skill_document(directory: &Path) -> Result<SkillDocument> {
+    let raw = read_skill_raw(directory)?;
     let parts = frontmatter_parts(&raw);
     let body = match parts.body_start {
         Some(start) => raw
@@ -609,6 +694,79 @@ mod tests {
         let doc = read_skill_document(&s).unwrap();
         assert_eq!(doc.frontmatter, Frontmatter::default());
         assert_eq!(doc.body, "正文\n");
+    }
+
+    #[test]
+    fn preview_document_is_the_bounded_raw_reader_plus_generic_frontmatter() {
+        let d = tempfile::tempdir().unwrap();
+        let s = d.path().join("x");
+        write_skill(
+            &s,
+            "\u{feff}---\nname: demo\ndescription: d\ncontext: fork\n---\n\n正文",
+        );
+        let raw = read_skill_raw(&s).unwrap();
+        let doc = read_skill_document(&s).unwrap();
+        let parts = frontmatter_parts(&raw);
+        assert_eq!(doc.raw, raw);
+        assert_eq!(doc.frontmatter, parts.frontmatter);
+        assert_eq!(doc.frontmatter.extra_keys, vec!["context"]);
+        assert_eq!(doc.body, "正文");
+    }
+
+    #[test]
+    fn harness_preflight_requires_exact_fences_while_generic_preview_tolerates_bom() {
+        let d = tempfile::tempdir().unwrap();
+        let harness = crate::models::agent::require_agent("deepseek-harness").unwrap();
+        let check = |content: &str| {
+            fs::write(d.path().join(SKILL_FILE), content).unwrap();
+            validate_agent_sync_source(d.path(), harness)
+        };
+        for content in [
+            "\u{feff}---\nname: demo\ndescription: test\n---\nbody\n",
+            "--- \nname: demo\ndescription: test\n---\nbody\n",
+            "---\nname: demo\ndescription: test\n--- \nbody\n",
+            "---\nname: demo\ndescription: test\n  ---\nbody\n",
+            "---\n---\nname: demo\ndescription: test\n---\nbody\n",
+        ] {
+            assert!(
+                check(content).is_err(),
+                "native Harness rejects {content:?}"
+            );
+        }
+        assert!(check("---\r\nname: demo\r\ndescription: test\r\n---\r\nbody\r\n").is_ok());
+        fs::write(
+            d.path().join(SKILL_FILE),
+            "\u{feff}---\nname: demo\ndescription: test\n---\nbody\n",
+        )
+        .unwrap();
+        let generic = crate::models::agent::require_agent("opencode").unwrap();
+        assert!(validate_agent_sync_source(d.path(), generic).is_ok());
+        let document = read_skill_document(d.path()).unwrap();
+        assert_eq!(document.frontmatter.name.as_deref(), Some("demo"));
+        assert_eq!(document.body.trim(), "body");
+    }
+
+    #[test]
+    fn preflight_and_preview_share_the_bounded_raw_read_contract() {
+        let d = tempfile::tempdir().unwrap();
+        let s = d.path().join("demo");
+        fs::create_dir_all(&s).unwrap();
+        let harness = crate::models::agent::require_agent("deepseek-harness").unwrap();
+        let header = "---\nname: demo\ndescription: test\n---\n";
+        let exact = format!("{header}{}", "x".repeat(1024 * 1024 - header.len()));
+        fs::write(s.join(SKILL_FILE), &exact).unwrap();
+        assert_eq!(read_skill_document(&s).unwrap().raw, exact);
+        assert!(validate_agent_sync_source(&s, harness).is_ok());
+        for content in [format!("{exact}x").into_bytes(), vec![0xff]] {
+            fs::write(s.join(SKILL_FILE), content).unwrap();
+            let preview = read_skill_document(&s).unwrap_err();
+            let preflight = validate_agent_sync_source(&s, harness).unwrap_err();
+            assert_eq!(preflight.to_string(), preview.to_string());
+        }
+        fs::remove_file(s.join(SKILL_FILE)).unwrap();
+        fs::create_dir(s.join(SKILL_FILE)).unwrap();
+        assert!(read_skill_document(&s).is_err());
+        assert!(validate_agent_sync_source(&s, harness).is_err());
     }
 
     #[test]

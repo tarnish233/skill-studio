@@ -10,11 +10,11 @@ use skill_studio_core::{
 };
 use std::fs;
 use support::Env;
-fn selection(ids: Vec<String>) -> ProjectSelection {
+fn selection(agents: &[&str], ids: Vec<String>, groups: &[&str]) -> ProjectSelection {
     ProjectSelection {
-        agent_ids: vec!["codex".into()],
+        agent_ids: agents.iter().map(|id| (*id).into()).collect(),
         skill_ids: ids,
-        group_ids: vec![],
+        group_ids: groups.iter().map(|id| (*id).into()).collect(),
         link_mode: LinkMode::Copy,
     }
 }
@@ -34,7 +34,11 @@ fn selection_and_files_commit_together_and_deselection_removes_only_owned_copies
     let id = studio.scan_skills(&c).unwrap()[0].skill.id.clone();
     let manual = env.write_simple_skill(&root.join(".agents/skills"), "manual");
     studio
-        .write_project(&mut c, "p", Some(selection(vec![id.clone()])))
+        .write_project(
+            &mut c,
+            "p",
+            Some(selection(&["codex"], vec![id.clone()], &[])),
+        )
         .unwrap();
     assert_eq!(
         studio.load_config().unwrap().projects[0].skill_ids,
@@ -43,7 +47,7 @@ fn selection_and_files_commit_together_and_deselection_removes_only_owned_copies
     assert!(root.join(".agents/skills/demo/SKILL.md").is_file());
     assert_eq!(c.projects[0].managed_entries.len(), 1);
     studio
-        .write_project(&mut c, "p", Some(selection(vec![])))
+        .write_project(&mut c, "p", Some(selection(&["codex"], vec![], &[])))
         .unwrap();
     assert!(!root.join(".agents/skills/demo").exists());
     assert!(manual.exists());
@@ -69,7 +73,7 @@ fn conflict_does_not_save_selection_or_touch_existing_files() {
     let hash = scanner::dir_content_hash(&foreign).unwrap();
     let before = fs::read(studio.store().config_path()).unwrap();
     assert!(studio
-        .write_project(&mut c, "p", Some(selection(vec![id])))
+        .write_project(&mut c, "p", Some(selection(&["codex"], vec![id], &[])))
         .is_err());
     assert!(c.projects[0].skill_ids.is_empty());
     assert_eq!(before, fs::read(studio.store().config_path()).unwrap());
@@ -99,14 +103,22 @@ fn a_modified_owned_copy_is_left_in_place_on_deselection_and_refresh() {
             .clone()
     };
     studio
-        .write_project(&mut c, "p", Some(selection(vec![id("demo")])))
+        .write_project(
+            &mut c,
+            "p",
+            Some(selection(&["codex"], vec![id("demo")], &[])),
+        )
         .unwrap();
     let dest = root.join(".agents/skills/demo/SKILL.md");
     fs::write(&dest, "local edits").unwrap();
     // 源也变了、又加了新成员：被改过的副本不覆盖，仍归项目管理；其余照常写入
     fs::write(source.join("SKILL.md"), "source edits").unwrap();
     let report = studio
-        .write_project(&mut c, "p", Some(selection(vec![id("demo"), id("other")])))
+        .write_project(
+            &mut c,
+            "p",
+            Some(selection(&["codex"], vec![id("demo"), id("other")], &[])),
+        )
         .unwrap();
     assert_eq!(fs::read_to_string(&dest).unwrap(), "local edits");
     assert!(root.join(".agents/skills/other/SKILL.md").is_file());
@@ -121,7 +133,11 @@ fn a_modified_owned_copy_is_left_in_place_on_deselection_and_refresh() {
     assert_eq!(c.projects[0].managed_entries.len(), 2);
     // 取消选择：不删，交还给用户，不再记为项目的部署
     let report = studio
-        .write_project(&mut c, "p", Some(selection(vec![id("other")])))
+        .write_project(
+            &mut c,
+            "p",
+            Some(selection(&["codex"], vec![id("other")], &[])),
+        )
         .unwrap();
     assert_eq!(fs::read_to_string(&dest).unwrap(), "local edits");
     assert_eq!(
@@ -192,7 +208,7 @@ fn project_toggle_preserves_selection_and_manual_files_and_leaves_modified_deplo
     env.write_simple_skill(&env.hub(), "demo");
     let id = studio.scan_skills(&c).unwrap()[0].skill.id.clone();
     let manual = env.write_simple_skill(&root.join(".agents/skills"), "manual");
-    let mut selected = selection(vec![id.clone()]);
+    let mut selected = selection(&["codex"], vec![id.clone()], &[]);
     selected.agent_ids.push("claude-code".into());
     studio.write_project(&mut c, "p", Some(selected)).unwrap();
     let saved_agents = c.projects[0].agent_ids.clone();
@@ -238,7 +254,7 @@ fn deployments_per_agent_separate_stale_copies_from_ones_that_need_checking() {
         .push(ProjectBinding::new("p".into(), "P".into(), root.clone()));
     let source = env.write_simple_skill(&env.hub(), "demo");
     let id = studio.scan_skills(&c).unwrap()[0].skill.id.clone();
-    let mut selected = selection(vec![id.clone()]);
+    let mut selected = selection(&["codex"], vec![id.clone()], &[]);
     selected.agent_ids.push("claude-code".into());
     studio.write_project(&mut c, "p", Some(selected)).unwrap();
     let view = |c: &skill_studio_core::models::config::AppConfig| {
@@ -269,4 +285,116 @@ fn deployments_per_agent_separate_stale_copies_from_ones_that_need_checking() {
     // 没有部署的 Agent 不出现
     studio.set_project_enabled(&mut c, "p", false).unwrap();
     assert!(project_deployments(&c.projects[0]).is_empty());
+}
+
+#[test]
+#[serial]
+fn targetless_and_disabled_projects_do_not_resolve_stale_groups() {
+    let env = Env::new();
+    let studio = env.studio();
+    let mut c = studio.load_config().unwrap();
+    let root = env.path().join("project");
+    fs::create_dir(&root).unwrap();
+    c.projects
+        .push(ProjectBinding::new("p".into(), "P".into(), root.clone()));
+    studio
+        .write_project(&mut c, "p", Some(selection(&[], vec![], &["gone-group"])))
+        .unwrap();
+    assert_eq!(c.projects[0].group_ids, vec!["gone-group"]);
+    assert!(!root.join(".dsh").exists());
+    env.write_simple_skill(&env.hub(), "demo");
+    let id = studio.scan_skills(&c).unwrap()[0].skill.id.clone();
+    studio
+        .write_project(
+            &mut c,
+            "p",
+            Some(selection(&["deepseek-harness"], vec![id], &[])),
+        )
+        .unwrap();
+    c.projects[0].group_ids = vec!["gone-group".into()];
+    studio.set_project_enabled(&mut c, "p", false).unwrap();
+    assert!(!root.join(".dsh/skills/demo").exists());
+}
+
+#[test]
+#[serial]
+fn unknown_first_target_precedes_stale_groups_and_disabled_targets_are_rejected() {
+    let env = Env::new();
+    let studio = env.studio();
+    let mut c = studio.load_config().unwrap();
+    let root = env.path().join("project");
+    fs::create_dir(&root).unwrap();
+    c.projects
+        .push(ProjectBinding::new("p".into(), "P".into(), root.clone()));
+    let before = serde_json::to_value(&c).unwrap();
+    let error = studio
+        .write_project(
+            &mut c,
+            "p",
+            Some(selection(&["unknown-agent"], vec![], &["gone-group"])),
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("unknown-agent"), "{error}");
+    assert_eq!(serde_json::to_value(&c).unwrap(), before);
+    c.settings.disabled_agents.push("deepseek-harness".into());
+    let before = serde_json::to_value(&c).unwrap();
+    assert!(studio
+        .write_project(
+            &mut c,
+            "p",
+            Some(selection(&["deepseek-harness"], vec![], &[]))
+        )
+        .is_err());
+    assert_eq!(serde_json::to_value(&c).unwrap(), before);
+    assert!(!root.join(".dsh").exists());
+}
+
+#[test]
+#[serial]
+fn project_members_keep_explicit_then_group_order_and_deduplicate() {
+    let env = Env::new();
+    let studio = env.studio();
+    let mut c = studio.load_config().unwrap();
+    env.write_simple_skill(&env.hub(), "alpha");
+    env.write_simple_skill(&env.hub(), "beta");
+    let views = studio.scan_skills(&c).unwrap();
+    let id = |name: &str| {
+        views
+            .iter()
+            .find(|v| v.skill.name == name)
+            .unwrap()
+            .skill
+            .id
+            .clone()
+    };
+    let (alpha, beta) = (id("alpha"), id("beta"));
+    studio
+        .save_group(
+            &mut c,
+            "g".into(),
+            "Group",
+            vec![alpha.clone(), beta.clone()],
+        )
+        .unwrap();
+    let root = env.path().join("project");
+    fs::create_dir(&root).unwrap();
+    c.projects
+        .push(ProjectBinding::new("p".into(), "P".into(), root));
+    studio
+        .write_project(
+            &mut c,
+            "p",
+            Some(selection(
+                &["opencode", "deepseek-harness"],
+                vec![beta.clone(), alpha.clone(), beta.clone()],
+                &["g"],
+            )),
+        )
+        .unwrap();
+    let order: Vec<_> = c.projects[0]
+        .managed_entries
+        .iter()
+        .map(|e| e.skill_id.clone())
+        .collect();
+    assert_eq!(order, vec![beta.clone(), alpha.clone(), beta, alpha]);
 }

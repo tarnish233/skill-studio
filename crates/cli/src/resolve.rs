@@ -14,7 +14,8 @@ use skill_studio_core::services::studio::SkillView;
 use crate::error::CliError;
 use crate::report::home;
 
-const AGENT_HINT: &str = "Agent 写 claude-code（或 claude）、codex、opencode、pi、grok";
+const AGENT_HINT: &str =
+    "Agent 写 claude-code（或 claude）、codex、opencode、pi、grok、deepseek-harness（或 dsh）";
 
 pub fn agent(input: &str) -> Result<&'static AgentDescriptor, CliError> {
     let key: String = input
@@ -23,10 +24,10 @@ pub fn agent(input: &str) -> Result<&'static AgentDescriptor, CliError> {
         .chars()
         .filter(|c| !c.is_whitespace() && *c != '-' && *c != '_')
         .collect();
-    let key = if key == "claude" {
-        "claudecode".to_string()
-    } else {
-        key
+    let key = match key.as_str() {
+        "claude" => "claudecode".to_string(),
+        "dsh" => "deepseekharness".to_string(),
+        _ => key,
     };
     let squash = |s: &str| -> String {
         s.to_lowercase()
