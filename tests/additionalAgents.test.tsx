@@ -34,7 +34,7 @@ it("renders Pi's official three-color mark at the existing Agent icon sizes", ()
   expect(marks[1]).toHaveClass("h-4", "w-4");
   for (const mark of marks) {
     expect(mark).toHaveAttribute("aria-hidden", "true");
-    expect(mark).toHaveAttribute("viewBox", "139.21 139.21 521.59 521.59");
+    expect(mark).toHaveAttribute("viewBox", "113.77 113.77 572.47 572.47");
     expect(
       Array.from(mark.querySelectorAll("path"), (p) => p.getAttribute("fill")),
     ).toEqual(["#F09082", "#4D9ABF", "#F1BE58"]);

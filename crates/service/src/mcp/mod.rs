@@ -266,6 +266,7 @@ fn scanned_imports(
             oauth: false,
             client_id: None,
             scopes: vec![],
+            provenance: None,
             bindings,
         });
     }

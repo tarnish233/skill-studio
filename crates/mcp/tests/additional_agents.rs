@@ -17,6 +17,7 @@ fn entry(mode: &str) -> Entry {
         oauth: false,
         client_id: None,
         scopes: vec![],
+        provenance: None,
         bindings: vec![],
     }
 }

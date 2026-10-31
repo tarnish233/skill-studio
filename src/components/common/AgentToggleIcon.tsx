@@ -23,7 +23,7 @@ export interface AgentToggleItem {
   /** 悬停提示 */
   hint: string;
   tone: "on" | "off";
-  /** 需要人工关注：琥珀色并带提醒点 */
+  /** 需要人工关注：保留品牌色，仅用琥珀色提醒点标记 */
   attention?: boolean;
   /** 确认未安装时调暗，仍可点击 */
   dimmed?: boolean;
@@ -53,35 +53,20 @@ export function AgentToggleIcon({
           disabled={busy}
           onClick={item.onClick}
           className={cn(
-            "group/toggle relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border transition-colors",
+            "relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-transparent bg-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60",
             busy ? "disabled:cursor-wait" : inert && "cursor-not-allowed",
-            item.dimmed ? "opacity-40" : "disabled:opacity-60",
-            item.tone === "on"
-              ? item.attention
-                ? "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                : "border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-              : item.attention
-                ? "border-amber-500/40 text-amber-700 dark:text-amber-400"
-                : cn(
-                    "border-transparent text-muted-foreground/60",
-                    !inert &&
-                      "hover:border-border-default hover:bg-muted hover:text-foreground",
-                  ),
+            !inert && "hover:bg-muted",
+            item.tone === "on" ? "text-foreground" : "text-muted-foreground",
           )}
         >
-          {/*
-            品牌图标自带颜色，不跟随文字色：未启用时去色，只有生效的 Agent 才显示品牌色。
-            悬停只看这个按钮（具名 group）—— 卡片本身也是 group，用裸 group-hover
-            会让悬停整张卡片时所有未启用图标一起变色。
-          */}
+          {/* Only enabled Agents are lit. Hover never turns an inactive logo into brand colors. */}
           <AgentIcon
             agentId={item.agentId}
             size="sm"
             className={cn(
-              item.tone === "off" && "opacity-70 grayscale",
+              item.tone === "off" && "grayscale",
               item.tone === "off" &&
-                !inert &&
-                "group-hover/toggle:opacity-100 group-hover/toggle:grayscale-0",
+                (item.dimmed ? "opacity-25" : "opacity-40"),
             )}
           />
           {item.attention && (

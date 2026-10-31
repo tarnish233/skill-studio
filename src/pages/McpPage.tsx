@@ -51,6 +51,12 @@ import {
 } from "@/components/common/ListItemRow";
 import { EmptyState } from "@/components/common/EmptyState";
 import { AgentIcon } from "@/components/common/AgentIcon";
+import {
+  SourceMark,
+  SOURCE_LABELS,
+  SOURCE_TITLES,
+  sourceIcon,
+} from "@/components/common/SourceMark";
 import { useTarget } from "@/components/targets/TargetProvider";
 import {
   DetailTransition,
@@ -69,6 +75,7 @@ import {
   MCP_STATUS_STALE_TIME,
   MCP_STATUS_POLL_INTERVAL,
   rows,
+  mcpSourceIds,
   type McpRow,
   type ManagedMcp,
   type McpInstallResult,
@@ -169,14 +176,24 @@ function McpHub() {
     lastTest[row.entry.id]?.signature === signature(row.entry)
       ? lastTest[row.entry.id]
       : undefined;
-  const hasAgent = (row: McpRow, agent: string) =>
-    row.entry.bindings.some((b) => b.agent === agent) ||
-    row.sources.some((s) => s.agent === agent);
+  const sourceLabel = (id: string) => SOURCE_LABELS[id] ?? mcpAgentName(id);
+  const sourceTitle = (row: McpRow, id: string) =>
+    [
+      `来源：${sourceLabel(id)}`,
+      ...(row.managed
+        ? (row.entry.provenance?.originalSources ?? [])
+            .filter((source) => source.agent === id)
+            .map((source) => source.path)
+        : row.sources
+            .filter((source) => source.agent === id)
+            .map((source) => source.path)),
+      ...(id === "unknown" ? [SOURCE_TITLES.unknown] : []),
+    ].join("\n");
   const matches = (row: McpRow, f: string | null) =>
     !f ||
     (f === "gateway"
       ? row.managed && row.entry.mode === "gateway"
-      : hasAgent(row, f));
+      : mcpSourceIds(row).includes(f));
   const managedRows = catalog.filter((row) => row.managed);
   // 左侧的数字和列表同一口径：开着「已托管」时只数托管的
   const counted = managedOnly ? managedRows : catalog;
@@ -608,9 +625,26 @@ function McpHub() {
                   label: a.name,
                   iconId: a.appId,
                   count: count(a.id),
-                  title: `筛选 ${a.name} 已配置的 MCP`,
+                  title: `筛选 ${a.name} 来源`,
                 }),
               ),
+              {
+                id: "studio",
+                label: SOURCE_LABELS.studio,
+                icon: sourceIcon("studio"),
+                count: count("studio"),
+                title: "Skill Studio：通过 Skill Studio 添加到 Hub 的 MCP",
+              },
+              ...(count("unknown") > 0 || activeFilter === "unknown"
+                ? [
+                    {
+                      id: "unknown",
+                      label: SOURCE_LABELS.unknown,
+                      count: count("unknown"),
+                      title: SOURCE_TITLES.unknown,
+                    },
+                  ]
+                : []),
               {
                 id: "gateway",
                 label: "网关连接",
@@ -738,16 +772,18 @@ function McpHub() {
                       authPending={authRequired.includes(row.entry.id)}
                       running={running}
                     />
-                    {visibleMcpAgents
-                      .map((a) => a.id)
-                      .filter((a) => hasAgent(row, a))
-                      .map((agent) => (
-                        <span
-                          key={agent}
-                          title={`${mcpAgentName(agent)} 中已配置`}
-                        >
-                          <AgentIcon agentId={mcpAppId(agent)} size="sm" />
-                        </span>
+                    {mcpSourceIds(row)
+                      .filter(
+                        (id) =>
+                          !settings?.disabledAgents?.includes(mcpAppId(id)),
+                      )
+                      .map((id) => (
+                        <SourceMark
+                          key={id}
+                          id={mcpAppId(id)}
+                          label={sourceLabel(id)}
+                          title={sourceTitle(row, id)}
+                        />
                       ))}
                   </div>
                   <p className="truncate pt-0.5 text-xs text-muted-foreground">

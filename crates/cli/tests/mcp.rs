@@ -637,6 +637,68 @@ fn viewing_mcp_in_a_read_only_home_writes_nothing() {
 
 #[test]
 #[serial]
+fn provenance_cli_add_records_studio_and_metadata_does_not_mark_deployments_pending() {
+    let home = Home::new();
+    home.ok(&["mcp", "add", "alpha", "--", "alpha-server"]);
+    let catalog_file = ".skill-studio/mcp/catalog.json";
+    let mut catalog: Value = serde_json::from_str(&home.read(catalog_file)).unwrap();
+    assert_eq!(
+        catalog["entries"][0]["provenance"],
+        serde_json::json!({
+            "sourceIds": ["studio"], "originalSources": []
+        })
+    );
+    home.ok(&["mcp", "groups", "create", "g", "--mcp", "alpha"]);
+    home.ok(&["mcp", "groups", "enable", "g", "-a", "codex"]);
+    let root = home.path("work/app");
+    std::fs::create_dir_all(&root).unwrap();
+    home.ok(&["projects", "create", root.to_str().unwrap()]);
+    home.ok(&["mcp", "projects", "add", "app", "--groups", "g"]);
+    home.ok(&["mcp", "projects", "enable", "app", "-a", "codex"]);
+    let native_before = home.read(".codex/config.toml");
+    let project_before = home.read("work/app/.codex/config.toml");
+    catalog = serde_json::from_str(&home.read(catalog_file)).unwrap();
+    let origin = catalog["entries"][0]["provenance"].clone();
+    // Model a legacy deployment snapshot made before origin metadata was available.
+    catalog["activeGroups"]["codex"][0]["entries"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("provenance");
+    for project in catalog["projects"].as_object_mut().unwrap().values_mut() {
+        project["active"]["codex"]["entries"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("provenance");
+    }
+    home.write(catalog_file, &catalog.to_string());
+    let shown = home.json(&["mcp", "groups", "show", "g"]).json();
+    assert_eq!(
+        shown["states"][0]["pending"],
+        serde_json::json!([]),
+        "{shown}"
+    );
+    let listed = home.json(&["mcp", "projects", "list"]).json();
+    assert_eq!(listed[0]["pending"], false, "{listed}");
+    assert_eq!(home.read(".codex/config.toml"), native_before);
+    assert_eq!(home.read("work/app/.codex/config.toml"), project_before);
+    assert_eq!(
+        home.json(&["mcp", "set", "alpha", "--", "alpha-server"])
+            .json()["changed"],
+        false
+    );
+    // A real CLI edit still preserves origin and creates pending definition changes.
+    home.ok(&["mcp", "set", "alpha", "--", "edited-server"]);
+    let catalog: Value = serde_json::from_str(&home.read(catalog_file)).unwrap();
+    assert_eq!(catalog["entries"][0]["provenance"], origin);
+    let shown = home.json(&["mcp", "groups", "show", "g"]).json();
+    assert_eq!(
+        shown["states"][0]["pending"],
+        serde_json::json!(["alpha 的配置已修改"])
+    );
+}
+
+#[test]
+#[serial]
 fn changing_a_hub_mcp_marks_its_groups_pending_until_applied() {
     let home = Home::new();
     home.write(

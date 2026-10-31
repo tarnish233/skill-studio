@@ -9,7 +9,7 @@ export interface AgentToggleState {
   agentId: string;
   label: string;
   active: boolean;
-  /** 已启用但需要关注的原因（如「有待应用修改」「需要检查」）：图标转琥珀色并带提醒点 */
+  /** 已启用但需要关注的原因（如「有待应用修改」「需要检查」）：保留品牌色，用琥珀色提醒点标记 */
   attention?: string;
   /** 附在可访问名称和提示里的补充说明，如「未检测到安装」「已关闭管理」 */
   note?: string;

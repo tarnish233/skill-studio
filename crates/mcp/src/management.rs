@@ -60,7 +60,60 @@ pub struct Entry {
     pub scopes: Vec<String>,
     #[serde(default)]
     pub bindings: Vec<Binding>,
+    /// Historical origin, not current deployment. Missing on legacy entries means unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<Provenance>,
 }
+
+/// Origin recorded by the backend when a Hub entry is first saved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Provenance {
+    pub source_ids: Vec<String>,
+    pub original_sources: Vec<OriginalSource>,
+}
+
+/// Source identity only: never retain definitions or credentials in provenance.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OriginalSource {
+    pub agent: String,
+    pub path: PathBuf,
+    pub project: Option<String>,
+    pub key: String,
+}
+
+impl Provenance {
+    fn from_targets(targets: &[Target]) -> Self {
+        let mut source_ids = vec![];
+        let mut original_sources = vec![];
+        let mut seen = HashSet::new();
+        // Only targets with an expected native definition are adoptions. Empty targets
+        // and new deployment targets are Studio-created, regardless of submitted metadata.
+        for target in targets.iter().filter(|target| target.expected.is_some()) {
+            let source = OriginalSource {
+                agent: target.agent.clone(),
+                path: target.path.clone(),
+                project: target.project.clone(),
+                key: target.key.clone(),
+            };
+            if seen.insert(source.clone()) {
+                if !source_ids.contains(&source.agent) {
+                    source_ids.push(source.agent.clone());
+                }
+                original_sources.push(source);
+            }
+        }
+        if original_sources.is_empty() {
+            source_ids.push("studio".into());
+        }
+        Self {
+            source_ids,
+            original_sources,
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Binding {
@@ -282,6 +335,7 @@ fn read_unlocked(dir: &Path) -> Result<Catalog> {
             client_id: server.client_id,
             scopes: server.scopes,
             bindings,
+            provenance: None,
         });
     }
     Ok(Catalog {
@@ -486,9 +540,24 @@ pub fn save(
     let mut catalog = read_unlocked(dir)?;
     ensure_active(&catalog)?;
     let old = catalog.entries.iter().find(|e| e.id == entry.id).cloned();
-    if serde_json::to_value(&old)? != serde_json::to_value(expected_entry)? {
+    // Provenance is display-only metadata, not part of the optimistic edit revision.
+    let revision = |entry: Option<&Entry>| -> Result<Value> {
+        let mut entry = entry.cloned();
+        if let Some(entry) = &mut entry {
+            entry.provenance = None;
+        }
+        Ok(serde_json::to_value(entry)?)
+    };
+    if revision(old.as_ref())? != revision(expected_entry)? {
         bail!("MCP 已被其他操作修改，请关闭编辑器后重新打开");
     }
+    // Never accept caller-supplied origin. An edit preserves even an unknown legacy
+    // origin; adding/removing targets later cannot rewrite history. New adoption
+    // targets are checked against their expected native definitions by stage below.
+    entry.provenance = match &old {
+        Some(old) => old.provenance.clone(),
+        None => Some(Provenance::from_targets(&targets)),
+    };
     let mut files = BTreeMap::new();
     let mut installed = vec![];
     let mut seen = HashSet::new();
@@ -961,6 +1030,9 @@ fn recover(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "management/provenance_tests.rs"]
+mod provenance_tests;
 #[cfg(test)]
 #[path = "management/shared_tests.rs"]
 mod shared_tests;

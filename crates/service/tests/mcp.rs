@@ -6,8 +6,12 @@
 use serial_test::serial;
 use skill_studio_core::fs::paths;
 use skill_studio_core::services::store::Store;
-use skill_studio_mcp::management::{self, groups::Group, Entry};
-use skill_studio_service::mcp::{self, entries::Placement, projects::Members};
+use skill_studio_mcp::management::{self, groups::Group, Entry, OriginalSource, Provenance};
+use skill_studio_service::mcp::{
+    self,
+    entries::{Placement, SourceRef},
+    projects::Members,
+};
 use skill_studio_service::settings::{self, SettingsPatch};
 use skill_studio_service::{projects, state::AppState};
 use std::path::PathBuf;
@@ -67,6 +71,212 @@ fn hub(state: &AppState, id: &str) {
         ..Default::default()
     };
     mcp::entries::save(state, None, entry, None, &Placement::default()).unwrap();
+}
+
+#[test]
+#[serial]
+fn provenance_new_studio_entry_survives_group_project_deploy_and_stop() {
+    let env = Env::new();
+    let state = env.process();
+    hub(&state, "alpha");
+    let origin = env.catalog().entries[0].provenance.clone();
+    assert_eq!(
+        origin,
+        Some(Provenance {
+            source_ids: vec!["studio".into()],
+            original_sources: vec![],
+        })
+    );
+    group(&state, "a", &["alpha"]);
+    mcp::groups::set(&state, None, "codex", "a", true).unwrap();
+    let catalog = env.catalog();
+    assert_eq!(catalog.entries[0].provenance, origin);
+    assert_eq!(
+        catalog.active_groups["codex"][0].entries[0].provenance,
+        origin
+    );
+    let id = project(&env, &state);
+    mcp::projects::save(
+        &state,
+        None,
+        &id,
+        Members {
+            entry_ids: vec!["alpha".into()],
+            ..Default::default()
+        },
+        &[],
+        None,
+    )
+    .unwrap();
+    mcp::projects::activate(&state, None, &id, "codex", true).unwrap();
+    assert_eq!(
+        env.catalog().projects[&id].active["codex"].entries[0].provenance,
+        origin
+    );
+    for enabled in [false, true] {
+        settings::update_settings(
+            &state,
+            SettingsPatch {
+                manage_mcp: Some(enabled),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let catalog = env.catalog();
+        assert_eq!(catalog.entries[0].provenance, origin);
+        assert_eq!(
+            catalog.active_groups["codex"][0].entries[0].provenance,
+            origin
+        );
+        assert_eq!(
+            catalog.projects[&id].active["codex"].entries[0].provenance,
+            origin
+        );
+    }
+    mcp::groups::set(&state, None, "codex", "a", false).unwrap();
+    mcp::projects::activate(&state, None, &id, "codex", false).unwrap();
+    assert_eq!(env.catalog().entries[0].provenance, origin);
+    assert!(!env.codex().contains("alpha"));
+}
+
+#[test]
+#[serial]
+fn provenance_adoption_uses_rescanned_sources_and_survives_edits_and_target_changes() {
+    let env = Env::new();
+    let state = env.process();
+    let path = env.home.path().join(".codex/config.toml");
+    std::fs::write(&path, "[mcp_servers.original]\ncommand='original-server'\n[mcp_servers.original.env]\nTOKEN='source-secret'\n").unwrap();
+    let scanned = mcp::overview(&state, None).unwrap().scanned;
+    let source = scanned
+        .discovered
+        .iter()
+        .flat_map(|entry| &entry.sources)
+        .find(|source| source.agent == "codex" && source.key == "original")
+        .unwrap();
+    let input = Entry {
+        id: "adopted".into(),
+        name: "adopted".into(),
+        mode: "direct".into(),
+        definition: skill_studio_mcp::native::canonical(&source.definition, "codex"),
+        provenance: Some(Provenance {
+            source_ids: vec!["forged".into()],
+            original_sources: vec![],
+        }),
+        ..Default::default()
+    };
+    let mut placement = Placement {
+        sources: vec![SourceRef {
+            id: source.id.clone(),
+            definition: source.definition.clone(),
+        }],
+        // A fresh deployment is not an original source.
+        agents: vec!["claude".into()],
+        ..Default::default()
+    };
+    // The source definition must still match the backend scan; failed adoption records nothing.
+    placement.sources[0].definition["command"] = serde_json::json!("stale");
+    assert!(mcp::entries::save(&state, None, input.clone(), None, &placement).is_err());
+    assert!(env.catalog().entries.is_empty());
+    placement.sources[0].definition = source.definition.clone();
+    mcp::entries::save(&state, None, input, None, &placement).unwrap();
+    let saved = env.catalog().entries.remove(0);
+    let origin = Some(Provenance {
+        source_ids: vec!["codex".into()],
+        original_sources: vec![OriginalSource {
+            agent: "codex".into(),
+            path,
+            project: None,
+            key: "original".into(),
+        }],
+    });
+    assert_eq!(saved.provenance, origin);
+    assert_eq!(saved.bindings.len(), 2);
+    assert!(!serde_json::to_string(&origin)
+        .unwrap()
+        .contains("source-secret"));
+    let mut edited = saved.clone();
+    edited.name = "renamed".into();
+    edited.definition["command"] = serde_json::json!("edited-server");
+    edited.provenance = None; // Older editors omit the new field.
+    let placement = Placement {
+        binding_ids: saved
+            .bindings
+            .iter()
+            .map(|binding| binding.id.clone())
+            .collect(),
+        agents: vec!["pi".into()],
+        ..Default::default()
+    };
+    mcp::entries::save(&state, None, edited, Some(saved), &placement).unwrap();
+    let saved = env.catalog().entries.remove(0);
+    assert_eq!(saved.bindings.len(), 3);
+    assert_eq!(saved.provenance, origin);
+    // Removing every deployment does not turn an adopted source into a Studio source.
+    mcp::entries::save(
+        &state,
+        None,
+        saved.clone(),
+        Some(saved),
+        &Placement::default(),
+    )
+    .unwrap();
+    let saved = env.catalog().entries.remove(0);
+    assert!(saved.bindings.is_empty());
+    assert_eq!(saved.provenance, origin);
+    group(&state, "adopted-group", &["adopted"]);
+    mcp::groups::set(&state, None, "codex", "adopted-group", true).unwrap();
+    assert_eq!(
+        env.catalog().active_groups["codex"][0].entries[0].provenance,
+        origin
+    );
+    mcp::groups::set(&state, None, "codex", "adopted-group", false).unwrap();
+    assert_eq!(env.catalog().entries[0].provenance, origin);
+}
+
+#[test]
+#[serial]
+fn provenance_legacy_entry_stays_unknown_after_edit_deploy_and_stop() {
+    let env = Env::new();
+    let state = env.process();
+    hub(&state, "legacy");
+    let mut catalog = env.catalog();
+    catalog.entries[0].provenance = None;
+    std::fs::write(
+        env.dir().join("mcp/catalog.json"),
+        serde_json::to_vec(&catalog).unwrap(),
+    )
+    .unwrap();
+    let opened = catalog.entries.remove(0);
+    let mut edited = opened.clone();
+    edited.name = "legacy-renamed".into();
+    edited.provenance = Some(Provenance {
+        source_ids: vec!["studio".into()],
+        original_sources: vec![],
+    });
+    mcp::entries::save(&state, None, edited, Some(opened), &Placement::default()).unwrap();
+    group(&state, "legacy-group", &["legacy"]);
+    mcp::groups::set(&state, None, "codex", "legacy-group", true).unwrap();
+    let catalog = env.catalog();
+    assert!(catalog.entries[0].provenance.is_none());
+    assert!(catalog.active_groups["codex"][0].entries[0]
+        .provenance
+        .is_none());
+    for enabled in [false, true] {
+        settings::update_settings(
+            &state,
+            SettingsPatch {
+                manage_mcp: Some(enabled),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(env.catalog().entries[0].provenance.is_none());
+    }
+    mcp::groups::set(&state, None, "codex", "legacy-group", false).unwrap();
+    assert!(env.catalog().entries[0].provenance.is_none());
+    assert!(mcp::status(&state, None).unwrap()["entries"][0]
+        .get("provenance")
+        .is_none());
 }
 
 fn group(state: &AppState, id: &str, members: &[&str]) {

@@ -36,6 +36,16 @@ export interface ManagedMcp {
   oauth: boolean;
   clientId: string | null;
   scopes: string[];
+  /** Stable add/adoption history, independent of current Agent connections. Missing on older records. */
+  provenance?: {
+    sourceIds: string[];
+    originalSources: {
+      agent: string;
+      path: string;
+      project: string | null;
+      key: string;
+    }[];
+  } | null;
   bindings: ManagedBinding[];
 }
 /** 分组不归属任何单个 agent：同一个分组可以被不同 agent 各自独立激活 */
@@ -128,6 +138,19 @@ export interface McpRow {
   sources: McpSource[];
   authorized?: boolean;
   authRequired?: boolean;
+}
+/** Same source semantics as Skill Hub: stable history, not current Agent connections. */
+export function mcpSourceIds(row: McpRow): string[] {
+  const ids = row.managed
+    ? row.entry.provenance?.sourceIds
+    : row.sources.map((source) => source.agent);
+  return [
+    ...new Set(
+      ids?.length
+        ? ids.map((id) => (id === "builtin" ? "studio" : id))
+        : ["unknown"],
+    ),
+  ];
 }
 export function canonical(
   definition: Definition,

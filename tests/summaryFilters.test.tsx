@@ -218,6 +218,16 @@ const managed = (
   clientId: null,
   scopes: [],
   bindings,
+  // These fixtures represent original Agent configurations adopted into the Hub.
+  provenance: {
+    sourceIds: [...new Set(bindings.map((binding) => binding.agent))],
+    originalSources: bindings.map(({ agent, path, project, key }) => ({
+      agent,
+      path,
+      project,
+      key,
+    })),
+  },
 });
 const mcpStatus = (over: Partial<ManagementStatus>): ManagementStatus => ({
   running: false,

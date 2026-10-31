@@ -452,11 +452,13 @@ it("dims Agents that are not installed instead of hiding them", async () => {
   const icon = await screen.findByRole("button", {
     name: "为 Codex 启用「Dev」（未检测到安装）",
   });
-  expect(icon).toHaveClass("opacity-40");
+  expect(icon.querySelector("svg")).toHaveClass("grayscale", "opacity-25");
   expect(icon).toBeEnabled();
   expect(
-    screen.getByRole("button", { name: "为 Claude Code 启用「Dev」" }),
-  ).not.toHaveClass("opacity-40");
+    screen
+      .getByRole("button", { name: "为 Claude Code 启用「Dev」" })
+      .querySelector("svg"),
+  ).toHaveClass("grayscale", "opacity-40");
 });
 
 /** 分组页顶部的 Agent 视角胶囊 */

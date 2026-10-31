@@ -12,6 +12,7 @@ fn hub(id: &str) -> Entry {
         oauth: false,
         client_id: None,
         scopes: vec![],
+        provenance: None,
         bindings: vec![],
     }
 }

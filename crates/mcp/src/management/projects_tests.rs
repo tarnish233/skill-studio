@@ -12,6 +12,7 @@ fn hub(dir: &Path, id: &str, command: &str) {
             oauth: false,
             client_id: None,
             scopes: vec![],
+            provenance: None,
             bindings: vec![],
         },
         vec![],

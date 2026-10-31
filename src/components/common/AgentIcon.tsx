@@ -7,7 +7,7 @@ interface MarkProps {
 }
 
 /**
- * 品牌图形的最长边以外框的 90% 为基准，细线条的 Grok 使用完整画布作视觉补偿。
+ * 品牌图形的最长边以外框的 90% 为基准；Pi 的实心像素块使用 82%，细线条的 Grok 使用完整画布作视觉补偿。
  * 通过 viewBox 校准原始留白，保留图形比例，不改变外框尺寸或图标与文字的间距。
  */
 
@@ -101,11 +101,11 @@ function GrokMark({ className }: MarkProps) {
   );
 }
 
-/** Pi 官方三色像素标记（pi.dev/logo-auto.svg），保留品牌色和现有留白校准。 */
+/** Pi 官方三色像素标记（pi.dev/logo-auto.svg）；以 82% 图形占比补偿实心色块的视觉重量。 */
 function PiMark({ className }: MarkProps) {
   return (
     <svg
-      viewBox="139.21 139.21 521.59 521.59"
+      viewBox="113.77 113.77 572.47 572.47"
       className={className}
       aria-hidden="true"
       focusable="false"

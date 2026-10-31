@@ -386,6 +386,7 @@ async fn gateway_reads_committed_catalog_and_stops_serving_direct_entries() {
         oauth: false,
         client_id: None,
         scopes: vec![],
+        provenance: None,
         bindings: vec![],
     };
     crate::management::save(&dir, entry.clone(), vec![], Path::new("/app"), None).unwrap();
@@ -461,6 +462,7 @@ fn a_stopped_gateway_still_forgets_removed_servers_and_their_credentials() {
             oauth: false,
             client_id: None,
             scopes: vec![],
+            provenance: None,
             bindings: vec![],
         };
         crate::management::save(&dir, entry, vec![], Path::new("/app"), None).unwrap();

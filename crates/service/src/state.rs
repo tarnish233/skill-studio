@@ -786,6 +786,7 @@ mod tests {
                 oauth: false,
                 client_id: None,
                 scopes: vec![],
+                provenance: None,
                 bindings: vec![],
             },
             vec![Target {
@@ -897,6 +898,7 @@ mod tests {
             oauth: false,
             client_id: None,
             scopes: vec![],
+            provenance: None,
             bindings: vec![management::Binding {
                 id: "binding".into(),
                 agent: "codex".into(),

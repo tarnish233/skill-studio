@@ -120,6 +120,12 @@ it("maps disabled Claude and new Agents to MCP statistics and clears hidden filt
             oauth: false,
             clientId: null,
             scopes: [],
+            provenance: {
+              sourceIds: [agent],
+              originalSources: [
+                { agent, path: `/global/${agent}`, project: null, key: agent },
+              ],
+            },
             bindings: [
               {
                 id: agent,

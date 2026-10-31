@@ -28,6 +28,7 @@ fn claude_local_writes_into_this_projects_section_and_moves_when_switched() {
             oauth: false,
             client_id: None,
             scopes: vec![],
+            provenance: None,
             bindings: vec![],
         },
         vec![],
