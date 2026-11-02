@@ -70,9 +70,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Select Xcode with the Liquid Glass SDK
+      - name: Verify Apple Silicon runner and select Xcode
         if: runner.os == 'macOS'
-        run: sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+        run: |
+          test "$(uname -m)" = arm64
+          sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
       - name: Install pinned Rust toolchain
         run: rustup show
       - uses: Swatinem/rust-cache@v2

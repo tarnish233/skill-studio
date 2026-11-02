@@ -7,6 +7,13 @@ description: 用户明确要求发布 Skill Studio 时使用，负责版本同�
 
 由当前代理完成。用户要求发布即授权本次范围内的提交、推送和正式发布，不逐阶段索要确认，不自动委派代理。
 
+## 平台与架构
+
+- 从 v0.6.19 起，macOS 仅构建 Apple Silicon（`aarch64-apple-darwin`），桌面与随包 CLI 均为 arm64；不编译 Intel，不合成 Universal 包。Homebrew Cask 限制为 arm64。
+- Windows x64、Linux x64 安装包及 Linux 两种架构的远程组件保持不变，正式发布仍核验五个安装包。
+- 需要只测三端构建速度时，在 main 上手动触发 `release.yml` 的 `workflow_dispatch`：只构建并上传临时 artifact，不创建 Release、不更新 Homebrew；正式发布仍只走标签。
+- v0.6.18 及之前的 Universal 资产保留原样；历史版本按原架构核验，不移动旧标签、不替换已公开安装包。
+
 ## 准备与提交
 
 1. 一次检查 main、origin、工作区和最新稳定版本；未指定版本时递增 patch。保留无关文件，已有未完成发布先续跑。

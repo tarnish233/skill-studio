@@ -7,8 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
     "beforeDevCommand": "npx vite",
-    "beforeBuildCommand": "npx vite build",
-    "beforeBundleCommand": "node scripts/universal-cli.mjs"
+    "beforeBuildCommand": "npx vite build"
   },
   "app": {
     "macOSPrivateApi": true,

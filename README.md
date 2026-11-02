@@ -16,7 +16,7 @@
 
 ### macOS
 
-支持 Apple Silicon 和 Intel，需 macOS 12 或更高版本。
+从 v0.6.19 起，macOS 新版本仅支持 Apple Silicon（M 系列），需 macOS 12 或更高版本。Intel Mac 可使用 [v0.6.18 通用版](https://github.com/tarnish233/skill-studio/releases/tag/v0.6.18)，不再提供后续 Intel 构建。
 
 ```sh
 brew install --cask tarnish233/tap/skill-studio

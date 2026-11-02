@@ -9,7 +9,9 @@ default-run  = "skill-studio"
 
 [lib]
 name       = "skill_studio_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# 桌面端只需要 rlib；不再额外产出 staticlib / cdylib（移动端才需要）。
+# 这能省掉两套完整代码生成与链接，缩短 Release 构建。
+crate-type = ["rlib"]
 doctest    = false
 
 [build-dependencies]

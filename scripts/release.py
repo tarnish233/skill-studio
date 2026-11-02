@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Skill Studio release checks and tag publishing (Python 3.11+, git, gh)."""
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -8,6 +9,7 @@ import sys
 import time
 import tomllib
 from pathlib import Path
+from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = "tarnish233/skill-studio"
@@ -208,8 +210,14 @@ def publish_tag(number, wait=False, timeout=3600):
     return sha
 
 
+def macos_asset_suffix(number):
+    # v0.6.18 is the last published Universal release. Keep historical verification
+    # valid without allowing Universal/Intel assets in subsequent releases.
+    return "aarch64.dmg" if tuple(map(int, version(number).split("."))) >= (0, 6, 19) else "universal.dmg"
+
+
 def check_assets(assets, number):
-    suffixes = {"universal.dmg", "x64-setup.exe", "x64_en-US.msi", "amd64.AppImage", "amd64.deb"}
+    suffixes = {macos_asset_suffix(number), "x64-setup.exe", "x64_en-US.msi", "amd64.AppImage", "amd64.deb"}
     found = set()
     for asset in assets:
         match = re.fullmatch(rf"Skill[. ]Studio_{re.escape(number)}_(.+)", asset["name"])
@@ -218,6 +226,93 @@ def check_assets(assets, number):
         found.add(match[1])
     if found != suffixes:
         raise ValueError(f"缺少安装包：{sorted(suffixes - found)}")
+
+
+def download_hash(url):
+    digest = hashlib.sha256()
+    with urlopen(url, timeout=60) as response:
+        for chunk in iter(lambda: response.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def with_cask_cli(text):
+    app = '  app "Skill Studio.app"\n'
+    binary = '  binary "#{appdir}/Skill Studio.app/Contents/MacOS/skill-studio-cli", target: "skill-studio"\n'
+    if binary not in text:
+        if text.count(app) != 1:
+            raise ValueError("Cask 必须恰有一个应用入口")
+        text = text.replace(app, app + binary, 1)
+    return text
+
+
+def update_cask(text, release, hash_download):
+    """Validate a stable DMG before updating only the Cask's owned fields."""
+    if release.get("draft") or release.get("prerelease"):
+        return text
+    tag = release["tag_name"]
+    number = version(tag.removeprefix("v"))
+    if tag != f"v{number}":
+        raise ValueError(f"不支持的发布标签：{tag}")
+    current = re.findall(r'^  version "([^"]+)"$', text, re.M)
+    if len(current) != 1:
+        raise ValueError("Cask 必须恰有一个版本")
+    current_number = version(current[0])
+    if tuple(map(int, number.split("."))) <= tuple(map(int, current_number.split("."))):
+        return text
+    suffix = macos_asset_suffix(number)
+    name = f"Skill.Studio_{number}_{suffix}"
+    assets = [a for a in release["assets"] if a["name"] == name]
+    if len(assets) != 1 or assets[0].get("state") != "uploaded" or assets[0].get("size", 0) <= 0:
+        raise ValueError(f"发布 DMG 未就绪：{name}")
+    asset = assets[0]
+    url = f"https://github.com/{REPO}/releases/download/{tag}/{name}"
+    if asset["browser_download_url"] != url:
+        raise ValueError("发布资产 URL 不匹配")
+    digest = hash_download(url)
+    if not re.fullmatch(r"[a-f0-9]{64}", digest):
+        raise ValueError("下载的 SHA-256 无效")
+    if asset.get("digest") and asset["digest"] != f"sha256:{digest}":
+        raise ValueError("下载的 DMG 与 GitHub 摘要不匹配")
+    text, count = re.subn(r'^  sha256 "[a-f0-9]{64}"$', f'  sha256 "{digest}"', text, flags=re.M)
+    if count != 1:
+        raise ValueError("Cask 必须恰有一个 SHA-256")
+    urls = re.findall(r'^  url "([^"]+)"$', text, re.M)
+    prefix = f"https://github.com/{REPO}/releases/download/v#{{version}}/Skill.Studio_#{{version}}_"
+    if len(urls) != 1 or urls[0] not in {prefix + "universal.dmg", prefix + "aarch64.dmg"}:
+        raise ValueError("Cask 下载 URL 不匹配")
+    text = text.replace(f'  url "{urls[0]}"', f'  url "{prefix}{suffix}"', 1)
+    text = re.sub(r'^  version "[^"]+"$', f'  version "{number}"', text, flags=re.M)
+    if suffix == "aarch64.dmg":
+        arch = re.findall(r'^  depends_on arch:.*$', text, re.M)
+        if len(arch) > 1:
+            raise ValueError("Cask 架构限制重复")
+        if arch:
+            text = text.replace(arch[0], "  depends_on arch: :arm64", 1)
+        else:
+            macos = re.findall(r'^  depends_on macos:.*$', text, re.M)
+            if len(macos) != 1:
+                raise ValueError("Cask 必须恰有一个 macOS 版本限制")
+            text = text.replace(macos[0], "  depends_on arch: :arm64\n" + macos[0], 1)
+    return with_cask_cli(text)
+
+
+def update_homebrew_cask(path, number):
+    version(number)
+    tag = f"v{number}"
+    data = json.loads(run("gh", "api", f"repos/{REPO}/releases/tags/{tag}", timeout=120))
+    if data["tag_name"] != tag or data["draft"] or data["prerelease"]:
+        raise ValueError("需要指定版本的正式发布")
+    if not data["assets"] and data.get("id"):
+        data["assets"] = json.loads(run("gh", "api", f"repos/{REPO}/releases/{data['id']}/assets", timeout=120))
+    previous = path.read_text()
+    # Keep the existing workflow's CLI-link repair even on an already-current Cask.
+    updated = with_cask_cli(update_cask(previous, data, download_hash))
+    if updated == previous:
+        print("Cask is already current.")
+        return
+    path.write_text(updated)
+    print(f"Updated Cask to {tag}")
 
 
 def publish_assets(directory):
@@ -278,6 +373,9 @@ def main():
     artifacts = sub.add_parser("artifacts")
     artifacts.add_argument("directory", type=Path)
     sub.add_parser("publish-assets").add_argument("directory", type=Path)
+    cask = sub.add_parser("update-cask", help="核验指定发布的 DMG 并更新 Homebrew Cask")
+    cask.add_argument("file", type=Path)
+    cask.add_argument("--version", type=version, required=True)
     args = parser.parse_args()
     if args.command == "release":
         if args.timeout <= 0:
@@ -285,6 +383,8 @@ def main():
         release(args.version, args.timeout)
     elif args.command == "set-version":
         set_version(ROOT, args.version)
+    elif args.command == "update-cask":
+        update_homebrew_cask(args.file, args.version)
     elif args.command == "verify":
         print(verify(tag=args.tag))
     elif args.command == "check":

@@ -1,0 +1,46 @@
+name: Warm release cache
+
+# Release 构建最贵的是第三方依赖。标签之间不能共享 Actions 缓存，但标签可以
+# 恢复主分支缓存，所以在主分支的依赖清单变化时先编一遍 Release 依赖。
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - crates/**/Cargo.toml
+      - src-tauri/Cargo.toml
+      - src-tauri/tauri.conf.json
+      - rust-toolchain.toml
+      - .github/workflows/warm-release-cache.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warm-release-cache
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # 必须与 release.yml 的 shared-key 和代码生成单元数一致，命中同一份缓存。
+          shared-key: release
+          cache-on-failure: true
+          workspaces: . -> target
+      # tauri-build 要求 frontendDist 存在；预热只编 Rust，不跑前端构建。
+      - name: Stub frontend dist
+        shell: bash
+        run: mkdir -p dist && echo '<!doctype html><title>cache</title>' > dist/index.html
+      - name: Compile release dependencies
+        env:
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "8"
+        run: cargo build --release --locked -p skill-studio --lib

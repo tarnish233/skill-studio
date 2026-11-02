@@ -3,6 +3,8 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # 手动基准：只构建三端并上传临时 artifact，不创建 Release、不更新 Homebrew。
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -23,6 +25,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Verify version, main ancestry and successful CI for this commit
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -31,6 +34,10 @@ jobs:
           # Allow retrying a successful main commit after main advances.
           git merge-base --is-ancestor "$RELEASE_SHA" origin/main
           python scripts/release.py ci-gate --sha "$RELEASE_SHA"
+      # 基准构建不发布，只校验仓库版本一致；不要求版本标签。
+      - name: Verify version for a benchmark build
+        if: github.event_name == 'workflow_dispatch'
+        run: python scripts/release.py verify
 
   remote-helper:
     needs: gate
@@ -71,26 +78,33 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS 出 universal 包，一份同时支持 Apple Silicon 与 Intel
+          # macOS 仅构建 Apple Silicon；不再编译 Intel 或合成 Universal 包
           - os: macos-15
             label: macOS
-            args: "--target universal-apple-darwin"
-            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+            args: "--target aarch64-apple-darwin"
+            rust-targets: "aarch64-apple-darwin"
+            codegen-units: "1"
           - os: ubuntu-22.04
             label: Linux
             args: "--bundles appimage,deb"
             rust-targets: ""
+            codegen-units: "1"
           - os: windows-latest
             label: Windows
             args: "--bundles msi,nsis"
             rust-targets: ""
+            # Windows 的依赖编译和最终链接占 Release 的大头；8 个代码生成单元
+            # 配合 ThinLTO，可明显缩短构建，仍保留跨单元优化。
+            codegen-units: "8"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode with the Liquid Glass SDK
+      - name: Verify Apple Silicon runner and select Xcode
         if: runner.os == 'macOS'
-        run: sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
+        run: |
+          test "$(uname -m)" = arm64
+          sudo xcode-select -s /Applications/Xcode_26.3.app/Contents/Developer
 
       - uses: pnpm/action-setup@v4
         with:
@@ -114,6 +128,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
+          # 与主分支的预热任务共用缓存；标签之间不能互相恢复缓存，
+          # 因此标签构建只恢复、不保存，避免占满缓存配额。
+          shared-key: release
+          save-if: false
           workspaces: . -> target
 
       - name: Install Linux system deps
@@ -131,16 +149,22 @@ jobs:
           path: src-tauri/resources/remote
 
       - name: Build
+        env:
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ matrix.codegen-units }}
         run: pnpm exec tauri build ${{ matrix.args }}
 
-      # 命令行程序随 .app 一起安装（Homebrew 链成 skill-studio）：必须是两种架构都能跑的通用版
-      - name: Verify bundled command line
+      # 桌面和随包 CLI 均只包含 arm64；保留架构与命令行运行检查
+      - name: Verify bundled Apple Silicon binaries
         if: runner.os == 'macOS'
         run: |
-          cli="target/universal-apple-darwin/release/bundle/macos/Skill Studio.app/Contents/MacOS/skill-studio-cli"
-          archs="$(lipo -archs "$cli")"
-          echo "skill-studio-cli: $archs"
-          [[ "$archs" == *arm64* && "$archs" == *x86_64* ]]
+          app="target/aarch64-apple-darwin/release/bundle/macos/Skill Studio.app"
+          executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
+          cli="$app/Contents/MacOS/skill-studio-cli"
+          for binary in "$app/Contents/MacOS/$executable" "$cli"; do
+            archs="$(lipo -archs "$binary")"
+            echo "$binary: $archs"
+            [[ "$archs" == arm64 ]]
+          done
           "$cli" --version
 
       - name: Verify the command line is inside the Linux packages
@@ -173,11 +197,19 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist-artifacts
-          # 各平台产物路径不同，统一捞到一个目录里
-          find target -type f \
-            \( -name "*.dmg" -o -name "*.AppImage" -o -name "*.deb" \
-               -o -name "*.msi" -o -name "*-setup.exe" \) \
-            -exec cp {} dist-artifacts/ \;
+          # 用 package.json 的实际版本；标签名在手动基准时是 main。
+          version="$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            # 只收集当前版本的 ARM64 包，避免缓存中的旧 Universal 产物混入发布
+            find target/aarch64-apple-darwin/release/bundle -type f \
+              -name "*_${version}_aarch64.dmg" \
+              -exec cp {} dist-artifacts/ \;
+          else
+            find target -type f \
+              \( -name "*.AppImage" -o -name "*.deb" \
+                 -o -name "*.msi" -o -name "*-setup.exe" \) \
+              -exec cp {} dist-artifacts/ \;
+          fi
           ls -la dist-artifacts
 
       - uses: actions/upload-artifact@v4

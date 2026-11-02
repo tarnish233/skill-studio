@@ -25,9 +25,9 @@ class ReleaseTests(unittest.TestCase):
                 'skill-studio-remote', 'skill-studio-service', 'dependency')))
         (self.root / 'CHANGELOG.md').write_text('## v0.1.2\nFixed bugs.\n## v0.1.1\nOlder.\n')
 
-    def assets(self):
-        return [{'name': f'Skill.Studio_0.1.2_{suffix}', 'size': 1} for suffix in
-                ('universal.dmg', 'x64-setup.exe', 'x64_en-US.msi', 'amd64.AppImage', 'amd64.deb')]
+    def assets(self, number='0.1.2', macos='universal.dmg'):
+        return [{'name': f'Skill.Studio_{number}_{suffix}', 'size': 1} for suffix in
+                (macos, 'x64-setup.exe', 'x64_en-US.msi', 'amd64.AppImage', 'amd64.deb')]
 
     def test_versions_and_notes(self):
         self.assertEqual(r.verify(self.root, 'v0.1.2'), '0.1.2')
@@ -70,6 +70,18 @@ class ReleaseTests(unittest.TestCase):
                 r.check_assets(assets, '0.1.2')
         with self.assertRaises(ValueError):
             r.check_assets(self.assets(), '0.1.3')
+
+    def test_macos_architecture_switch_keeps_history_and_rejects_new_universal_assets(self):
+        r.check_assets(self.assets('0.6.18'), '0.6.18')
+        with self.assertRaises(ValueError):
+            r.check_assets(self.assets('0.6.18', 'aarch64.dmg'), '0.6.18')
+        for number in ('0.6.19', '0.7.0', '1.0.0'):
+            r.check_assets(self.assets(number, 'aarch64.dmg'), number)
+            for wrong in ('universal.dmg', 'x64.dmg'):
+                with self.assertRaises(ValueError):
+                    r.check_assets(self.assets(number, wrong), number)
+            with self.assertRaises(ValueError):
+                r.check_assets(self.assets(number, 'aarch64.dmg')[:-1], number)
 
     def test_ci_requires_latest_exact_main_push(self):
         good = dict(databaseId=1, headSha='abc', headBranch='main', event='push',
@@ -234,6 +246,109 @@ class ReleaseTests(unittest.TestCase):
                                           'name = "skill-studio-mcp"\nversion = "0.1.1"'))
         with self.assertRaisesRegex(ValueError, '版本不一致'):
             r.verify(self.root)
+
+
+class HomebrewTests(unittest.TestCase):
+    def cask(self, number='0.6.18'):
+        return (f'cask "skill-studio" do\n  version "{number}"\n'
+                f'  sha256 "{"a" * 64}"\n\n'
+                f'  url "https://github.com/{r.REPO}/releases/download/v#{{version}}/'
+                'Skill.Studio_#{version}_universal.dmg"\n'
+                '  depends_on macos: :monterey\n'
+                '  app "Skill Studio.app"\n'
+                '  postflight_steps do\n    run "/usr/bin/xattr"\n  end\nend\n')
+
+    def release(self, number='0.6.19', macos='aarch64.dmg'):
+        name = f'Skill.Studio_{number}_{macos}'
+        return {'tag_name': f'v{number}', 'draft': False, 'prerelease': False,
+                'assets': [{'name': name, 'state': 'uploaded', 'size': 1,
+                            'browser_download_url': f'https://github.com/{r.REPO}/releases/download/v{number}/{name}',
+                            'digest': 'sha256:' + 'b' * 64}]}
+
+    def test_arm64_update_changes_url_hash_and_architecture_and_keeps_cli(self):
+        data = self.release()
+        with patch.object(r, 'download_hash', return_value='b' * 64) as download:
+            updated = r.update_cask(self.cask(), data, download)
+            download.assert_called_once_with(data['assets'][0]['browser_download_url'])
+        self.assertIn('  version "0.6.19"', updated)
+        self.assertIn('  sha256 "' + 'b' * 64 + '"', updated)
+        self.assertIn('Skill.Studio_#{version}_aarch64.dmg', updated)
+        self.assertEqual(updated.count('  depends_on arch: :arm64'), 1)
+        self.assertIn('  depends_on macos: :monterey', updated)
+        self.assertIn('  binary "#{appdir}/Skill Studio.app/Contents/MacOS/skill-studio-cli", target: "skill-studio"', updated)
+        self.assertIn('  postflight_steps do\n    run "/usr/bin/xattr"', updated)
+        with patch.object(r, 'download_hash') as download:
+            self.assertEqual(r.update_cask(updated, data, download), updated)
+            download.assert_not_called()
+
+    def test_historical_universal_update_does_not_restrict_intel(self):
+        updated = r.update_cask(self.cask('0.6.17'), self.release('0.6.18', 'universal.dmg'), lambda _: 'b' * 64)
+        self.assertIn('  version "0.6.18"', updated)
+        self.assertIn('Skill.Studio_#{version}_universal.dmg', updated)
+        self.assertNotIn('depends_on arch:', updated)
+
+    def test_draft_prerelease_and_older_versions_do_not_download_or_change_cask(self):
+        cases = [dict(self.release(), draft=True), dict(self.release(), prerelease=True),
+                 self.release('0.6.17', 'universal.dmg'), self.release('0.6.18', 'universal.dmg')]
+        for data in cases:
+            with patch.object(r, 'download_hash') as download:
+                self.assertEqual(r.update_cask(self.cask(), data, download), self.cask())
+                download.assert_not_called()
+
+    def test_wrong_architecture_and_unready_assets_are_rejected(self):
+        cases = [self.release(macos='universal.dmg'), dict(self.release(), assets=[])]
+        for change in ({'state': 'new'}, {'size': 0}, {'browser_download_url': 'https://example.com/wrong'}):
+            data = self.release()
+            data['assets'][0].update(change)
+            cases.append(data)
+        duplicate = self.release()
+        duplicate['assets'] *= 2
+        cases.append(duplicate)
+        for data in cases:
+            with patch.object(r, 'download_hash') as download:
+                with self.assertRaises(ValueError):
+                    r.update_cask(self.cask(), data, download)
+                download.assert_not_called()
+
+    def test_download_hash_must_be_valid_and_match_github_digest(self):
+        for digest in ('invalid', 'c' * 64):
+            with self.assertRaises(ValueError):
+                r.update_cask(self.cask(), self.release(), lambda _: digest)
+
+    def test_ambiguous_or_foreign_cask_fields_are_not_overwritten(self):
+        cases = [self.cask().replace('  version "0.6.18"', '  version "0.6.18"\n  version "0.6.18"'),
+                 self.cask().replace('  sha256 ', '  sha256 :no_check # '),
+                 self.cask().replace(f'https://github.com/{r.REPO}', 'https://example.com'),
+                 self.cask().replace('  app "Skill Studio.app"', '  app "Other.app"'),
+                 self.cask().replace('  depends_on macos:', '  depends_on arch: :arm64\n  depends_on arch: :arm64\n  depends_on macos:')]
+        for text in cases:
+            with self.assertRaises(ValueError):
+                r.update_cask(text, self.release(), lambda _: 'b' * 64)
+
+    def test_already_current_cask_still_repairs_missing_cli_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'skill-studio.rb'
+            path.write_text(self.cask())
+            with patch.object(r, 'run', return_value=json.dumps(self.release('0.6.18', 'universal.dmg'))), \
+                    patch.object(r, 'download_hash') as download:
+                r.update_homebrew_cask(path, '0.6.18')
+            updated = path.read_text()
+            self.assertIn('  version "0.6.18"', updated)
+            self.assertIn('  binary "#{appdir}/Skill Studio.app/Contents/MacOS/skill-studio-cli", target: "skill-studio"', updated)
+            self.assertNotIn('depends_on arch:', updated)
+            download.assert_not_called()
+
+    def test_empty_release_asset_snapshot_is_refetched_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'skill-studio.rb'
+            path.write_text(self.cask())
+            data = dict(self.release(), assets=[], id=42)
+            with patch.object(r, 'run', side_effect=[json.dumps(data), json.dumps(self.release()['assets'])]) as run, \
+                    patch.object(r, 'download_hash', return_value='b' * 64):
+                r.update_homebrew_cask(path, '0.6.19')
+            self.assertIn('  version "0.6.19"', path.read_text())
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_args.args[2], f'repos/{r.REPO}/releases/42/assets')
 
 
 if __name__ == '__main__':
