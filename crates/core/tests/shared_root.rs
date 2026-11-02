@@ -7,7 +7,9 @@ use skill_studio_core::{
     models::{agent::in_shared_root, skill::LinkStatus},
     services::scanner,
 };
-use std::{collections::HashMap, fs};
+use std::collections::HashMap;
+#[cfg(unix)]
+use std::fs;
 use support::Env;
 
 #[test]
