@@ -11,7 +11,7 @@ fn generated_reference_has_no_trailing_whitespace_and_never_writes_config() {
     std::env::remove_var(skill_studio_core::fs::paths::TEST_HOME_ENV);
     assert_eq!(code, 0, "{}", String::from_utf8_lossy(&err));
     assert!(!home.path().join(".skill-studio").exists());
-    let output = String::from_utf8(out).unwrap();
+    let output = String::from_utf8(out).unwrap().replace("\r\n", "\n");
     for (index, line) in output.lines().enumerate() {
         assert_eq!(line, line.trim_end(), "第 {} 行有尾随空白", index + 1);
     }
@@ -20,9 +20,12 @@ fn generated_reference_has_no_trailing_whitespace_and_never_writes_config() {
     } else {
         assert_eq!(
             output,
+            // Windows checkouts use CRLF; match the bundled CLI's existing test
+            // by normalizing only line endings, not documentation content.
             include_str!(
                 "../../../src-tauri/resources/builtin-skills/skill-studio/references/commands.md"
             )
+            .replace("\r\n", "\n")
         );
     }
 }
