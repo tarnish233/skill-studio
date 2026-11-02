@@ -292,7 +292,7 @@ fn a_recreated_original_is_not_hidden_as_another_hub_identity() {
     let hub = studio
         .adopt_to_hub(&mut config, &skill_id_for(&original))
         .unwrap();
-    fs::remove_file(&original).unwrap();
+    linker::remove_symlink_or_junction(&original).unwrap();
     env.write_simple_skill(&env.claude_skills(), "rex");
     let views = studio.scan_skills(&config).unwrap();
     assert_eq!(views.len(), 2);
