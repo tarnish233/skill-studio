@@ -23,7 +23,7 @@ pub struct Transaction {
     entries: Vec<Entry>,
     committed: bool,
     #[serde(skip)]
-    _lock: Option<fs::File>,
+    _lock: Option<JournalLock>,
 }
 
 pub fn remove(path: &Path) -> Result<()> {
@@ -101,9 +101,22 @@ fn is_direct_child(path: &Path, dir: &Path) -> bool {
     }
 }
 
+struct JournalLock(fs::File);
+
+impl Drop for JournalLock {
+    fn drop(&mut self) {
+        // Closing alone can leave flock held by a descriptor inherited during a
+        // concurrent fork. Unlock before close so finished transactions never
+        // remain locked until that unrelated child reaches exec or exits.
+        if let Err(error) = fs2::FileExt::unlock(&self.0) {
+            log::warn!("释放事务锁失败: {error}");
+        }
+    }
+}
+
 // The lock file is intentionally retained: unlinking it would allow two
 // processes to lock different inodes while recovering the same journal.
-fn lock_journal(journal: &Path) -> Result<fs::File> {
+fn lock_journal(journal: &Path) -> Result<JournalLock> {
     if let Some(parent) = journal.parent() {
         fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
     }
@@ -117,7 +130,7 @@ fn lock_journal(journal: &Path) -> Result<fs::File> {
         .map_err(|e| Error::io(&lock_path, e))?;
     fs2::FileExt::try_lock_exclusive(&file)
         .map_err(|e| Error::io_context("另一个进程正在修改此目录，请稍后重试", e))?;
-    Ok(file)
+    Ok(JournalLock(file))
 }
 
 impl Transaction {
@@ -507,6 +520,50 @@ mod tests {
 #[cfg(test)]
 mod locking_tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn a_forked_child_cannot_keep_a_finished_transaction_locked() {
+        use std::{
+            io::{Read, Write},
+            os::unix::{net::UnixStream, process::CommandExt},
+            process::Command,
+            time::Duration,
+        };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let journal = tmp.path().join("migration.json");
+        let tx = Transaction::begin(journal.clone()).unwrap();
+        let (mut parent, mut child) = UnixStream::pair().unwrap();
+        parent
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        child
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let worker = std::thread::spawn(move || {
+            let mut command = Command::new("/usr/bin/true");
+            // Hold the child between fork and exec while it still has inherited
+            // file descriptors. Only socket IO runs in the pre-exec callback.
+            unsafe {
+                command.pre_exec(move || {
+                    child.write_all(&[1])?;
+                    child.read_exact(&mut [0])?;
+                    Ok(())
+                });
+            }
+            command.status()
+        });
+        parent.read_exact(&mut [0]).unwrap();
+        drop(tx);
+        let recovered = Transaction::begin(journal);
+        // Always release and reap the child before checking the result, including
+        // on the old implementation where the inherited lock causes WouldBlock.
+        parent.write_all(&[1]).unwrap();
+        assert!(worker.join().unwrap().unwrap().success());
+        recovered.unwrap().rollback().unwrap();
+    }
+
     #[test]
     fn recovery_cannot_undo_another_live_transaction() {
         let dir = tempfile::tempdir().unwrap();
