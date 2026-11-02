@@ -93,9 +93,9 @@ jobs:
             label: Windows
             args: "--bundles msi,nsis"
             rust-targets: ""
-            # Windows 的依赖编译和最终链接占 Release 的大头；16 个代码生成单元
-            # 配合 ThinLTO，进一步并行代码生成，仍保留跨单元优化。
-            codegen-units: "16"
+            # 实测 16 个代码生成单元没有进一步收益；Windows 的瓶颈是最终链接
+            # 与 MSI/NSIS 打包，保持 8 以保留更好的优化和更小的体积。
+            codegen-units: "8"
     runs-on: ${{ matrix.os }}
     # 放到 job 级，rust-cache 才能把代码生成单元数计入缓存键。
     env:

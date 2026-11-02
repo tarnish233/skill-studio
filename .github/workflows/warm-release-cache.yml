@@ -28,7 +28,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     env:
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "8"
     steps:
       - uses: actions/checkout@v4
       - name: Install pinned Rust toolchain
