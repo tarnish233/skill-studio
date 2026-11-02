@@ -36,16 +36,12 @@ fn sources_and_full_backup_survive_collection_reload_and_release() {
         let record = c.skill_provenance[&adopted.id].clone();
         assert_eq!(record.source_ids, ids);
         assert_eq!(record.original_path, source);
-        // 原件在共享根：纳入托管后那里不留回链，改为 Codex 自己目录里的入口
-        let codex_entry = env.codex_skills().join("demo");
-        assert!(fs::symlink_metadata(&source).is_err());
+        // 共享根也只保留软链接，不再复制或转移原入口。
+        let codex_entry = source.clone();
+        assert!(scanner::is_symlink_or_junction(&source));
         assert_eq!(
             linker::link_status(&adopted.source_path, &codex_entry),
-            if mode == LinkMode::Copy {
-                LinkStatus::Copied
-            } else {
-                LinkStatus::Linked
-            }
+            LinkStatus::Linked
         );
         assert_eq!(
             c.registrations[&adopted.id]["codex"].target_path,
@@ -61,10 +57,10 @@ fn sources_and_full_backup_survive_collection_reload_and_release() {
         let mut c = studio.load_config().unwrap();
         assert_eq!(studio.scan_skills(&c).unwrap()[0].source_ids, ids);
         let restored = studio.release_from_hub(&mut c, &adopted.id).unwrap();
-        // 移出 Hub 也不回到共享根：放进所属 Agent（Codex）自己的目录
-        assert_eq!(restored.source_path, codex_entry);
-        assert_eq!(restored.root, env.codex_skills());
-        assert!(fs::symlink_metadata(&source).is_err());
+        // 明确还原时才把真身移回原始目录。
+        assert_eq!(restored.source_path, source);
+        assert_eq!(restored.root, env.agents_skills());
+        assert!(!scanner::is_symlink_or_junction(&source));
         assert!(!scanner::is_symlink_or_junction(&codex_entry));
         assert!(!codex_entry.join(scanner::COPY_SIDECAR).exists());
         assert_eq!(
@@ -138,7 +134,7 @@ fn generated_registrations_do_not_change_provenance_and_legacy_hub_is_unknown() 
 
 #[test]
 #[serial]
-fn modified_original_copy_blocks_release_without_changes() {
+fn a_recreated_original_blocks_release_without_changes() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
@@ -146,6 +142,8 @@ fn modified_original_copy_blocks_release_without_changes() {
     c.settings.default_link_mode = LinkMode::Copy;
     let id = studio.scan_skills(&c).unwrap()[0].skill.id.clone();
     let adopted = studio.adopt_to_hub(&mut c, &id).unwrap();
+    linker::remove_symlink_or_junction(&source).unwrap();
+    env.write_simple_skill(&env.claude_skills(), "demo");
     fs::write(source.join("local.txt"), "do not overwrite").unwrap();
     let before = fs::read(studio.store().config_path()).unwrap();
     assert!(studio.release_from_hub(&mut c, &adopted.id).is_err());

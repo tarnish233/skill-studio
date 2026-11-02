@@ -3,7 +3,7 @@ use super::{linker, native_toggle, scanner, studio::Studio, transaction::Transac
 use crate::{
     fs::{atomic, paths},
     models::{
-        agent::{in_shared_root, require_agent},
+        agent::require_agent,
         config::{AppConfig, Registration},
         group::{ActiveGroup, Group, GroupEntry, UntouchedCopy},
         skill::LinkMode,
@@ -276,62 +276,39 @@ impl Studio {
         }
         let overrides = &config.settings.agent_dir_overrides;
         let roots = agent.resolved_global_roots(overrides);
-        let mut restores = Vec::new();
         let mut removals = Vec::new();
-        let mut restored_paths = HashSet::new();
-        // 原件只在共享根里出现过的 skill 改还原到这个 agent 自己的根，记下新入口
-        let mut redirected = Vec::new();
+        let mut retained_links = HashSet::new();
         if leaving {
+            // Leaving an Agent is not releasing a Hub source. Keep migration
+            // back-links intact; restoring a snapshot here would duplicate originals.
             for view in &views {
                 if let Some(record) = config.skill_provenance.get(&view.skill.id) {
-                    let backup = record.backup_path.join("content");
-                    let (shared, own): (Vec<&std::path::PathBuf>, Vec<_>) = record
+                    for target in record
                         .entry_paths
                         .iter()
                         .chain(std::iter::once(&record.original_path))
-                        .filter(|target| {
-                            target
-                                .parent()
-                                .is_some_and(|p| roots.iter().any(|r| paths::paths_alias(p, r)))
-                        })
-                        .partition(|target| in_shared_root(target, overrides));
-                    // 不往共享根里还原：其他仍在管理中的 agent 也会加载它。这个 agent
-                    // 自己的根里本来就有入口就只还原那里，否则换到它的写入根。
-                    let mut candidates: HashSet<_> = own.into_iter().cloned().collect();
-                    if candidates.is_empty() {
-                        let name = shared
-                            .iter()
-                            .find(|t| ***t == record.original_path)
-                            .or(shared.first())
-                            .and_then(|t| t.file_name());
-                        if let Some(name) = name {
-                            let private = agent.primary_global_root(overrides).join(name);
-                            redirected.push((view.skill.id.clone(), private.clone()));
-                            candidates.insert(private);
+                    {
+                        if !target.parent().is_some_and(|parent| {
+                            roots.iter().any(|root| paths::paths_alias(parent, root))
+                        }) || target.symlink_metadata().is_err()
+                        {
+                            continue;
                         }
-                    }
-                    for target in candidates {
-                        restored_paths.insert(target.clone());
-                        if scanner::dir_content_hash(&backup)? != record.original_hash {
-                            return Err(Error::invalid("托管备份不完整，无法还原 Agent"));
-                        }
-                        use crate::models::skill::LinkStatus::*;
-                        if target.symlink_metadata().is_ok() {
-                            let status = linker::link_status(&view.skill.source_path, &target);
-                            if !matches!(status, Linked | Copied | CopyStale) {
-                                if !scanner::is_symlink_or_junction(&target)
-                                    && scanner::dir_content_hash(&target)
-                                        .is_ok_and(|h| h == record.original_hash)
-                                {
-                                    continue;
-                                }
+                        let status = linker::link_status(&view.skill.source_path, target);
+                        if scanner::is_symlink_or_junction(target) {
+                            if status != crate::models::skill::LinkStatus::Linked {
                                 return Err(Error::invalid(format!(
-                                    "原目录已修改或被占用，无法还原：{}",
+                                    "托管入口已被替换，无法退出管理：{}",
                                     target.display()
                                 )));
                             }
+                            retained_links.insert(target.clone());
+                        } else if target == &record.original_path {
+                            return Err(Error::invalid(format!(
+                                "托管原入口不再是软链接，请先处理：{}",
+                                target.display()
+                            )));
                         }
-                        restores.push((target, backup.clone(), record.original_hash.clone()));
                     }
                 }
             }
@@ -341,7 +318,7 @@ impl Studio {
                     continue;
                 };
                 let target = &reg.target_path;
-                if owned.iter().any(|e| &e.target_path == target) || restored_paths.contains(target)
+                if owned.iter().any(|e| &e.target_path == target) || retained_links.contains(target)
                 {
                     continue;
                 }
@@ -535,22 +512,8 @@ impl Studio {
                     .insert(agent_id.into(), suspended_manual);
             }
             if leaving {
-                for (skill_id, path) in &redirected {
-                    if let Some(record) = next.skill_provenance.get_mut(skill_id) {
-                        if !record.entry_paths.contains(path) {
-                            record.entry_paths.push(path.clone());
-                        }
-                    }
-                }
                 for target in &removals {
                     tx.reserve(target)?;
-                }
-                for (target, backup, hash) in &restores {
-                    tx.reserve(target)?;
-                    linker::copy_tree(backup, target)?;
-                    if scanner::dir_content_hash(target)? != *hash {
-                        return Err(Error::invalid("Agent 原目录还原校验失败"));
-                    }
                 }
                 for project in &mut next.projects {
                     if let Some(root) = agent.project_root(&project.root) {

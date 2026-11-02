@@ -193,9 +193,43 @@ fn reserved_backup_sibling_does_not_break_listing() {
     studio.stash_skill(&config, "hub", &path, false).unwrap();
     let record = studio.skill_backups().unwrap().remove(0);
     let dir = studio.backup_payload(&record).parent().unwrap().to_owned();
-    let reserved = dir.with_file_name(format!(".{}.backup-123-456", record.id));
+    let reserved = dir.with_file_name(format!(
+        ".{}.backup-123-456",
+        skill_studio_core::models::skill::skill_id_for(&dir)
+    ));
     fs::rename(&dir, &reserved).unwrap();
     assert!(studio.skill_backups().unwrap().is_empty());
     fs::rename(reserved, dir).unwrap();
-    assert_eq!(studio.skill_backups().unwrap().len(), 1);
+    assert_eq!(studio.skill_backups().unwrap()[0].id, record.id);
+}
+
+#[test]
+#[serial]
+fn malformed_backup_directory_names_still_report_record_mismatches() {
+    let env = Env::new();
+    let studio = env.studio();
+    let config = studio.load_config().unwrap();
+    let path = env.write_simple_skill(&env.hub(), "demo");
+    studio.stash_skill(&config, "hub", &path, false).unwrap();
+    let record = studio.skill_backups().unwrap().remove(0);
+    let dir = studio.backup_payload(&record).parent().unwrap().to_owned();
+    for name in [
+        ".hidden-backup",
+        ".0123456789abcdeg.backup-123-456",
+        ".0123456789abcdef.backup-invalid-456",
+        ".0123456789abcdef.backup-123-456-extra",
+        ".0123456789abcdef.staging-123-456",
+    ] {
+        let renamed = dir.with_file_name(name);
+        fs::rename(&dir, &renamed).unwrap();
+        assert!(
+            matches!(
+                studio.skill_backups(),
+                Err(skill_studio_core::Error::InvalidInput(message)) if message == "备份记录不匹配"
+            ),
+            "{name}"
+        );
+        fs::rename(renamed, &dir).unwrap();
+    }
+    assert_eq!(studio.skill_backups().unwrap()[0].id, record.id);
 }

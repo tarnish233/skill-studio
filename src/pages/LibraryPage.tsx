@@ -19,6 +19,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { PageTools } from "@/components/common/PageTools";
 import { useEffect, useMemo, useState } from "react";
+import { useTarget } from "@/components/targets/TargetProvider";
+import { getTarget } from "@/lib/api/transport";
 import {
   FolderOpen,
   PackagePlus,
@@ -77,6 +79,13 @@ function canDeleteSource(source: SkillView) {
   return source.origin.kind !== "external" && !isBuiltinSource(source);
 }
 
+function sourceScope(source: SkillView) {
+  if (source.origin.kind === "inPlace")
+    return `agent:${source.origin.ownerAgent}`;
+  if (source.origin.kind === "local") return `local:${source.id}`;
+  return "hub";
+}
+
 /** 名称里的空格、点、斜杠和连字符不应让同一个 skill 搜不到。 */
 function compactSearchText(value: string) {
   return value
@@ -106,7 +115,18 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
   const [hubOnly, setHubOnly] = useState(false);
   const [adding, setAdding] = useState(false);
   const [query, setQuery] = useState("");
-  const [adoptTarget, setAdoptTarget] = useState<SkillView | null>(null);
+  const target = useTarget();
+  const [adoptTarget, assignAdoptTarget] = useState<SkillView | null>(null);
+  const [adoptDestination, setAdoptDestination] = useState(target.id);
+  const setAdoptTarget = (source: SkillView | null) => {
+    if (source) setAdoptDestination(target.id);
+    assignAdoptTarget(source);
+  };
+  useEffect(() => {
+    assignAdoptTarget(null);
+    setReleaseTarget(null);
+    setSourceCard(null);
+  }, [target.id]);
   const [sourceCard, setSourceCard] = useState<HubCard | null>(null);
 
   /*
@@ -367,6 +387,18 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
                         {message}
                       </span>
                     ))}
+                    {card.sources.some((source) =>
+                      Object.values(source.agents).some(
+                        (state) => state.policySuspended,
+                      ),
+                    ) && (
+                      <Badge
+                        variant="outline"
+                        title="由组外策略暂时停用；迁移托管会保持此状态，不需要开启全局保留开关"
+                      >
+                        策略停用
+                      </Badge>
+                    )}
                     <SkillVariantDetails skill={skill} />
                     {skill.frontmatterExtra.length > 0 && (
                       <Tooltip>
@@ -442,7 +474,9 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
                       </Button>
                     )}
                   {card.sources.some(
-                    (source) => source.origin.kind === "inPlace",
+                    (source) =>
+                      source.origin.kind === "inPlace" ||
+                      source.origin.kind === "local",
                   ) && (
                     <Button
                       variant="ghost"
@@ -480,11 +514,7 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
                     : canDeleteSource(skill) && (
                         <DeleteSkillButton
                           key={skill.id}
-                          scope={
-                            skill.origin.kind === "inPlace"
-                              ? `agent:${skill.origin.ownerAgent}`
-                              : "hub"
-                          }
+                          scope={sourceScope(skill)}
                           path={skill.sourcePath}
                           name={skill.name}
                         />
@@ -613,6 +643,14 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
                       </p>
                     )),
                 )}
+                {Object.entries(source.agents)
+                  .filter(([, state]) => state.policySuspended)
+                  .map(([id]) => (
+                    <p key={id} className="mt-2 text-xs text-amber-700">
+                      {agentName(agents, id)}
+                      ：被组外策略暂时停用；迁移会保持此状态。
+                    </p>
+                  ))}
                 {source.installation && (
                   <p className="mt-3 break-all text-xs text-muted-foreground">
                     由 Skill Studio{" "}
@@ -703,7 +741,8 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
                     </Button>
                   )}
                   {!selectedSourceCard.unavailable &&
-                    source.origin.kind === "inPlace" && (
+                    (source.origin.kind === "inPlace" ||
+                      source.origin.kind === "local") && (
                       <Button
                         variant="outline"
                         size="sm"
@@ -720,11 +759,7 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
                   {!selectedSourceCard.unavailable &&
                     canDeleteSource(source) && (
                       <DeleteSkillButton
-                        scope={
-                          source.origin.kind === "inPlace"
-                            ? `agent:${source.origin.ownerAgent}`
-                            : "hub"
-                        }
+                        scope={sourceScope(source)}
                         path={source.sourcePath}
                         name={source.name}
                         label="删除此来源"
@@ -771,8 +806,9 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
         description={
           <>
             会把 <span className="font-mono">{adoptTarget?.name}</span> 的真身
-            移动到 Hub 目录集中托管，原位置按默认方式保留链接或副本，
-            <span className="font-medium">该 agent 仍可正常使用</span>。
+            迁入 Hub 集中托管，原位置只保留软链接，不回退为复制。
+            <span className="font-medium">原有启停状态保持不变</span>
+            ，软链接创建失败时回滚。
             移动前会保存完整备份及原始来源，来源统计保持不变，可从 Hub 还原。
             <span className="mt-2 block break-all font-mono text-xs">
               {adoptTarget?.sourcePath}
@@ -780,7 +816,8 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
           </>
         }
         onConfirm={() => {
-          if (adoptTarget) adoptAndKeepVisible(adoptTarget.id);
+          if (adoptTarget && getTarget().id === adoptDestination)
+            adoptAndKeepVisible(adoptTarget.id);
           setAdoptTarget(null);
         }}
       />

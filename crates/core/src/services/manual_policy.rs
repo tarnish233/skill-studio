@@ -53,14 +53,12 @@ pub(crate) fn plan(
             }
             if !linker::link_status(&view.skill.source_path, target).is_registered()
                 && !paths::paths_alias(target, &view.skill.source_path)
-                && !super::studio::restored_entry(config, &view.skill, target)
             {
                 continue;
             }
             let was_suspended = previously_suspended.iter().any(|e| {
                 e.target_path == *target
-                    && (paths::paths_alias(&e.source_path, &view.skill.source_path)
-                        || super::studio::restored_entry(config, &view.skill, target))
+                    && paths::paths_alias(&e.source_path, &view.skill.source_path)
             });
             let document = target.join(scanner::SKILL_FILE);
             let name = if agent_id == "codex" {

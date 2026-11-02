@@ -89,6 +89,11 @@ it("counts uncollected project skills and refreshes collection and confirmed del
   fireEvent.click(
     await screen.findByRole("button", { name: "托管 release 到 Hub" }),
   );
+  expect(screen.getByRole("dialog")).toHaveTextContent("项目原位置仅留软链接");
+  expect(calls.some((call) => call.command === "collect_project_skill")).toBe(
+    false,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "迁移到 Hub" }));
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "托管 release 到 Hub" }),

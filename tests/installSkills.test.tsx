@@ -269,23 +269,33 @@ it("local tab scans a collection, imports a selected skill and refreshes its sta
   const path = "/local/collection/demo";
   handlers.set("scan_skills", () => skills);
   handlers.set("discover_local_skills", () => [
-    { path, name: "Local demo", description: "resource", error: null },
+    {
+      path,
+      hubId: null,
+      name: "Local demo",
+      description: "resource",
+      error: null,
+    },
   ]);
   handlers.set("import_local_skill", () => {
     skills = [
       makeSkill({
         name: "demo",
-        sourceIds: ["studio"],
-        installation: {
-          source: `local:${path}`,
-          skillId: "demo",
-          repositoryPath: "",
-          installedAt: 123,
-          contentHash: "hash",
+        origin: { kind: "hub" },
+        sourceIds: ["local"],
+        provenance: {
+          sourceIds: ["local"],
+          originalPath: path,
+          originalRoot: "/local/collection",
+          originalOrigin: { kind: "local" },
+          backupPath: "/backup",
+          originalHash: "hash",
+          collectedAt: 123,
+          entryPaths: [path],
         },
       }),
     ];
-    return { skill: skills[0], changed: true };
+    return { skill: skills[0], changed: true, originalPath: path };
   });
   renderWithProviders(<InstallSkillsPage />);
   fireEvent.click(screen.getByRole("tab", { name: "本地" }));
@@ -298,12 +308,57 @@ it("local tab scans a collection, imports a selected skill and refreshes its sta
     command: "discover_local_skills",
     args: { path: "/local/collection" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "导入" }));
-  expect(await screen.findByRole("button", { name: "重新导入" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "收录到 Hub" }));
+  expect(screen.getByRole("dialog")).toHaveTextContent("原位置仅留软链接");
+  expect(calls.some((call) => call.command === "import_local_skill")).toBe(
+    false,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "迁移到 Hub" }));
+  expect(await screen.findByRole("button", { name: "已托管" })).toBeDisabled();
   expect(calls).toContainEqual({
     command: "import_local_skill",
     args: { path },
   });
+});
+
+it("recognizes an existing Hub identity through its original link without recollecting", async () => {
+  const skill = makeSkill({
+    id: "hub-demo",
+    name: "demo",
+    origin: { kind: "hub" },
+  });
+  handlers.set("scan_skills", () => [skill]);
+  handlers.set("discover_local_skills", () => [
+    { path: "/original/demo", hubId: skill.id, name: "demo", error: null },
+  ]);
+  renderWithProviders(<InstallSkillsPage />);
+  fireEvent.click(screen.getByRole("tab", { name: "本地" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "本地目录" }), {
+    target: { value: "/original/demo" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "扫描" }));
+  expect(await screen.findByRole("button", { name: "已托管" })).toBeDisabled();
+  expect(calls.some((call) => call.command === "import_local_skill")).toBe(
+    false,
+  );
+});
+
+it("local collection can be cancelled and never moves before confirmation", async () => {
+  handlers.set("discover_local_skills", () => [
+    { path: "/local/demo", hubId: null, name: "demo", error: null },
+  ]);
+  renderWithProviders(<InstallSkillsPage />);
+  fireEvent.click(screen.getByRole("tab", { name: "本地" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "本地目录" }), {
+    target: { value: "/local/demo" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "扫描" }));
+  fireEvent.click(await screen.findByRole("button", { name: "收录到 Hub" }));
+  expect(screen.getByRole("dialog")).toHaveTextContent("回滚");
+  fireEvent.click(screen.getByRole("button", { name: "取消" }));
+  expect(calls.some((call) => call.command === "import_local_skill")).toBe(
+    false,
+  );
 });
 
 it("local scan handles an empty folder and scan errors", async () => {

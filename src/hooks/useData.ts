@@ -181,7 +181,7 @@ export function useSkillsAutoRefresh() {
 /* ─────────────────── 变更 ─────────────────── */
 
 /** 任何会改动文件或配置的操作都要连带刷新 skill 状态 */
-function useInvalidateAfterWrite() {
+export function useInvalidateAfterWrite() {
   const qc = useQueryClient();
   return () => {
     void qc.invalidateQueries({ queryKey: queryKeys.skills });

@@ -583,12 +583,9 @@ pub fn request(
                 ),
             }
         }
-        "upload_local_skill" => {
-            let path = params["path"].as_str().ok_or("缺少 path")?;
-            let prepared = skill_studio_core::services::marketplace::prepare_local(Path::new(path))
-                .map_err(String::from)?;
-            upload_skill(&mut session, prepared)
-        }
+        "upload_local_skill" => Err(
+            "跨机器上传不能为原件留下有效的 Hub 软链接，已停止复制式收录；请选择服务器上的目录迁移托管".into()
+        ),
         _ => session.call(method, params),
     }
 }
@@ -878,30 +875,28 @@ print(p, end='')
             .as_array()
             .unwrap()
             .is_empty());
-        let upload = tempfile::Builder::new()
-            .prefix("skill-studio-upload-test-")
-            .tempdir()
-            .unwrap();
-        std::fs::write(
-            upload.path().join("SKILL.md"),
-            "---\nname: uploaded\ndescription: fixture\n---\nUpload\n",
+        assert!(request(
+            &state,
+            &profile.id,
+            "upload_local_skill",
+            json!({"path":"/desktop/skill"})
         )
-        .unwrap();
-        // Exercise multiple chunks and a non-aligned final chunk over real SSH.
-        let payload: Vec<u8> = (0..150_123).map(|i| (i % 251) as u8).collect();
-        std::fs::write(upload.path().join("payload.bin"), &payload).unwrap();
-        let uploaded = call("upload_local_skill", json!({"path":upload.path()}));
-        assert_eq!(uploaded["displayName"], "uploaded");
-        let remote_payload = format!("{}/payload.bin", uploaded["sourcePath"].as_str().unwrap());
-        assert!(remote_payload.starts_with(&format!("{fixture}/")));
-        let mut verify = ssh(&profile, &ask).unwrap();
-        verify.arg(format!("sha256sum -- {}", shell_quote(&remote_payload)));
-        let digest =
-            String::from_utf8(captured(verify, None, Duration::from_secs(60)).unwrap()).unwrap();
-        assert_eq!(
-            digest.split_whitespace().next().unwrap(),
-            format!("{:x}", Sha256::digest(&payload))
+        .is_err());
+        let repeated = call(
+            "import_local_skill",
+            json!({"path":format!("{fixture}/.claude/skills/probe")}),
         );
+        assert_eq!(repeated["changed"], false);
+        let mut verify = ssh(&profile, &ask).unwrap();
+        let entry = format!("{fixture}/.claude/skills/probe");
+        verify.arg(format!(
+            "test -L {} && readlink -- {}",
+            shell_quote(&entry),
+            shell_quote(&entry)
+        ));
+        let target =
+            String::from_utf8(captured(verify, None, Duration::from_secs(60)).unwrap()).unwrap();
+        assert_eq!(target.trim(), skill["sourcePath"].as_str().unwrap());
 
         disconnect(&state, &profile.id).unwrap();
         assert!(request(&state, &profile.id, "list_projects", json!({}))

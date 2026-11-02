@@ -134,9 +134,13 @@ pub fn install_catalog_skill(
 }
 
 pub fn discover_local_skills(
+    state: &AppState,
     path: String,
 ) -> Result<Vec<skill_studio_core::services::marketplace::LocalSkill>, String> {
-    skill_studio_core::services::marketplace::discover_local(std::path::Path::new(&path))
+    state.ensure_loaded().map_err(String::from)?;
+    state
+        .studio()
+        .discover_local_skills(&state.config(), std::path::Path::new(&path))
         .map_err(String::from)
 }
 
@@ -144,10 +148,9 @@ pub fn import_local_skill(
     state: &AppState,
     path: String,
 ) -> Result<skill_studio_core::services::marketplace::ImportOutcome, String> {
-    let prepared =
-        skill_studio_core::services::marketplace::prepare_local(std::path::Path::new(&path))
-            .map_err(String::from)?;
-    state.import_local_skill(&prepared).map_err(String::from)
+    state
+        .import_local_skill(std::path::Path::new(&path))
+        .map_err(String::from)
 }
 
 /// 确认路径属于当前列表中的 skill。

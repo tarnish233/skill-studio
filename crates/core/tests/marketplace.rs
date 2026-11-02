@@ -372,72 +372,66 @@ fn live_search_download_and_install_in_temporary_home() {
 
 #[test]
 #[serial]
-fn local_collection_import_preserves_source_and_persists_studio_origin() {
+fn local_collection_relocates_source_and_persists_provenance() {
     let env = Env::new();
     let collection = env.path().join("personal-agent-skills");
     let source = env.write_simple_skill(&collection.join("nested"), "demo");
     std::fs::write(source.join("reference.txt"), "keep me").unwrap();
     env.write_simple_skill(&collection, "second");
     env.write_simple_skill(&collection.join(".git"), "hidden");
-    let found = marketplace::discover_local(&collection).unwrap();
-    assert_eq!(found.len(), 2);
-    assert_eq!(marketplace::discover_local(&source).unwrap().len(), 1);
+    assert_eq!(marketplace::discover_local(&collection).unwrap().len(), 2);
     let before = scanner::dir_content_hash(&source).unwrap();
-    let prepared = marketplace::prepare_local(&source).unwrap();
     let studio = env.studio();
     let mut config = studio.load_config().unwrap();
     let installed = studio
-        .install_catalog_skill(&mut config, &prepared)
-        .unwrap();
+        .import_local_skill(&mut config, &source)
+        .unwrap()
+        .skill;
     assert_eq!(installed.source_path, env.hub().join("demo"));
+    assert!(scanner::is_symlink_or_junction(&source));
     assert_eq!(scanner::dir_content_hash(&source).unwrap(), before);
-    assert_eq!(
-        scanner::dir_content_hash(&installed.source_path).unwrap(),
-        before
-    );
     let view = studio
         .scan_skills(&studio.load_config().unwrap())
         .unwrap()
         .remove(0);
-    assert_eq!(view.source_ids, vec!["studio"]);
-    assert_eq!(
-        view.installation.unwrap().source,
-        format!("local:{}", source.canonicalize().unwrap().display())
-    );
+    assert_eq!(view.source_ids, vec!["local"]);
+    assert!(skill_studio_core::fs::paths::paths_alias(
+        &view.provenance.unwrap().original_path,
+        &source
+    ));
+    assert!(view.installation.is_none());
     assert!(config.registrations.is_empty());
-    studio
-        .install_catalog_skill(&mut config, &prepared)
-        .unwrap();
+    assert!(
+        !studio
+            .import_local_skill(&mut config, &source)
+            .unwrap()
+            .changed
+    );
     assert_eq!(studio.scan_skills(&config).unwrap().len(), 1);
 }
 
 #[test]
 #[serial]
-fn local_import_rejects_invalid_and_conflicting_skills() {
+fn local_collection_rejects_invalid_and_conflicting_skills() {
     let env = Env::new();
     let source = env.write_skill(
         &env.path().join("local"),
         "demo",
         "---\nname: [invalid\n---",
     );
+    let studio = env.studio();
+    let mut config = studio.load_config().unwrap();
     assert!(marketplace::discover_local(&source).unwrap()[0]
         .error
         .is_some());
-    assert!(marketplace::prepare_local(&source).is_err());
+    assert!(studio.import_local_skill(&mut config, &source).is_err());
+    assert!(!scanner::is_symlink_or_junction(&source));
     env.write_simple_skill(&env.path().join("local"), "demo");
-    let studio = env.studio();
-    let mut config = studio.load_config().unwrap();
     let existing = env.write_simple_skill(&env.hub(), "demo");
     let before = scanner::dir_content_hash(&existing).unwrap();
-    let prepared = marketplace::prepare_local(&source).unwrap();
-    assert!(studio
-        .install_catalog_skill(&mut config, &prepared)
-        .is_err());
+    assert!(studio.import_local_skill(&mut config, &source).is_err());
     assert_eq!(before, scanner::dir_content_hash(&existing).unwrap());
+    assert!(!scanner::is_symlink_or_junction(&source));
+    assert!(config.skill_provenance.is_empty());
     assert!(config.skill_installations.is_empty());
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink("/etc/hosts", source.join("outside")).unwrap();
-        assert!(marketplace::prepare_local(&source).is_err());
-    }
 }

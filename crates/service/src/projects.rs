@@ -539,23 +539,7 @@ pub fn collect_project_skill(
     project_id: String,
     path: PathBuf,
 ) -> Result<skill_studio_core::models::skill::Skill, String> {
-    let entry = {
-        let config = state.config();
-        let project = config.project(&project_id).ok_or("项目不存在")?;
-        state
-            .studio()
-            .project_local_skills(&config, project)
-            .map_err(String::from)?
-            .into_iter()
-            .find(|s| s.entry.path == path)
-            .ok_or("项目 skill 已变化")?
-    };
-    if entry.managed {
-        return Err("此 skill 已部署".into());
-    }
-    let mut prepared = skill_studio_core::services::marketplace::prepare_local(&entry.storage_path)
-        .map_err(String::from)?;
-    prepared.source = format!("local:{}", path.display());
-    prepared.skill_id = entry.entry.name;
-    state.install_catalog_skill(&prepared).map_err(Into::into)
+    state
+        .transactional(|studio, config| studio.collect_project_skill(config, &project_id, &path))
+        .map_err(Into::into)
 }

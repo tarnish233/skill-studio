@@ -146,7 +146,7 @@ pub fn dispatch(state: &AppState, method: &str, params: Value) -> Result<Value, 
             serde_json::to_value(skills::adopt_to_hub(state, arg(&params, "skillId")?)?)
         }
         "discover_local_skills" => {
-            serde_json::to_value(skills::discover_local_skills(arg(&params, "path")?)?)
+            serde_json::to_value(skills::discover_local_skills(state, arg(&params, "path")?)?)
         }
         "import_local_skill" => {
             serde_json::to_value(skills::import_local_skill(state, arg(&params, "path")?)?)

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::models::agent::{find_agent, in_shared_root, AgentInfo, AGENTS};
+use crate::models::agent::{AgentInfo, AGENTS};
 use crate::models::config::{AppConfig, Registration, SkillProvenance};
 use crate::models::skill::{
     skill_id_for, LinkMode, LinkReport, LinkResult, LinkStatus, Skill, SkillOrigin,
@@ -28,6 +28,9 @@ pub struct AgentSkillState {
     pub manual: bool,
     #[serde(default)]
     pub policy_blocked: bool,
+    /// 原生停用由 Studio 的组外策略记录；不是仅凭开关推测。
+    #[serde(default)]
+    pub policy_suspended: bool,
     pub mode: Option<LinkMode>,
     /// 同一来源在该 agent 下的全部入口（含别名）。
     pub entry_paths: Vec<PathBuf>,
@@ -165,6 +168,33 @@ impl Studio {
             });
         }
 
+        // Only explicitly recorded Local directories are rediscovered after release.
+        for (id, record) in &config.skill_provenance {
+            if matches!(record.original_origin, SkillOrigin::Local)
+                && *id == skill_id_for(&record.original_path)
+                && !scanner::is_symlink_or_junction(&record.original_path)
+                && record.original_path.join(scanner::SKILL_FILE).is_file()
+            {
+                sources.entry(id.clone()).or_insert_with(|| {
+                    build_skill(
+                        id.clone(),
+                        record
+                            .original_path
+                            .file_name()
+                            .unwrap()
+                            .to_str()
+                            .unwrap_or("skill"),
+                        record.original_path.clone(),
+                        record.original_root.clone(),
+                        SkillOrigin::Local,
+                        Some(scanner::parse_frontmatter(
+                            &record.original_path.join(scanner::SKILL_FILE),
+                        )),
+                    )
+                });
+            }
+        }
+
         // A bundle's preview is not its identity. Recover known installations
         // even when their representative SKILL.md has been removed.
         if hub.is_dir() {
@@ -275,19 +305,6 @@ impl Studio {
             }
         }
 
-        // Restored originals remain independent files, but keep their adopted identity
-        // while both contents still match the recorded backup.
-        let restored: HashSet<String> = sources
-            .values()
-            .filter(|candidate| {
-                sources.values().any(|hub| {
-                    hub.id != candidate.id && restored_entry(config, hub, &candidate.source_path)
-                })
-            })
-            .map(|s| s.id.clone())
-            .collect();
-        sources.retain(|id, _| !restored.contains(id));
-
         // 来源标注使用的共享根在一轮扫描里只解析一次，全部 skill 复用同一个切片。
         let roots = shared_roots(config);
         let mut views: Vec<SkillView> = sources
@@ -372,7 +389,7 @@ impl Studio {
                         .filter(|path| {
                             path.parent()
                                 .is_some_and(|parent| crate::fs::paths::paths_alias(parent, &root))
-                                && restored_entry(config, skill, path)
+                                && linker::link_status(&skill.source_path, path).is_registered()
                         })
                         .cloned(),
                 );
@@ -439,8 +456,7 @@ impl Studio {
                 // 真身就在这个 root 里
                 let status = if dest.join(scanner::SKILL_FILE).is_file()
                     && !scanner::is_symlink_or_junction(&dest)
-                    && (crate::fs::paths::paths_alias(&dest, &skill.source_path)
-                        || restored_entry(config, skill, &dest))
+                    && crate::fs::paths::paths_alias(&dest, &skill.source_path)
                 {
                     LinkStatus::Source
                 } else {
@@ -492,6 +508,27 @@ impl Studio {
             out.insert(
                 agent.id.to_string(),
                 AgentSkillState {
+                    policy_suspended: disabled
+                        && config
+                            .policy_suspensions
+                            .get(agent.id)
+                            .into_iter()
+                            .flatten()
+                            .any(|entry| {
+                                entry.skill_id == skill.id
+                                    && crate::fs::paths::paths_alias(
+                                        &entry.source_path,
+                                        &skill.source_path,
+                                    )
+                                    && (crate::fs::paths::paths_alias(
+                                        &entry.target_path,
+                                        &skill.source_path,
+                                    ) || linker::link_status(
+                                        &skill.source_path,
+                                        &entry.target_path,
+                                    )
+                                    .is_registered())
+                            }),
                     unavailable_reason: unavailable,
                     status,
                     target_path,
@@ -689,8 +726,7 @@ impl Studio {
                 // 遍历全部根，把散落在共享根里的注册也清掉
                 for dest in self.agent_targets(config, skill, agent) {
                     if !scanner::is_symlink_or_junction(&dest)
-                        && (crate::fs::paths::paths_alias(&dest, &skill.source_path)
-                            || restored_entry(config, skill, &dest))
+                        && crate::fs::paths::paths_alias(&dest, &skill.source_path)
                     {
                         // 不能把真身当注册删掉
                         continue;
@@ -875,7 +911,6 @@ impl Studio {
         for target in state.entry_paths {
             if !linker::link_status(&skill.source_path, &target).is_registered()
                 && !crate::fs::paths::paths_alias(&target, &skill.source_path)
-                && !restored_entry(config, &skill, &target)
             {
                 continue;
             }
@@ -902,7 +937,8 @@ impl Studio {
     ///
     /// 移动前会校验 Hub 与所有 agent 目录不重叠，且目标不存在。
     pub fn adopt_to_hub(&self, config: &mut AppConfig, skill_id: &str) -> Result<Skill> {
-        self.relocate_hub_skill(config, skill_id, false)
+        let skill = self.find_skill(config, skill_id)?;
+        self.relocate_hub_skill(config, skill, false)
     }
 
     pub fn release_from_hub(&self, config: &mut AppConfig, skill_id: &str) -> Result<Skill> {
@@ -915,33 +951,44 @@ impl Studio {
                 "多端安装由 Hub 统一管理，不能还原为单个 Agent 来源",
             ));
         }
-        self.relocate_hub_skill(config, skill_id, true)
+        let skill = self.find_skill(config, skill_id)?;
+        self.relocate_hub_skill(config, skill, true)
     }
 
-    fn relocate_hub_skill(
+    pub(super) fn relocate_hub_skill(
         &self,
         config: &mut AppConfig,
-        skill_id: &str,
+        skill: Skill,
         restore: bool,
     ) -> Result<Skill> {
-        if config
-            .active_groups
-            .values()
-            .flatten()
-            .any(|g| g.skill_ids.iter().any(|id| id == skill_id))
-            || config
-                .policy_suspensions
-                .values()
-                .flatten()
-                .any(|e| e.skill_id == skill_id)
-        {
-            return Err(Error::invalid(
-                "请先停用包含或暂时停用此 skill 的分组，再迁移",
-            ));
+        if !restore && matches!(skill.origin, SkillOrigin::Hub) {
+            return Ok(skill);
+        }
+        let skill_id = skill.id.as_str();
+        let using: Vec<String> = AGENTS
+            .iter()
+            .flat_map(|agent| {
+                config
+                    .active_groups_of(agent.id)
+                    .iter()
+                    .filter(|group| group.skill_ids.iter().any(|id| id == skill_id))
+                    .map(|group| {
+                        let name = config
+                            .group(&group.group_id)
+                            .map(|group| group.name.as_str())
+                            .unwrap_or(&group.group_id);
+                        format!("{} · {name}", agent.display_name)
+                    })
+            })
+            .collect();
+        if !using.is_empty() {
+            return Err(Error::invalid(format!(
+                "此 skill 正被启用分组使用：{}；请先停用这些分组，再迁移",
+                using.join("、")
+            )));
         }
         for id in &config.settings.disabled_agents {
             let agent = crate::models::agent::require_agent(id)?;
-            let skill = self.find_skill(config, skill_id)?;
             let roots = agent.resolved_global_roots(&config.settings.agent_dir_overrides);
             let record = config.skill_provenance.get(skill_id);
             let touches_disabled = std::iter::once(&skill.source_path)
@@ -950,32 +997,22 @@ impl Studio {
                         .iter()
                         .chain(std::iter::once(&p.original_path))
                 }))
-                .any(|p| {
-                    p.parent().is_some_and(|parent| {
+                .any(|path| {
+                    path.parent().is_some_and(|parent| {
                         roots
                             .iter()
-                            .any(|r| crate::fs::paths::paths_alias(parent, r))
+                            .any(|root| crate::fs::paths::paths_alias(parent, root))
                     })
                 });
             if touches_disabled {
-                return Err(Error::invalid(
-                    "此 skill 涉及已退出管理的 Agent，请先开启该应用再托管或移出 Hub",
-                ));
+                return Err(Error::invalid(format!(
+                    "此 skill 涉及已退出管理的 {}，请先开启该应用再托管或移出 Hub",
+                    agent.display_name
+                )));
             }
         }
-        if config
-            .policy_suspensions
-            .values()
-            .flatten()
-            .any(|e| e.skill_id == skill_id)
-        {
-            return Err(Error::invalid(
-                "请先开启保留手动 skill，再迁移被策略停用的 skill",
-            ));
-        }
-        let skill = self.find_skill(config, skill_id)?;
-        if !restore && matches!(skill.origin, SkillOrigin::Hub) {
-            return Ok(skill);
+        if config.builtin_skills.contains_key(skill_id) {
+            return Err(Error::invalid("内置 skill 不能迁移，请通过设置管理"));
         }
         if restore && !matches!(skill.origin, SkillOrigin::Hub) {
             return Err(Error::invalid("此 skill 不在 Hub 中"));
@@ -988,8 +1025,11 @@ impl Studio {
         }
         if matches!(skill.origin, SkillOrigin::External) {
             return Err(Error::invalid(
-                "外部来源仅通过链接引用，不能自动迁移或接管源目录",
+                "此入口仅引用外部来源；请明确选择真实源目录收录，不会复制或自动接管",
             ));
+        }
+        if !restore {
+            super::collection::validate_source(&skill.source_path)?;
         }
         let hub = self.store.hub_dir(config);
         let overrides = config.settings.agent_dir_overrides.clone();
@@ -999,44 +1039,17 @@ impl Studio {
             .collect();
         linker::ensure_distinct_roots(&hub, &all_roots)?;
 
-        // 原件在共享根（~/.agents/skills）时，回链和移出 Hub 都写到所属 agent 自己的根：
-        // 共享根里的东西会被每个读它的 agent 加载，分组和开关管不住。
-        let owner = match if restore {
-            saved.as_ref().map(|p| &p.original_origin)
-        } else {
-            Some(&skill.origin)
-        } {
-            Some(SkillOrigin::InPlace { owner_agent }) => find_agent(owner_agent),
-            _ => None,
-        };
-        let private_home = |path: &std::path::Path| -> Option<PathBuf> {
-            if !in_shared_root(path, &overrides) {
-                return None;
-            }
-            let root = owner?.primary_global_root(&overrides);
-            // 只比较目录本身：条目可能正是指向原件的软链，跟随它会误判成同一位置
-            let distinct = !path
-                .parent()
-                .is_some_and(|parent| crate::fs::paths::paths_alias(parent, &root));
-            let name = path.file_name()?;
-            distinct.then(|| root.join(name))
-        };
-
+        // Collection leaves the same entry in place as a symlink, including shared
+        // and project roots. Native path/name switches therefore keep their state.
         std::fs::create_dir_all(&hub).map_err(|e| Error::io(&hub, e))?;
-        let released_to_private = restore
-            .then(|| private_home(&saved.as_ref().unwrap().original_path))
-            .flatten();
         let target = if restore {
-            released_to_private
-                .clone()
-                .unwrap_or_else(|| saved.as_ref().unwrap().original_path.clone())
+            saved.as_ref().unwrap().original_path.clone()
         } else {
             hub.join(&skill.name)
         };
-        if let Some(parent) = released_to_private.as_ref().and_then(|t| t.parent()) {
-            std::fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
-        }
         scanner::validate_sync_source(&skill.source_path)?;
+        let source_hash = scanner::dir_content_hash(&skill.source_path)?;
+        let mut replace_imported = false;
         if restore {
             let parent = target
                 .parent()
@@ -1072,11 +1085,47 @@ impl Studio {
                     ));
                 }
             }
-        } else if target.exists() || scanner::is_symlink_or_junction(&target) {
-            return Err(Error::invalid(format!(
-                "Hub 里已存在同名 skill: {}",
-                target.display()
-            )));
+        } else if target.symlink_metadata().is_ok() {
+            // A verified, unedited snapshot previously imported from this exact
+            // original can converge to one Hub identity. Never replace unrelated
+            // installations, edited copies, or a redirected Hub directory.
+            replace_imported = !scanner::is_symlink_or_junction(&target)
+                && config
+                    .skill_installations
+                    .get(&skill_id_for(&target))
+                    .is_some_and(|record| {
+                        record.variants.is_empty()
+                            && record.source.strip_prefix("local:").is_some_and(|source| {
+                                crate::fs::paths::paths_alias(
+                                    std::path::Path::new(source),
+                                    &skill.source_path,
+                                )
+                            })
+                            && record.content_hash == source_hash
+                    })
+                && scanner::dir_content_hash(&target)? == source_hash;
+            if !replace_imported {
+                return Err(Error::invalid(format!(
+                    "Hub 里已存在同名 skill，未覆盖：{}；请先处理内容或来源冲突",
+                    target.display()
+                )));
+            }
+            if let (Some(original), Some(existing)) = (
+                config
+                    .skill_meta
+                    .get(skill_id)
+                    .and_then(|meta| meta.note.as_ref()),
+                config
+                    .skill_meta
+                    .get(&skill_id_for(&target))
+                    .and_then(|meta| meta.note.as_ref()),
+            ) {
+                if original != existing {
+                    return Err(Error::invalid(
+                        "原件与 Hub 条目有不同备注，请先合并备注再托管",
+                    ));
+                }
+            }
         }
 
         // Discover affected entries before moving the source; shared roots may alias.
@@ -1109,8 +1158,6 @@ impl Studio {
         let mut seen = HashSet::new();
         let mut copies = Vec::new();
         let mut links = Vec::new();
-        // 共享根里指向旧位置的链接不再改指，直接移除
-        let mut shared_links = Vec::new();
         for dest in candidates {
             let parent = dest.parent().unwrap();
             let key = parent
@@ -1130,11 +1177,7 @@ impl Studio {
             }
             if scanner::is_symlink_or_junction(&dest) {
                 if linker::link_status(&old_path, &dest) == LinkStatus::Linked {
-                    if in_shared_root(&dest, &overrides) {
-                        shared_links.push(dest);
-                    } else {
-                        links.push(dest);
-                    }
+                    links.push(dest);
                 }
             } else if let Some(mut sidecar) = scanner::read_copy_sidecar(&dest) {
                 if crate::fs::paths::paths_alias(&sidecar.source_path, &old_path) {
@@ -1149,21 +1192,7 @@ impl Studio {
                 )));
             }
         }
-        // 纳入托管后留给所属 agent 的入口：原位置，或（原件在共享根时）它自己的根。
-        // 自己的根里已有指向原件的链接就沿用；被别的条目占着就不覆盖。
-        let (link_back, alias_back) = match (!restore).then(|| private_home(&old_path)) {
-            None => (None, None),
-            Some(None) => (Some(old_path.clone()), None),
-            Some(Some(private))
-                if links
-                    .iter()
-                    .any(|l| crate::fs::paths::is_same_path(l, &private)) =>
-            {
-                (None, Some(private))
-            }
-            Some(Some(private)) if std::fs::symlink_metadata(&private).is_ok() => (None, None),
-            Some(Some(private)) => (Some(private), None),
-        };
+        let link_back = (!restore).then(|| old_path.clone());
         let backup_path = self.store.dir().join("skill-backups").join(format!(
             "{}-{}",
             skill.id,
@@ -1188,11 +1217,10 @@ impl Studio {
                 original_root: skill.root.clone(),
                 original_origin: skill.origin.clone(),
                 backup_path: backup_path.clone(),
-                original_hash: scanner::dir_content_hash(&old_path)?,
+                original_hash: source_hash.clone(),
                 collected_at: linker::now_secs(),
                 entry_paths: links
                     .iter()
-                    .chain(&shared_links)
                     .cloned()
                     .chain(
                         copies
@@ -1205,7 +1233,10 @@ impl Studio {
             }
         };
         let mut next = config.clone();
-        migrate_skill_id(&mut next, &skill.id, &new_id);
+        migrate_skill_id(&mut next, &skill.id, &new_id, &target);
+        if replace_imported {
+            next.skill_installations.remove(&new_id);
+        }
         for project in &mut next.projects {
             for entry in &mut project.managed_entries {
                 if entry.skill_id == new_id {
@@ -1219,20 +1250,12 @@ impl Studio {
                 regs.retain(|_, r| r.target_path != target);
             }
         }
-        // 旧版本留在共享根里的回链会被移除，对应的登记一并去掉
-        for regs in next.registrations.values_mut() {
-            regs.retain(|_, r| {
-                !shared_links
-                    .iter()
-                    .any(|l| crate::fs::paths::is_same_path(l, &r.target_path))
-            });
-        }
         next.registrations.retain(|_, regs| !regs.is_empty());
         let mut tx =
             super::transaction::Transaction::begin(self.store.dir().join("migration.json"))?;
         let operation = (|| -> Result<()> {
             let before = scanner::dir_content_hash(&old_path)?;
-            if !restore && before != record.original_hash {
+            if before != source_hash {
                 return Err(Error::invalid("来源在备份前发生变化，请重试"));
             }
             // Keep a permanent verified snapshot separate from the temporary undo journal.
@@ -1256,6 +1279,12 @@ impl Studio {
             {
                 return Err(Error::invalid("原位置发生变化，停止还原"));
             }
+            if replace_imported && scanner::dir_content_hash(&target)? != before {
+                return Err(Error::invalid("Hub 内容在迁移期间发生变化，停止覆盖"));
+            }
+            if !restore && !replace_imported && target.symlink_metadata().is_ok() {
+                return Err(Error::invalid("Hub 目标在迁移期间出现同名内容，停止托管"));
+            }
             tx.reserve(&target)?;
             linker::copy_tree(&old_path, &target)?;
             if scanner::dir_content_hash(&target)? != before
@@ -1266,84 +1295,25 @@ impl Studio {
             scanner::validate_sync_source(&target)?;
             tx.reserve(&old_path)?;
             if let Some(link_back) = &link_back {
-                if link_back != &old_path {
-                    if let Some(parent) = link_back.parent() {
-                        std::fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
-                    }
-                    tx.reserve(link_back)?;
-                }
-                // Stay inside the outer journal: a nested copy transaction could undo
-                // the restored source during startup recovery.
-                let mode = config.settings.default_link_mode;
-                let linked = if mode == LinkMode::Copy {
-                    false
-                } else {
-                    match linker::create_symlink(&target, link_back) {
-                        Ok(()) => true,
-                        Err(err) if mode == LinkMode::Symlink => return Err(err),
-                        Err(_) => false,
-                    }
-                };
-                let done = if linked {
-                    linker::Registered {
-                        mode: LinkMode::Symlink,
-                        status: LinkStatus::Linked,
-                        source_hash: None,
-                    }
-                } else {
-                    linker::copy_tree(&target, link_back)?;
-                    if scanner::dir_content_hash(link_back)? != before {
-                        return Err(Error::invalid("原位置副本校验失败"));
-                    }
-                    crate::fs::atomic::write_json_file(
-                        &link_back.join(scanner::COPY_SIDECAR),
-                        &scanner::CopySidecar {
-                            skill_id: new_id.clone(),
-                            source_path: target.clone(),
-                            source_hash: before.clone(),
-                            copied_at: linker::now_secs(),
-                        },
-                    )?;
-                    linker::Registered {
-                        mode: LinkMode::Copy,
-                        status: LinkStatus::Copied,
-                        source_hash: Some(before),
-                    }
-                };
+                // Collection is always a relocation plus a symlink. Deployment's
+                // Copy/Auto preference must never create a second original here.
+                linker::create_symlink(&target, link_back)?;
                 if let SkillOrigin::InPlace { ref owner_agent } = skill.origin {
                     next.set_registration(
                         &new_id,
                         owner_agent,
                         Registration {
-                            mode: done.mode,
+                            mode: LinkMode::Symlink,
                             target_path: link_back.clone(),
                             registered_at: linker::now_secs(),
-                            source_hash_at_copy: done.source_hash,
+                            source_hash_at_copy: None,
                         },
                     );
                 }
             }
-            if let (Some(alias), SkillOrigin::InPlace { owner_agent }) =
-                (&alias_back, &skill.origin)
-            {
-                // 所属 agent 自己的根里本来就有指向原件的链接：下面改指到 Hub，并登记为它的入口
-                next.set_registration(
-                    &new_id,
-                    owner_agent,
-                    Registration {
-                        mode: LinkMode::Symlink,
-                        target_path: alias.clone(),
-                        registered_at: linker::now_secs(),
-                        source_hash_at_copy: None,
-                    },
-                );
-            }
             for dest in &links {
                 tx.reserve(dest)?;
                 linker::create_symlink(&target, dest)?;
-            }
-            for dest in &shared_links {
-                tx.reserve(dest)?;
             }
             for (path, sidecar) in &copies {
                 tx.reserve(path)?;
@@ -1368,14 +1338,7 @@ impl Studio {
         let mut adopted = skill;
         adopted.id = new_id;
         adopted.source_path = target;
-        adopted.root = match (restore, &released_to_private) {
-            (true, Some(private)) => private
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or(record.original_root),
-            (true, None) => record.original_root,
-            (false, _) => hub,
-        };
+        adopted.root = if restore { record.original_root } else { hub };
         adopted.origin = if restore {
             record.original_origin
         } else {
@@ -1421,9 +1384,15 @@ impl Studio {
     }
 }
 
-fn migrate_skill_id(config: &mut AppConfig, old: &str, new: &str) {
+fn migrate_skill_id(config: &mut AppConfig, old: &str, new: &str, source: &std::path::Path) {
+    if old == new {
+        return;
+    }
     if let Some(provenance) = config.skill_provenance.remove(old) {
-        config.skill_provenance.insert(new.into(), provenance);
+        config
+            .skill_provenance
+            .entry(new.into())
+            .or_insert(provenance);
     }
     for group in &mut config.groups {
         for id in &mut group.skill_ids {
@@ -1431,11 +1400,37 @@ fn migrate_skill_id(config: &mut AppConfig, old: &str, new: &str) {
                 *id = new.to_string();
             }
         }
+        let mut seen = HashSet::new();
+        group.skill_ids.retain(|id| seen.insert(id.clone()));
+    }
+    for records in config.active_groups.values_mut() {
+        for group in records {
+            for id in &mut group.skill_ids {
+                if id == old {
+                    *id = new.to_string();
+                }
+            }
+            for entry in &mut group.entries {
+                if entry.skill_id == old {
+                    entry.skill_id = new.into();
+                    entry.source_path = source.into();
+                }
+            }
+        }
+    }
+    for entries in config.policy_suspensions.values_mut() {
+        for entry in entries {
+            if entry.skill_id == old {
+                entry.skill_id = new.into();
+                entry.source_path = source.into();
+            }
+        }
     }
     for project in &mut config.projects {
         for entry in &mut project.managed_entries {
             if entry.skill_id == old {
                 entry.skill_id = new.into();
+                entry.source_path = source.into();
             }
         }
         for id in &mut project.skill_ids {
@@ -1443,16 +1438,26 @@ fn migrate_skill_id(config: &mut AppConfig, old: &str, new: &str) {
                 *id = new.to_string();
             }
         }
+        let mut seen = HashSet::new();
+        project.skill_ids.retain(|id| seen.insert(id.clone()));
     }
     if let Some(regs) = config.registrations.remove(old) {
-        config.registrations.insert(new.to_string(), regs);
+        let current = config.registrations.entry(new.into()).or_default();
+        for (agent, registration) in regs {
+            current.entry(agent).or_insert(registration);
+        }
     }
     if let Some(meta) = config.skill_meta.remove(old) {
-        config.skill_meta.insert(new.to_string(), meta);
+        let current = config.skill_meta.entry(new.into()).or_default();
+        current.favorite |= meta.favorite;
+        current.pinned |= meta.pinned;
+        if current.note.is_none() {
+            current.note = meta.note;
+        }
     }
 }
 
-fn build_skill(
+pub(super) fn build_skill(
     id: String,
     name: &str,
     source_path: PathBuf,
@@ -1495,7 +1500,7 @@ fn result(
 /// 一次扫描/操作内解析全部共享根（精确路径去重），供来源标注同一个切片复用。
 ///
 /// 只在本次调用内复用，不缓存：写时保护（迁移/回链/还原）仍走
-/// [`in_shared_root`] 自己的安全语义，两者互不替代。
+/// 根目录的独立校验负责写入安全，两者互不替代。
 fn shared_roots(config: &AppConfig) -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
     for agent in AGENTS {
@@ -1529,7 +1534,9 @@ fn original_source_ids(
             .any(|c| c.as_os_str() == ".agents" || c.as_os_str() == ".agent")
     };
     let mut ids = HashSet::new();
-    if shared(&skill.source_path) || shared(&skill.root) {
+    if matches!(skill.origin, SkillOrigin::Local) {
+        ids.insert("local".into());
+    } else if shared(&skill.source_path) || shared(&skill.root) {
         ids.insert("agent".to_string());
     } else if let SkillOrigin::InPlace { owner_agent } = &skill.origin {
         ids.insert(owner_agent.clone());
@@ -1558,15 +1565,4 @@ fn original_source_ids(
     let mut ids: Vec<_> = ids.into_iter().collect();
     ids.sort();
     ids
-}
-
-/// Only known, unchanged restored originals may share an adopted Hub identity.
-pub(crate) fn restored_entry(config: &AppConfig, skill: &Skill, target: &std::path::Path) -> bool {
-    matches!(skill.origin, SkillOrigin::Hub)
-        && !scanner::is_symlink_or_junction(target)
-        && config.skill_provenance.get(&skill.id).is_some_and(|p| {
-            (p.original_path == target || p.entry_paths.iter().any(|entry| entry == target))
-                && scanner::dir_content_hash(target).is_ok_and(|h| h == p.original_hash)
-                && scanner::dir_content_hash(&skill.source_path).is_ok_and(|h| h == p.original_hash)
-        })
 }

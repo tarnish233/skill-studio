@@ -1,4 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useTarget } from "@/components/targets/TargetProvider";
+import { getTarget } from "@/lib/api/transport";
 import { usePageReset } from "@/components/common/PageReset";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderOpen, PackagePlus, Play, Square, Trash2 } from "lucide-react";
@@ -473,6 +475,18 @@ function ProjectDetail({
   const [deletingLocal, setDeletingLocal] = useState<ProjectLocalSkill | null>(
     null,
   );
+  const target = useTarget();
+  const [collectingLocal, setCollectingLocal] = useState<{
+    skill: ProjectLocalSkill;
+    targetId: string;
+    targetName: string;
+  } | null>(null);
+  const [collectError, setCollectError] = useState<string | null>(null);
+  useEffect(() => {
+    setCollectingLocal(null);
+    setDeletingLocal(null);
+    setCollectError(null);
+  }, [target.id]);
   const localSkills = useQuery({
     queryKey: [...queryKeys.projects, project.id, "localSkills"],
     queryFn: () => projectsApi.localSkills(project.id),
@@ -515,6 +529,9 @@ function ProjectDetail({
       qc.invalidateQueries({ queryKey: queryKeys.projects }),
       qc.invalidateQueries({ queryKey: queryKeys.skills }),
       qc.invalidateQueries({ queryKey: queryKeys.skillBackups }),
+      qc.invalidateQueries({ queryKey: queryKeys.groups }),
+      qc.invalidateQueries({ queryKey: queryKeys.config }),
+      qc.invalidateQueries({ queryKey: queryKeys.hubBackups }),
     ]);
   /** 项目里已有 skill 的就地操作：同一时间只做一件 */
   async function local(
@@ -621,8 +638,8 @@ function ProjectDetail({
             <SkillBackups scope={`project:${project.id}`} />
           </div>
           <p className="text-xs text-muted-foreground">
-            项目目录里已有的 skill 可单独启停、托管到 Hub；卡片上的 Agent
-            启停只作用于下面选择的成员。
+            项目原件收录时迁入 Hub，原位置仅留软链接，不保留独立原件； 卡片上的
+            Agent 启停只作用于下面选择的成员。
           </p>
           {localSkills.isPending && (
             <p className="text-sm text-muted-foreground">扫描中…</p>
@@ -743,23 +760,29 @@ function ProjectDetail({
                       title={
                         skill.collected
                           ? "已托管到 Hub"
-                          : "托管到 Hub（保留项目原文件）"
+                          : skill.disabled
+                            ? "先恢复原入口再迁移收录"
+                            : dirty
+                              ? "先保存项目成员再迁移"
+                              : "迁移收录到 Hub（原位置仅留软链接）"
                       }
                       aria-label={`托管 ${skill.name} 到 Hub`}
                       disabled={
                         skill.collected ||
+                        skill.disabled ||
+                        dirty ||
                         !skill.frontmatter ||
                         skill.frontmatter.malformed ||
                         locked
                       }
-                      onClick={() =>
-                        void local(
-                          skill.path,
-                          () =>
-                            projectsApi.collectLocal(project.id, skill.path),
-                          "已托管到 Hub，项目原文件已保留",
-                        )
-                      }
+                      onClick={() => {
+                        setCollectError(null);
+                        setCollectingLocal({
+                          skill,
+                          targetId: target.id,
+                          targetName: target.name,
+                        });
+                      }}
                     >
                       <PackagePlus className="h-4 w-4" />
                     </Button>
@@ -866,6 +889,57 @@ function ProjectDetail({
       </div>
       {previewDialog}
       <ConfirmDialog
+        open={collectingLocal !== null}
+        onOpenChange={(open) => {
+          if (!open && !pending) {
+            setCollectingLocal(null);
+            setCollectError(null);
+          }
+        }}
+        title={`迁移收录 ${collectingLocal?.skill.name ?? "skill"}？`}
+        variant="info"
+        confirmText="迁移到 Hub"
+        pending={!!pending}
+        description={
+          <>
+            将原件迁入 {collectingLocal?.targetName} 的
+            Hub，保存完整备份，项目原位置仅留软链接。
+            无法创建软链接时回滚，不复制；不会额外启用或部署 Agent。
+            <span className="mt-2 block break-all font-mono text-xs">
+              {collectingLocal?.skill.path}
+            </span>
+            {collectError && (
+              <span role="alert" className="mt-2 block text-destructive">
+                {collectError}
+              </span>
+            )}
+          </>
+        }
+        onConfirm={() => {
+          const selected = collectingLocal;
+          if (!selected) return;
+          if (getTarget().id !== selected.targetId) {
+            setCollectError("管理目标已切换，请重新选择来源");
+            return;
+          }
+          void local(selected.skill.path, async () => {
+            try {
+              const result = await projectsApi.collectLocal(
+                project.id,
+                selected.skill.path,
+              );
+              setCollectingLocal(null);
+              toast.success(
+                `已在 ${selected.targetName} 迁移收录到 Hub：${result.sourcePath}；原位置仅保留软链接`,
+              );
+            } catch (error) {
+              setCollectError(String(error));
+              throw error;
+            }
+          });
+        }}
+      />
+      <ConfirmDialog
         open={!!deletingLocal}
         onOpenChange={(open) => {
           if (!open && !pending) setDeletingLocal(null);
@@ -875,7 +949,7 @@ function ProjectDetail({
           <>
             从项目移除此
             skill，非软链接文件保留备份。软链接只移除链接，不保留备份；Hub
-            副本不受影响。
+            真身不受影响。
             <span className="block break-all pt-2 font-mono text-xs">
               {deletingLocal?.path}
             </span>

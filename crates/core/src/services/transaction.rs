@@ -39,6 +39,8 @@ pub fn remove(path: &Path) -> Result<()> {
     }
 }
 
+const BACKUP_LABEL: &str = "backup";
+
 pub fn sibling(path: &Path, label: &str) -> PathBuf {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -46,10 +48,39 @@ pub fn sibling(path: &Path, label: &str) -> PathBuf {
         .as_nanos();
     path.with_file_name(format!(
         ".{}.{}-{}-{nonce}",
-        path.file_name().unwrap_or_default().to_string_lossy(),
+        crate::models::skill::skill_id_for(path),
         label,
         std::process::id()
     ))
+}
+
+/// Recognize the bounded, hashed backup names used by `reserve`. These are
+/// transaction-owned objects, not published backups, even when cleanup is pending.
+pub(super) fn is_backup_sibling(path: &Path) -> bool {
+    let Some(name) = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix('.'))
+    else {
+        return false;
+    };
+    let Some((hash, suffix)) = name.split_once('.') else {
+        return false;
+    };
+    let Some((pid, nonce)) = suffix
+        .strip_prefix(BACKUP_LABEL)
+        .and_then(|suffix| suffix.strip_prefix('-'))
+        .and_then(|suffix| suffix.split_once('-'))
+    else {
+        return false;
+    };
+    let decimal = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    hash.len() == 16
+        && hash.bytes().all(|b| b.is_ascii_hexdigit())
+        && decimal(pid)
+        && pid.parse::<u32>().is_ok()
+        && decimal(nonce)
+        && nonce.parse::<u128>().is_ok()
 }
 
 /// Whether `path` sits directly inside `dir`.
@@ -114,7 +145,7 @@ impl Transaction {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
             Err(e) => return Err(Error::io(target, e)),
         };
-        let backup = sibling(target, "backup");
+        let backup = sibling(target, BACKUP_LABEL);
         self.entries.push(Entry {
             target: target.to_owned(),
             backup: backup.clone(),
@@ -242,6 +273,86 @@ pub fn recover_confined(journal: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backup_sibling_recognition_matches_generator_and_rejects_lookalikes() {
+        let path = Path::new("store/skill-backups/.tmpfixture");
+        assert!(is_backup_sibling(&sibling(path, BACKUP_LABEL)));
+        assert!(!is_backup_sibling(&sibling(path, "staging")));
+        for name in [
+            ".tmpfixture",
+            ".tmpfixture.backup-123-456",
+            "0123456789abcdef.backup-123-456",
+            ".0123456789abcde.backup-123-456",
+            ".0123456789abcdeg.backup-123-456",
+            ".0123456789abcdef.backup--456",
+            ".0123456789abcdef.backup-123-",
+            ".0123456789abcdef.backup-+123-456",
+            ".0123456789abcdef.backup-123-invalid",
+            ".0123456789abcdef.backup-123-456-extra",
+            ".0123456789abcdef.backup-4294967296-456",
+            ".0123456789abcdef.backup-123-340282366920938463463374607431768211456",
+        ] {
+            assert!(!is_backup_sibling(Path::new(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn backup_listing_skips_live_and_interrupted_transactions() {
+        use crate::services::{skill_files::SkillBackup, store::Store, studio::Studio};
+
+        for committed in [false, true] {
+            let tmp = tempfile::tempdir().unwrap();
+            let studio = Studio::new(Store::new(tmp.path().join("store")));
+            let record = SkillBackup {
+                id: ".tmpfixture".into(),
+                scope: "hub".into(),
+                name: "demo".into(),
+                original_path: tmp.path().join("demo"),
+                deleted_at: 1,
+                disabled: false,
+                restore_disabled: false,
+            };
+            let payload = studio.backup_payload(&record);
+            let folder = payload.parent().unwrap();
+            fs::create_dir_all(&payload).unwrap();
+            fs::write(payload.join("SKILL.md"), "original").unwrap();
+            atomic::write_json_file(&folder.join("record.json"), &record).unwrap();
+            assert_eq!(studio.skill_backups().unwrap()[0].id, record.id);
+
+            let journal = studio.store().dir().join("skill-files.json");
+            let mut tx = Transaction::begin(journal.clone()).unwrap();
+            tx.reserve(folder).unwrap();
+            let reserved = tx.entries[0].backup.clone();
+            assert!(reserved.join("payload/SKILL.md").is_file());
+            assert!(studio.skill_backups().unwrap().is_empty());
+
+            // Reserved contents are not published backups, even if their record
+            // cannot be parsed. Readers must skip them before opening metadata.
+            fs::write(reserved.join("record.json"), "{incomplete").unwrap();
+            assert!(studio.skill_backups().unwrap().is_empty());
+            atomic::write_json_file(&reserved.join("record.json"), &record).unwrap();
+
+            tx.committed = committed;
+            tx.persist().unwrap();
+            drop(tx); // Interrupted either before commit or during commit cleanup.
+            assert!(studio.skill_backups().unwrap().is_empty());
+            recover(&journal).unwrap();
+            assert!(!reserved.exists());
+            assert!(!journal.exists());
+            if committed {
+                assert!(studio.skill_backups().unwrap().is_empty());
+                assert!(!folder.exists());
+            } else {
+                assert_eq!(studio.skill_backups().unwrap()[0].id, record.id);
+                assert_eq!(
+                    fs::read_to_string(payload.join("SKILL.md")).unwrap(),
+                    "original"
+                );
+            }
+        }
+    }
+
     #[test]
     fn restart_rolls_back_files_and_configuration_together() {
         let tmp = tempfile::tempdir().unwrap();

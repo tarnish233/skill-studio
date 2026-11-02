@@ -15,4 +15,14 @@ fn generated_reference_has_no_trailing_whitespace_and_never_writes_config() {
     for (index, line) in output.lines().enumerate() {
         assert_eq!(line, line.trim_end(), "第 {} 行有尾随空白", index + 1);
     }
+    if let Ok(path) = std::env::var("SKILL_STUDIO_DOCS_OUT") {
+        std::fs::write(path, &output).unwrap();
+    } else {
+        assert_eq!(
+            output,
+            include_str!(
+                "../../../src-tauri/resources/builtin-skills/skill-studio/references/commands.md"
+            )
+        );
+    }
 }

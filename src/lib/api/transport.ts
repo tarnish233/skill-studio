@@ -153,23 +153,3 @@ async function settings(id: string) {
     ...(local.cliSkillWarning && { cliSkillWarning: local.cliSkillWarning }),
   };
 }
-
-/** Bind the upload to the server before opening the desktop picker. */
-export async function uploadLocalSkill(
-  pick: () => Promise<string | string[] | null>,
-): Promise<boolean> {
-  const destination = target;
-  if (destination.id === "local" || !destination.connected)
-    throw new Error("请先连接目标服务器");
-  busy(1);
-  try {
-    const path = await pick();
-    if (typeof path !== "string") return false;
-    if (target !== destination)
-      throw new Error("管理目标已变化，请重新选择上传目录");
-    await requestRemote(destination.id, "upload_local_skill", { path });
-    return true;
-  } finally {
-    busy(-1);
-  }
-}

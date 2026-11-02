@@ -67,7 +67,7 @@ fn migration_preserves_relative_absolute_external_and_dangling_links() {
     }
     assert_eq!(
         linker::link_status(&adopted.source_path, &source),
-        LinkStatus::Copied
+        LinkStatus::Linked
     );
     assert_eq!(
         studio.load_config().unwrap().registrations[&adopted.id]["claude-code"].target_path,
@@ -192,7 +192,7 @@ fn migration_retargets_existing_links_even_when_owner_uses_copy() {
     );
     assert_eq!(
         linker::link_status(&adopted.source_path, &source),
-        LinkStatus::Copied
+        LinkStatus::Linked
     );
 }
 

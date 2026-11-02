@@ -98,8 +98,9 @@ skill-studio groups create 笔记 --skills obsidian-markdown,json-canvas
 skill-studio groups enable 笔记 --agent codex          # 为 Codex 启用，与它已启用的其他分组叠加
 skill-studio projects add . --skills pdf-tools         # 「.」表示当前目录所在的项目，保存即写入已启用的 Agent
 skill-studio --json skills list --agent claude-code    # 输出 JSON
-skill-studio skills adopt ~/.claude/skills/rex --yes  # 搬原件到 Hub 并留入口，多来源按路径选
-skill-studio skills delete ~/.claude/skills/rex --yes # 只删所选来源，普通目录保留备份
+skill-studio skills adopt ~/.claude/skills/my-skill --yes # 原件迁入 Hub，原位置仅留软链接
+skill-studio skills import ~/my-skill --yes             # 本地收录与托管相同，不保留独立原件
+skill-studio skills delete ~/.claude/skills/my-skill --yes # 只删所选来源，普通目录保留备份
 skill-studio backups list skill
 skill-studio backups restore skill <备份ID> --yes
 skill-studio settings show
@@ -119,7 +120,7 @@ skill-studio mcp search context7 --json                       # 官方 Registry�
 skill-studio mcp test context7 --timeout 30 --json             # 一次性握手与工具列表验证
 ```
 
-查看类命令只读，不写任何文件，在只允许读的 Agent 沙箱里也能用；输出里的 MCP 定义会隐藏密钥（环境变量、请求头、网址参数）。搬移式托管/还原、文件删除、备份恢复/删除和管理策略变更要加 `--yes` 确认。备份分为 `config`、`skill`、`hub`、`mcp`；使用中的完整快照不可删，恢复不会覆盖外部修改。和应用同时修改时会等对方写完，不会互相覆盖。退出码：0 成功，1 操作失败，2 用法错误，3 找不到或名称有歧义，4 别的程序正在修改（重试即可），5 需要 `--yes` 确认。运行 `skill-studio --help` 查看全部命令。
+查看类命令只读，不写任何文件，在只允许读的 Agent 沙箱里也能用；输出里的 MCP 定义会隐藏密钥（环境变量、请求头、网址参数）。收录/托管/还原、文件删除、备份恢复/删除和管理策略变更要加 `--yes` 确认。托管和收录统一迁移唯一真身到 Hub，原位置仅留软链接，链接失败则回滚；部署副本和备份不受此规则影响。远程收录只选择服务器上的目录，不再复制上传本机原件。备份分为 `config`、`skill`、`hub`、`mcp`；使用中的完整快照不可删，恢复不会覆盖外部修改。和应用同时修改时会等对方写完，不会互相覆盖。退出码：0 成功，1 操作失败，2 用法错误，3 找不到或名称有歧义，4 别的程序正在修改（重试即可），5 需要 `--yes` 确认。运行 `skill-studio --help` 查看全部命令。
 
 MCP 连接测试可由 CLI 执行，超时会取消；只验证 Studio 能握手和列出工具，不代表 Agent 已重新加载或完成登录。网关测试须已有运行中的本机网关，CLI 不自动启动网关或授权；网关启停与浏览器授权仍在应用里做，网关模式的 MCP 要在装有应用的电脑上才能写进 Agent。设置的管理开关需单独保存，CLI 被关闭后必须在桌面重新开启。配置损坏时只放行明确的配置备份查看/恢复，不放行其他管理命令。应用连接过的服务器上，同一个命令行在 `~/.skill-studio/bin/skill-studio`，可以把这个目录加进 `PATH`。
 

@@ -9,15 +9,17 @@ export const SOURCE_LABELS: Record<string, string> = {
   agent: "Agent",
   unknown: "来源待确认",
   external: "外部来源",
+  local: "本地来源",
 };
 /** 筛选胶囊的悬停提示：先报名称再解释（有图标的胶囊只显示图标） */
 export const SOURCE_TITLES = {
   studio:
     "Skill Studio：通过 Skill Studio 安装或随应用提供的 skill；内置副本未修改时随应用更新",
   agent:
-    "Agent：共享 Agent 目录（默认 ~/.agents/skills）里的 skill。默认配置下 Codex、OpenCode、Pi、Grok Build 和 DeepSeek Harness 都会直接加载这里的 skill，分组管不住；Skill Studio 不会往里部署，纳入托管会把它移出共享目录。",
+    "Agent：共享 Agent 目录（默认 ~/.agents/skills）里的 skill。默认配置下 Codex、OpenCode、Pi、Grok Build 和 DeepSeek Harness 会读取这里的入口；托管后真身迁入 Hub，原位置仅保留软链接，启停仍遵循各 Agent 的能力与策略。",
   unknown: "来源待确认：缺少托管记录，无法确认原始来源",
-  external: "外部来源：不在任何 Agent 的 skill 目录里",
+  external: "外部来源：仅通过入口引用，不会自动接管",
+  local: "本地来源：用户选定的本地或项目原件；托管后真身迁入 Hub",
 } as const;
 
 /**

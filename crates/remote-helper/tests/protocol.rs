@@ -493,7 +493,7 @@ fn uploaded_skill_is_installed_and_paths_cannot_escape_staging() {
     let result = session.call(
         "upload_finish",
         json!({
-            "source": format!("local:{}", home.path().join("fixture-source").display()),
+            "source": "fixture/repository",
             "skillId":"upload-check"
         }),
     );

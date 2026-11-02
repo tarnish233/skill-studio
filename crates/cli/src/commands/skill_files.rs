@@ -22,7 +22,11 @@ fn protect(skill: &SkillView) -> Result<(), CliError> {
         ));
     }
     if matches!(skill.skill.origin, SkillOrigin::External) {
-        return Err(CliError::failed("外部来源只读，不能迁移或删除源目录"));
+        return Err(
+            CliError::failed("此入口只引用外部来源，不能自动接管或删除源目录").hint(
+                "如需迁移，请明确选择真实源目录运行 skills import <源目录> --yes；不会复制收录",
+            ),
+        );
     }
     Ok(())
 }
@@ -39,14 +43,14 @@ pub fn adopt(ctx: &Ctx, input: &str) -> Result<Report, CliError> {
         ));
     }
     ctx.confirm(format!(
-        "托管 {} 会移动原件并留下 Agent 入口，需要 --yes 确认",
+        "托管 {} 会迁移原件，原位置只留软链接、启停状态不变，需要 --yes 确认",
         home(&source.skill.source_path)
     ))?;
     let state = ctx.writer()?;
     let skill = skills::adopt_to_hub(&state, source.skill.id)?;
     Ok(Report::write(
         format!(
-            "已托管「{}」到 Hub：{}；只处理所选来源，其他副本不动",
+            "已迁移托管「{}」到 Hub：{}；原位置仅保留软链接，原有启停状态不变",
             skill.name,
             home(&skill.source_path)
         ),
@@ -82,6 +86,7 @@ pub fn delete(ctx: &Ctx, input: &str) -> Result<Report, CliError> {
     protect(&source)?;
     let scope = match &source.skill.origin {
         SkillOrigin::Hub => "hub".into(),
+        SkillOrigin::Local => format!("local:{}", source.skill.id),
         SkillOrigin::InPlace { owner_agent } => format!("agent:{owner_agent}"),
         SkillOrigin::External => unreachable!(),
     };
@@ -123,9 +128,12 @@ pub fn prune(ctx: &Ctx) -> Result<Report, CliError> {
         json!({"removed":removed}),
     ))
 }
-pub fn discover(_ctx: &Ctx, path: &Path) -> Result<Report, CliError> {
-    let found =
-        skills::discover_local_skills(resolve::absolute(path).to_string_lossy().into_owned())?;
+pub fn discover(ctx: &Ctx, path: &Path) -> Result<Report, CliError> {
+    let state = ctx.reader()?;
+    let found = skills::discover_local_skills(
+        &state,
+        resolve::absolute(path).to_string_lossy().into_owned(),
+    )?;
     let mut text = format!("发现 {} 个 skill（只扫描，未导入）", found.len());
     for item in &found {
         text.push_str(&format!(

@@ -150,10 +150,12 @@ pub async fn install_catalog_skill(
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn discover_local_skills(
+    state: State<'_, AppState>,
     path: String,
 ) -> Result<Vec<skill_studio_core::services::marketplace::LocalSkill>, String> {
+    let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        skill_studio_service::skills::discover_local_skills(path)
+        skill_studio_service::skills::discover_local_skills(&state, path)
     })
     .await
     .map_err(|e| e.to_string())?

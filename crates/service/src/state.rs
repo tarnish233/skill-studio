@@ -524,9 +524,9 @@ impl AppState {
 
     pub fn import_local_skill(
         &self,
-        prepared: &skill_studio_core::services::marketplace::PreparedSkill,
+        path: &std::path::Path,
     ) -> Result<skill_studio_core::services::marketplace::ImportOutcome> {
-        self.transactional(|studio, config| studio.import_local_skill(config, prepared))
+        self.transactional(|studio, config| studio.import_local_skill(config, path))
     }
 
     pub fn release_from_hub(

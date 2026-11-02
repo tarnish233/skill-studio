@@ -65,12 +65,12 @@ Skill Hub：查看、搜索、安装、导入、托管与移出、文件删除
   show      查看一个 skill：来源、所在分组与项目、在各 Agent 上的状态
   search    在 skills.sh 上搜索
   install   从 GitHub 安装到 Skill Hub；只放进 Hub，不会启用到任何 Agent
-  adopt     托管已有原件到 Hub 并在 Agent 私有目录留入口（需要 --yes）；多来源须指定路径或 ID
+  adopt     迁移托管原件到 Hub，原位置仅留软链接、启停不变（需要 --yes）；多来源按路径或 ID 选择
   release   移出 Hub 并还原原件（需要 --yes）
   delete    删除具体来源的文件（需要 --yes）；非软链接保留备份，内置和外部来源不可删
   prune     清理已不存在 skill 留下的分组与注册引用（需要 --yes）
   discover  扫描本地目录，列出候选与错误，不导入
-  import    把本地的 skill 目录导入 Skill Hub
+  import    收录本地原件：迁入 Hub，原位置仅留软链接（需要 --yes；与 adopt 同一迁移流程）
 
 选项：
       --json  输出 JSON，给脚本和 Agent 解析
@@ -139,7 +139,7 @@ Skill Hub：查看、搜索、安装、导入、托管与移出、文件删除
 
 ## skill-studio skills adopt
 
-托管已有原件到 Hub 并在 Agent 私有目录留入口（需要 --yes）；多来源须指定路径或 ID
+迁移托管原件到 Hub，原位置仅留软链接、启停不变（需要 --yes）；多来源按路径或 ID 选择
 
 用法：skill-studio skills adopt [选项] <skill名称、ID或目录>
 
@@ -206,7 +206,7 @@ Skill Hub：查看、搜索、安装、导入、托管与移出、文件删除
 
 ## skill-studio skills import
 
-把本地的 skill 目录导入 Skill Hub
+收录本地原件：迁入 Hub，原位置仅留软链接（需要 --yes；与 adopt 同一迁移流程）
 
 用法：skill-studio skills import [选项] <目录>
 
@@ -418,7 +418,7 @@ Skill Hub：查看、搜索、安装、导入、托管与移出、文件删除
 
 命令：
   list     列出项目里的原件、部署副本与停用记录
-  adopt    收录一个项目原件到 Hub，保留项目文件（与全局 skills adopt 的搬移不同）
+  adopt    迁移收录项目原件到 Hub，原位置仅留软链接（需要 --yes；与全局托管相同）
   enable   恢复项目里被 Studio 暂存停用的原件
   disable  暂存停用一个项目原件，不影响其他成员或 Agent
   delete   删除一个项目原件（需要 --yes）；非软链接保留可恢复备份
@@ -444,7 +444,7 @@ Skill Hub：查看、搜索、安装、导入、托管与移出、文件删除
 
 ## skill-studio projects skills adopt
 
-收录一个项目原件到 Hub，保留项目文件（与全局 skills adopt 的搬移不同）
+迁移收录项目原件到 Hub，原位置仅留软链接（需要 --yes；与全局托管相同）
 
 用法：skill-studio projects skills adopt [选项] <PROJECT> <skill名称或路径>
 

@@ -605,7 +605,7 @@ fn reapply_refreshes_stale_owned_copy_without_changing_manual_skills() {
 
 #[test]
 #[serial]
-fn leaving_management_restores_manual_and_adopted_content_and_keeps_hub() {
+fn leaving_management_keeps_hub_backlinks_and_restores_native_policy() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
@@ -625,7 +625,7 @@ fn leaving_management_restores_manual_and_adopted_content_and_keeps_hub() {
         .activate_agent_groups(&mut c, "codex", std::slice::from_ref(&group))
         .unwrap();
     studio.set_agent_management(&mut c, "codex", false).unwrap();
-    assert!(!skill_studio_core::services::scanner::is_symlink_or_junction(&manual));
+    assert!(skill_studio_core::services::scanner::is_symlink_or_junction(&manual));
     assert_eq!(fs::read(manual.join("SKILL.md")).unwrap(), bytes);
     assert!(hub.source_path.join("SKILL.md").exists());
     assert!(!env.codex_skills().join("group-only").exists());
@@ -670,7 +670,7 @@ fn leaving_management_conflict_keeps_management_and_files_unchanged() {
 
 #[test]
 #[serial]
-fn leaving_management_keeps_other_agent_group_and_rejects_missing_backup() {
+fn leaving_management_keeps_other_agent_group_without_copying_old_backups() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
@@ -690,15 +690,13 @@ fn leaving_management_keeps_other_agent_group_and_rejects_missing_backup() {
     let backup = c.skill_provenance[&hub.id]
         .backup_path
         .join("content/SKILL.md");
-    let bytes = fs::read(&backup).unwrap();
     fs::write(&backup, "corrupt").unwrap();
-    assert!(studio.set_agent_management(&mut c, "codex", false).is_err());
-    assert!(c.settings.disabled_agents.is_empty());
+    studio.set_agent_management(&mut c, "codex", false).unwrap();
+    assert!(c.settings.disabled_agents.contains(&"codex".into()));
     assert!(
         skill_studio_core::services::linker::link_status(&hub.source_path, &manual).is_registered()
     );
-    fs::write(&backup, bytes).unwrap();
-    studio.set_agent_management(&mut c, "codex", false).unwrap();
+    assert!(skill_studio_core::services::scanner::is_symlink_or_junction(&manual));
     assert!(c.active_groups.contains_key("claude-code"));
     assert!(env.claude_skills().join("other-only/SKILL.md").exists());
     assert!(hub.source_path.join("SKILL.md").exists());
@@ -716,7 +714,7 @@ fn leaving_management_keeps_other_agent_group_and_rejects_missing_backup() {
 #[test]
 #[serial]
 #[cfg(unix)]
-fn restored_shared_skill_keeps_one_identity_and_group_policy_after_reenable() {
+fn shared_backlinks_keep_one_identity_and_group_policy_after_reenable() {
     let env = Env::new();
     let studio = env.studio();
     let mut c = studio.load_config().unwrap();
@@ -726,14 +724,10 @@ fn restored_shared_skill_keeps_one_identity_and_group_policy_after_reenable() {
     std::os::unix::fs::symlink(&original, &alias).unwrap();
     let source = studio.scan_skills(&c).unwrap().remove(0).skill;
     let hub = studio.adopt_to_hub(&mut c, &source.id).unwrap();
-    // 纳入托管后共享根里不留任何东西：Codex 的入口只剩它自己目录里的那个
-    assert!(fs::symlink_metadata(&original).is_err());
-    assert_eq!(
-        c.registrations[&hub.id]["codex"].target_path, alias,
-        "Codex 自己目录里的软链改指 Hub 并登记为它的入口"
-    );
+    assert!(skill_studio_core::services::scanner::is_symlink_or_junction(&original));
+    assert_eq!(c.registrations[&hub.id]["codex"].target_path, original);
     let group = studio
-        .save_group(&mut c, "restored".into(), "restored", vec![hub.id.clone()])
+        .save_group(&mut c, "g".into(), "g", vec![hub.id.clone()])
         .unwrap();
     c.settings.preserve_manual_skills = false;
     studio.reconcile_manual_policy(&mut c, true).unwrap();
@@ -744,14 +738,13 @@ fn restored_shared_skill_keeps_one_identity_and_group_policy_after_reenable() {
         let views = studio.scan_skills(&c).unwrap();
         assert_eq!(views.len(), 1);
         assert_eq!(views[0].skill.id, hub.id);
-        assert!(views[0].agents["codex"].manual);
-        assert!(views[0].agents["codex"].disabled);
-        // 只还原到 Codex 自己的目录；共享根始终为空，Pi 等其他 Agent 读不到
-        assert_eq!(views[0].agents["codex"].entry_paths, vec![alias.clone()]);
-        assert!(fs::symlink_metadata(&original).is_err());
+        assert!(views[0].agents["codex"].manual && views[0].agents["codex"].disabled);
+        assert!(views[0].agents["codex"].entry_paths.contains(&original));
+        assert!(views[0].agents["codex"].entry_paths.contains(&alias));
+        assert!(skill_studio_core::services::scanner::is_symlink_or_junction(&original));
         assert_eq!(
             views[0].agents["pi"].status,
-            skill_studio_core::models::skill::LinkStatus::NotLinked
+            skill_studio_core::models::skill::LinkStatus::Linked
         );
         studio
             .activate_agent_groups(&mut c, "codex", std::slice::from_ref(&group.id))
@@ -762,7 +755,6 @@ fn restored_shared_skill_keeps_one_identity_and_group_policy_after_reenable() {
     }
     c.settings.preserve_manual_skills = true;
     studio.reconcile_manual_policy(&mut c, true).unwrap();
-    assert!(!studio.scan_skills(&c).unwrap()[0].agents["codex"].disabled);
     fs::write(
         alias.join("SKILL.md"),
         "---\nname: shared-manual\n---\nChanged",
@@ -770,8 +762,8 @@ fn restored_shared_skill_keeps_one_identity_and_group_policy_after_reenable() {
     .unwrap();
     assert_eq!(
         studio.scan_skills(&c).unwrap().len(),
-        2,
-        "modified originals must stay independent"
+        1,
+        "back-link edits change the only Hub source"
     );
 }
 

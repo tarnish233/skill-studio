@@ -180,29 +180,34 @@ impl Helper {
             }
             if request.method == "upload_finish" {
                 let upload = self.upload.borrow_mut().take().ok_or("上传会话不存在")?;
-                let mut prepared =
-                    skill_studio_core::services::marketplace::prepare_local(upload.path())
-                        .map_err(String::from)?;
-                prepared.source = request.params["source"]
+                let source = request.params["source"]
                     .as_str()
                     .ok_or("缺少来源")?
                     .to_string();
-                prepared.skill_id = request.params["skillId"]
+                let skill_id = request.params["skillId"]
                     .as_str()
                     .ok_or("缺少 skillId")?
                     .to_string();
-                prepared.repository_path = request.params["repositoryPath"]
+                let repository_path = request.params["repositoryPath"]
                     .as_str()
                     .unwrap_or("")
                     .to_string();
-                prepared.variants = serde_json::from_value(
+                let variants = serde_json::from_value(
                     request
                         .params
                         .get("variants")
                         .cloned()
                         .unwrap_or_else(|| json!([])),
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(|error| error.to_string())?;
+                let prepared = skill_studio_core::services::marketplace::prepare_uploaded(
+                    upload,
+                    source,
+                    skill_id,
+                    repository_path,
+                    variants,
+                )
+                .map_err(String::from)?;
                 return serde_json::to_value(
                     state
                         .install_catalog_skill(&prepared)

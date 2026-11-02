@@ -169,6 +169,46 @@ fn skill_deletion_and_restore_never_overwrite_an_existing_directory() {
 
 #[test]
 #[serial]
+fn skill_backup_listing_ignores_reserved_directories_without_modifying_them() {
+    let home = Home::new();
+    home.skill(".skill-studio/skills/alpha", "alpha");
+    home.json(&["skills", "delete", "alpha", "--yes"]);
+    let backups = home.json(&["backups", "list", "skill"]);
+    let id = backups["backups"][0]["id"].as_str().unwrap();
+    let dir = home.path(".skill-studio/skill-backups").join(id);
+    let reserved = dir.with_file_name(format!(
+        ".{}.backup-123-456",
+        skill_studio_core::models::skill::skill_id_for(&dir)
+    ));
+    std::fs::rename(&dir, &reserved).unwrap();
+    // Deleting a Hub skill does not necessarily create a config file. Listing
+    // must preserve either its bytes or its absence.
+    let config = std::fs::read(home.path(".skill-studio/config.json")).ok();
+    let record = std::fs::read(reserved.join("record.json")).unwrap();
+    let payload = std::fs::read(reserved.join("payload/SKILL.md")).unwrap();
+    assert!(home.json(&["backups", "list", "skill"])["backups"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(!dir.exists());
+    assert_eq!(std::fs::read(reserved.join("record.json")).unwrap(), record);
+    assert_eq!(
+        std::fs::read(reserved.join("payload/SKILL.md")).unwrap(),
+        payload
+    );
+    assert_eq!(
+        std::fs::read(home.path(".skill-studio/config.json")).ok(),
+        config
+    );
+    std::fs::rename(reserved, dir).unwrap();
+    assert_eq!(
+        home.json(&["backups", "list", "skill"])["backups"][0]["id"],
+        id
+    );
+}
+
+#[test]
+#[serial]
 fn deleting_an_active_or_builtin_skill_is_rejected() {
     let home = Home::new();
     home.skill(".skill-studio/skills/alpha", "alpha");
@@ -372,10 +412,14 @@ fn project_originals_have_separate_list_suspend_collect_and_delete_commands() {
         home.json(&["projects", "skills", "list", "app"])[0]["disabled"],
         true
     );
-    home.json(&["projects", "skills", "adopt", "app", "manual"]);
-    assert!(home.path(".skill-studio/skills/manual/SKILL.md").is_file());
+    let blocked = home.run(&["projects", "skills", "adopt", "app", "manual", "--yes"]);
+    assert_eq!(blocked.code, 1);
+    assert!(blocked.err.contains("先恢复"));
+    assert!(!home.path(".skill-studio/skills/manual/SKILL.md").exists());
     home.json(&["projects", "skills", "enable", "app", "manual"]);
-    assert!(original.join("SKILL.md").is_file());
+    home.json(&["projects", "skills", "adopt", "app", "manual", "--yes"]);
+    assert!(skill_studio_core::services::scanner::is_symlink_or_junction(&original));
+    assert!(home.path(".skill-studio/skills/manual/SKILL.md").is_file());
     assert_eq!(
         home.run(&["projects", "skills", "delete", "app", "manual"])
             .code,

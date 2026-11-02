@@ -11,6 +11,7 @@ pub(crate) mod transaction;
 pub mod agent_groups;
 pub mod builtin;
 
+pub mod collection;
 pub mod marketplace;
 
 pub mod project_local;

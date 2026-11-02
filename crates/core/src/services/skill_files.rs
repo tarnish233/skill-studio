@@ -1,5 +1,9 @@
 //! Recoverable skill deletion and project-local suspension.
-use super::{linker, scanner, studio::Studio, transaction::Transaction};
+use super::{
+    linker, scanner,
+    studio::Studio,
+    transaction::{self, Transaction},
+};
 use crate::{
     fs::{atomic, paths},
     models::{agent::AGENTS, config::AppConfig},
@@ -33,6 +37,9 @@ impl Studio {
         let mut out = vec![];
         for e in fs::read_dir(&root).map_err(|e| Error::io(&root, e))? {
             let e = e.map_err(|e| Error::io(&root, e))?;
+            if transaction::is_backup_sibling(&e.path()) {
+                continue;
+            }
             let p = e.path().join("record.json");
             if !p.is_file() || !e.path().join("payload").symlink_metadata().is_ok() {
                 continue;
@@ -40,12 +47,6 @@ impl Studio {
             let r: SkillBackup =
                 serde_json::from_slice(&fs::read(&p).map_err(|e| Error::io(&p, e))?)
                     .map_err(|e| Error::json(&p, e))?;
-            if e.file_name()
-                .to_string_lossy()
-                .starts_with(&format!(".{}.backup-", r.id))
-            {
-                continue;
-            }
             if e.file_name().to_string_lossy() != r.id {
                 return Err(Error::invalid("备份记录不匹配"));
             }
@@ -67,7 +68,12 @@ impl Studio {
             .find(|r| r.id == id)
             .ok_or_else(|| Error::NotFound("skill 备份".into()))
     }
-    fn checked_skill_path(&self, config: &AppConfig, scope: &str, path: &Path) -> Result<()> {
+    pub(super) fn checked_skill_path(
+        &self,
+        config: &AppConfig,
+        scope: &str,
+        path: &Path,
+    ) -> Result<()> {
         if !path.is_absolute()
             || path.file_name().is_none()
             || path
@@ -99,6 +105,17 @@ impl Studio {
                 .chain(std::iter::once(self.store().hub_dir(config)))
                 .collect();
             linker::ensure_distinct_roots(parent, &globals)?;
+        } else if let Some(id) = scope.strip_prefix("local:") {
+            let owned = config.skill_provenance.get(id).is_some_and(|record| {
+                matches!(
+                    record.original_origin,
+                    crate::models::skill::SkillOrigin::Local
+                ) && crate::models::skill::skill_id_for(path) == id
+                    && paths::paths_alias(&record.original_path, path)
+            });
+            if !owned {
+                return Err(Error::invalid("不是已记录的本地原件路径"));
+            }
         } else if let Some(id) = scope.strip_prefix("agent:") {
             let a = crate::models::agent::require_agent(id)?;
             if config.settings.disabled_agents.iter().any(|x| x == id) {

@@ -135,7 +135,7 @@ pub enum SkillsCommand {
         #[arg(long = "path", value_name = "路径")]
         paths: Vec<String>,
     },
-    /// 托管已有原件到 Hub 并在 Agent 私有目录留入口（需要 --yes）；多来源须指定路径或 ID
+    /// 迁移托管原件到 Hub，原位置仅留软链接、启停不变（需要 --yes）；多来源按路径或 ID 选择
     Adopt {
         #[arg(value_name = "skill名称、ID或目录")]
         skill: String,
@@ -157,7 +157,7 @@ pub enum SkillsCommand {
         #[arg(value_name = "目录")]
         path: PathBuf,
     },
-    /// 把本地的 skill 目录导入 Skill Hub
+    /// 收录本地原件：迁入 Hub，原位置仅留软链接（需要 --yes；与 adopt 同一迁移流程）
     Import {
         /// 含 SKILL.md 的目录
         #[arg(value_name = "目录")]

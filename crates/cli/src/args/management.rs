@@ -130,7 +130,7 @@ pub enum ProjectSkillsCommand {
         #[arg(value_name = "项目")]
         project: String,
     },
-    /// 收录一个项目原件到 Hub，保留项目文件（与全局 skills adopt 的搬移不同）
+    /// 迁移收录项目原件到 Hub，原位置仅留软链接（需要 --yes；与全局托管相同）
     Adopt {
         project: String,
         #[arg(value_name = "skill名称或路径")]

@@ -142,6 +142,9 @@ impl From<String> for CliError {
         if message.contains(skill_studio_mcp::management::PENDING) {
             return Self::failed(message);
         }
+        if message.starts_with("此 skill 正被启用分组使用") {
+            return Self::failed(message).hint("用 groups show 查看对应分组，再用 groups disable <分组> --agent <Agent> 停用后重试；不会自动改策略或复制收录");
+        }
         if message.contains("还没有成员") {
             return Self::failed(message)
                 .hint("用 skill-studio groups add <分组> <skill> 加入成员，再为 Agent 启用");

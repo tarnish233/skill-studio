@@ -619,7 +619,7 @@ fn local_skills_are_imported_into_the_hub_and_writes_are_logged() {
     home.skill("bundle", "second");
 
     let imported = home
-        .json(&["skills", "import", &one.to_string_lossy()])
+        .json(&["skills", "import", &one.to_string_lossy(), "--yes"])
         .json();
     assert_eq!(imported["skill"]["name"], "my-skill");
     assert!(home
@@ -641,7 +641,7 @@ fn local_skills_are_imported_into_the_hub_and_writes_are_logged() {
 
     let log = std::fs::read_to_string(home.path(".skill-studio/logs/cli.log")).unwrap();
     assert!(
-        log.contains("skills import") && log.contains("已把「my-skill」导入 Skill Hub"),
+        log.contains("skills import") && log.contains("已把「my-skill」迁移收录到 Skill Hub"),
         "{log}"
     );
     assert!(
@@ -653,79 +653,61 @@ fn local_skills_are_imported_into_the_hub_and_writes_are_logged() {
 
 #[test]
 #[serial]
-fn reimporting_a_changed_local_skill_updates_the_hub_copy_without_overwriting_edits() {
+fn collecting_again_reads_the_same_hub_source_instead_of_creating_copies() {
     let home = Home::new();
     let source = home.skill(".", "mine");
-    let first = home.json(&["skills", "import", "~/mine"]);
+    let first = home.json(&["skills", "import", "~/mine", "--yes"]);
     assert_eq!(first.code, 0, "{}", first.err);
+    assert!(skill_studio_core::services::scanner::is_symlink_or_junction(&source));
     assert_eq!(first.json()["changed"], true);
-
-    // 原目录没变：明确回答「没有变化」，不能一律报成功
-    let unchanged = home.json(&["skills", "import", "~/mine"]);
-    assert_eq!(unchanged.code, 0, "{}", unchanged.err);
-    assert_eq!(unchanged.json()["changed"], false, "{}", unchanged.out);
-
-    // 原目录更新了，Hub 副本还没被用户改过：跟着更新
     std::fs::write(
         source.join("SKILL.md"),
         "---\nname: mine\ndescription: v2\n---\n\nv2\n",
     )
     .unwrap();
-    let updated = home.json(&["skills", "import", "~/mine"]);
-    assert_eq!(updated.code, 0, "{}", updated.err);
-    assert_eq!(updated.json()["changed"], true);
+    let repeated = home.json(&["skills", "import", "~/mine", "--yes"]);
+    assert_eq!(repeated.code, 0, "{}", repeated.err);
+    assert_eq!(repeated.json()["changed"], false);
     assert!(
         std::fs::read_to_string(home.path(".skill-studio/skills/mine/SKILL.md"))
             .unwrap()
             .contains("v2")
     );
-
-    // 用户改过 Hub 副本：不覆盖他的修改
-    std::fs::write(
-        home.path(".skill-studio/skills/mine/SKILL.md"),
-        "---\nname: mine\n---\n\nmine\n",
-    )
-    .unwrap();
-    std::fs::write(
-        source.join("SKILL.md"),
-        "---\nname: mine\ndescription: v3\n---\n\nv3\n",
-    )
-    .unwrap();
-    let refused = home.json(&["skills", "import", "~/mine"]);
-    assert_ne!(refused.code, 0, "{}", refused.out);
-    assert!(refused.err.contains("已被修改"), "{}", refused.err);
-    assert!(
-        std::fs::read_to_string(home.path(".skill-studio/skills/mine/SKILL.md"))
+    assert!(home.config()["skillInstallations"]
+        .as_object()
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        home.json(&["skills", "list"])
+            .json()
+            .as_array()
             .unwrap()
-            .contains("mine")
+            .len(),
+        1
     );
 }
 
 #[test]
 #[serial]
-fn reimporting_a_hub_copy_already_matching_the_source_refreshes_its_hash() {
+fn local_collection_requires_confirmation_and_conflicts_do_not_remove_originals() {
     let home = Home::new();
     let source = home.skill(".", "mine");
-    home.ok(&["skills", "import", "~/mine"]);
-    let hub = home.path(".skill-studio/skills/mine/SKILL.md");
-    let v2 = "---\nname: mine\ndescription: v2\n---\n\nv2\n";
-    std::fs::write(source.join("SKILL.md"), v2).unwrap();
-    std::fs::write(&hub, v2).unwrap();
-    let already_equal = home.json(&["skills", "import", "~/mine"]);
-    assert_eq!(already_equal.code, 0, "{}", already_equal.err);
-    assert_eq!(already_equal.json()["changed"], false);
-
-    // Explicitly importing matching content acknowledges it as the current Hub copy;
-    // the next source update must not be mistaken for an unapproved Hub edit.
+    let denied = home.json(&["skills", "import", "~/mine"]);
+    assert_eq!(denied.code, 5);
+    assert!(!skill_studio_core::services::scanner::is_symlink_or_junction(&source));
+    home.ok(&["skills", "import", "~/mine", "--yes"]);
+    skill_studio_core::services::linker::remove_symlink_or_junction(&source).unwrap();
+    home.skill(".", "mine");
     std::fs::write(
         source.join("SKILL.md"),
-        "---\nname: mine\ndescription: v3\n---\n\nv3\n",
+        "---\nname: mine\n---\nNew original",
     )
     .unwrap();
-    let next = home.json(&["skills", "import", "~/mine"]);
-    assert_eq!(next.code, 0, "{}", next.err);
-    assert_eq!(next.json()["changed"], true);
-    assert!(std::fs::read_to_string(hub).unwrap().contains("v3"));
+    let refused = home.json(&["skills", "import", "~/mine", "--yes"]);
+    assert_ne!(refused.code, 0);
+    assert!(refused.err.contains("同名"), "{}", refused.err);
+    assert!(!skill_studio_core::services::scanner::is_symlink_or_junction(&source));
+    assert!(source.join("SKILL.md").exists());
 }
 
 #[test]
@@ -926,7 +908,7 @@ fn paths_printed_with_a_tilde_can_be_pasted_back() {
     );
 
     home.skill(".", "myskill");
-    let imported = home.json(&["skills", "import", "~/myskill"]);
+    let imported = home.json(&["skills", "import", "~/myskill", "--yes"]);
     assert_eq!(imported.code, 0, "{}", imported.err);
 
     // 目录不在时是一句能看懂的「找不到」，不是拼错的绝对路径和 IO 错误

@@ -1,11 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  invoke,
-  setTarget,
-  getTarget,
-  getPending,
-  uploadLocalSkill,
-} from "@/lib/api/transport";
+import { invoke, setTarget, getTarget, getPending } from "@/lib/api/transport";
 import { calls, handlers, defaultSettings } from "./mocks/tauri";
 
 afterEach(() => setTarget({ id: "local", name: "本机", connected: true }));
@@ -165,18 +159,17 @@ describe("remote target routing", () => {
   });
 });
 
-it("cancels desktop upload when the target changed while choosing files", async () => {
+it("collects a server directory on that server without uploading a desktop copy", async () => {
   setTarget({ id: "a", name: "A", connected: true });
-  let resolve!: (path: string) => void;
-  const operation = uploadLocalSkill(
-    () =>
-      new Promise<string>((r) => {
-        resolve = r;
-      }),
-  );
-  setTarget({ id: "local", name: "本机", connected: true });
-  resolve("/test/skill");
-  await expect(operation).rejects.toThrow("目标已变化");
-  expect(calls).toHaveLength(0);
+  handlers.set("remote_request", () => ({ changed: true }));
+  await invoke("import_local_skill", { path: "/server/skill" });
+  expect(calls).toContainEqual({
+    command: "remote_request",
+    args: {
+      serverId: "a",
+      method: "import_local_skill",
+      params: { path: "/server/skill" },
+    },
+  });
   expect(getPending()).toBe(0);
 });

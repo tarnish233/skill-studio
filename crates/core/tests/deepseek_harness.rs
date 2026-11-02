@@ -77,7 +77,7 @@ fn harness_reads_shared_skills_without_claiming_the_shared_root_is_an_installati
 
 #[test]
 #[serial]
-fn custom_shared_original_is_adopted_and_restored_only_in_harness_private_root() {
+fn custom_shared_original_is_migrated_with_backlink_and_restored_in_place() {
     let env = Env::new();
     let _variables = Variables;
     let shared_home = env.path().join("shared-home");
@@ -87,17 +87,12 @@ fn custom_shared_original_is_adopted_and_restored_only_in_harness_private_root()
     let mut config = studio.load_config().unwrap();
     let view = studio.scan_skills(&config).unwrap().remove(0);
     let hub = studio.adopt_to_hub(&mut config, &view.skill.id).unwrap();
-    assert!(!original.exists());
-    assert_eq!(
-        config.registrations[&hub.id][DSH].target_path,
-        env.path().join(".dsh/skills/manual")
-    );
+    assert!(skill_studio_core::services::scanner::is_symlink_or_junction(&original));
+    assert_eq!(config.registrations[&hub.id][DSH].target_path, original);
     studio.release_from_hub(&mut config, &hub.id).unwrap();
-    assert!(
-        !original.exists(),
-        "restoration must not write a shared root"
-    );
-    assert!(env.path().join(".dsh/skills/manual/SKILL.md").is_file());
+    assert!(original.join("SKILL.md").is_file());
+    assert!(!skill_studio_core::services::scanner::is_symlink_or_junction(&original));
+    assert!(!hub.source_path.exists());
 }
 
 #[test]

@@ -1,8 +1,8 @@
 use super::{scanner, studio::Studio};
 use crate::{
     fs::paths,
-    models::{config::AppConfig, project::ProjectBinding, skill::skill_id_for},
-    Result,
+    models::{config::AppConfig, project::ProjectBinding, skill::Skill},
+    Error, Result,
 };
 use std::path::{Path, PathBuf};
 
@@ -57,20 +57,21 @@ impl Studio {
                     .managed_entries
                     .iter()
                     .any(|e| paths::paths_alias(&e.target_path, &entry.path));
-                let collected =
-                    entry.path.canonicalize().is_ok_and(|p| {
-                        hub.canonicalize()
-                            .is_ok_and(|h| p.parent() == Some(h.as_path()))
-                    }) || config.skill_installations.iter().any(|(id, installation)| {
-                        installation
-                            .source
-                            .strip_prefix("local:")
-                            .is_some_and(|source| {
-                                paths::paths_alias(Path::new(source), &entry.path)
-                            })
-                            && *id == skill_id_for(&hub.join(&installation.skill_id))
-                            && hub.join(&installation.skill_id).join("SKILL.md").is_file()
-                    });
+                let collected = match &entry.kind {
+                    scanner::EntryKind::Link { .. } => {
+                        entry.path.canonicalize().is_ok_and(|path| {
+                            hub.canonicalize()
+                                .is_ok_and(|hub| paths::path_is_within(&hub, &path))
+                        })
+                    }
+                    scanner::EntryKind::ManagedCopy { source_path, .. } => {
+                        source_path.canonicalize().is_ok_and(|path| {
+                            hub.canonicalize()
+                                .is_ok_and(|hub| paths::path_is_within(&hub, &path))
+                        })
+                    }
+                    _ => false,
+                };
                 let record = suspended.iter().find(|r| r.original_path == entry.path);
                 let storage_path = record
                     .map(|r| self.backup_payload(r))
@@ -85,6 +86,34 @@ impl Studio {
                 })
             })
             .collect()
+    }
+
+    /// Project collection shares the same relocation journal as global/local
+    /// collection. A stashed disabled file is a backup, not an active source.
+    pub fn collect_project_skill(
+        &self,
+        config: &mut AppConfig,
+        project_id: &str,
+        path: &Path,
+    ) -> Result<Skill> {
+        self.checked_skill_path(config, &format!("project:{project_id}"), path)?;
+        let project = config
+            .project(project_id)
+            .ok_or_else(|| Error::NotFound("项目不存在".into()))?;
+        let entry = self
+            .project_local_skills(config, project)?
+            .into_iter()
+            .find(|entry| entry.entry.path == path)
+            .ok_or_else(|| Error::invalid("项目 skill 已变化，请刷新后重试"))?;
+        if entry.managed {
+            return Err(Error::invalid("这是项目部署副本，请管理其 Hub 来源"));
+        }
+        if entry.disabled {
+            return Err(Error::invalid(
+                "项目原件已移出目录停用，请先恢复原入口再迁移收录；不会复制停用备份",
+            ));
+        }
+        Ok(self.import_local_skill(config, path)?.skill)
     }
 
     pub fn delete_project_local_skill(

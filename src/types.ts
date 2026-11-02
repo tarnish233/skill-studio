@@ -25,7 +25,8 @@ export type LinkStatus =
 export type SkillOrigin =
   | { kind: "inPlace"; ownerAgent: string }
   | { kind: "hub" }
-  | { kind: "external" };
+  | { kind: "external" }
+  | { kind: "local" };
 
 export interface Skill {
   id: string;
@@ -59,6 +60,7 @@ export interface AgentSkillState {
   disabled: boolean;
   manual?: boolean;
   policyBlocked?: boolean;
+  policySuspended?: boolean;
   unavailableReason?: string;
   mode: LinkMode | null;
 }
@@ -83,10 +85,11 @@ export type CatalogInstallResult =
   | { status: "installed"; skill: Skill }
   | { status: "selectionRequired"; candidates: CatalogCandidate[] };
 
-/** 本地目录导入的结果；changed 为 false 说明 Hub 里已经是同一份内容 */
+/** 迁移收录的结果；有变化时原位置只保留软链接 */
 export interface LocalImportResult {
   skill: Skill;
   changed: boolean;
+  originalPath: string;
 }
 
 export interface SkillView extends Skill {
@@ -281,6 +284,7 @@ export interface SettingsPatch {
 
 export interface LocalSkill {
   path: string;
+  hubId?: string | null;
   name: string;
   description?: string | null;
   error?: string | null;

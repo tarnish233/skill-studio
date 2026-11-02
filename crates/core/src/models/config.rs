@@ -11,7 +11,8 @@ use super::skill::LinkMode;
 /// v4：分组不再归属单个 agent；是否对某 agent 生效完全由 active_groups 决定。
 /// v5：一个 agent 可以同时叠加多个分组（active_groups 的值由单个记录变成列表），
 /// 部署内容是这些分组成员加手动 skill 的并集。
-pub const CONFIG_VERSION: u32 = 5;
+// v6：本地／项目收录也迁移真身，来源可以是用户选定的 Local 目录。
+pub const CONFIG_VERSION: u32 = 6;
 
 /// 某个 skill 在某个 agent 上的注册记录。
 ///

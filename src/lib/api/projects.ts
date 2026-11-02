@@ -4,6 +4,7 @@ import type {
   LinkReport,
   ProjectBinding,
   TokenEstimate,
+  Skill,
 } from "@/types";
 
 /** 项目成员：单独选的 skill、绑定的分组与写入方式 */
@@ -30,7 +31,7 @@ export interface ProjectLocalSkill {
 }
 
 export const projectsApi = {
-  async collectLocal(projectId: string, path: string): Promise<void> {
+  async collectLocal(projectId: string, path: string): Promise<Skill> {
     return await invoke("collect_project_skill", { projectId, path });
   },
   async setLocalEnabled(

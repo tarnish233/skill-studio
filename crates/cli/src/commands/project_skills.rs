@@ -76,7 +76,15 @@ pub fn run(command: &ProjectSkillsCommand, ctx: &Ctx) -> Result<Report, CliError
     let (operation, changing) = match command {
         ProjectSkillsCommand::Enable { .. } => ("启用", skill.disabled),
         ProjectSkillsCommand::Disable { .. } => ("停用", !skill.disabled),
-        ProjectSkillsCommand::Adopt { .. } => ("收录到 Hub", !skill.collected),
+        ProjectSkillsCommand::Adopt { .. } => {
+            if !skill.collected {
+                ctx.confirm(format!(
+                    "收录项目原件 {} 会迁移到 Hub 并留下软链接，需要 --yes 确认",
+                    home(&path)
+                ))?;
+            }
+            ("迁移收录到 Hub", !skill.collected)
+        }
         ProjectSkillsCommand::Delete { .. } => {
             ctx.confirm(format!("删除项目原件 {}，需要 --yes 确认", home(&path)))?;
             ("删除", true)
@@ -112,13 +120,13 @@ pub fn run(command: &ProjectSkillsCommand, ctx: &Ctx) -> Result<Report, CliError
         format!(
             "已{operation}项目 skill「{name}」{}",
             if matches!(command, ProjectSkillsCommand::Adopt { .. }) {
-                "，项目原文件保留"
+                "，原位置仅保留指向 Hub 的软链接"
             } else {
                 ""
             }
         ),
         true,
-        !matches!(command, ProjectSkillsCommand::Adopt { .. }),
+        true,
         &[],
         json!({"path":path}),
     ))

@@ -10,6 +10,8 @@ pub enum SkillOrigin {
     /// 真身在某个 agent 的全局目录里（默认模式，零迁移）
     #[serde(rename_all = "camelCase")]
     InPlace { owner_agent: String },
+    /// 用户选定的本地／项目原件；从 Hub 还原后仍可按来源再次托管。
+    Local,
     /// 已托管到 `~/.skill-studio/skills/`
     Hub,
     /// 通过链接发现的外部来源；发现不等于接管，禁止自动迁移真身。

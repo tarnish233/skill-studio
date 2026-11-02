@@ -122,6 +122,34 @@ pub struct PreparedSkill {
     pub variants: Vec<crate::models::config::SkillVariant>,
 }
 
+/// Assemble an uploaded repository package, not an independent local import.
+/// The temporary upload is owned by this installation and deleted after commit.
+pub fn prepare_uploaded(
+    temp: tempfile::TempDir,
+    source: String,
+    skill_id: String,
+    repository_path: String,
+    variants: Vec<crate::models::config::SkillVariant>,
+) -> Result<PreparedSkill> {
+    validate_coordinates(&source, &skill_id)?;
+    let directory = temp.path().to_path_buf();
+    scanner::validate_sync_source(&directory)?;
+    super::collection::validate_tree(&directory)?;
+    if scanner::parse_frontmatter(&directory.join(scanner::SKILL_FILE)).malformed {
+        return Err(Error::invalid("上传安装包的 SKILL.md 格式无效"));
+    }
+    let prepared = PreparedSkill {
+        _temp: temp,
+        directory,
+        source,
+        skill_id,
+        repository_path,
+        variants,
+    };
+    validate_prepared(&prepared)?;
+    Ok(prepared)
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogCandidate {
@@ -453,91 +481,12 @@ pub fn prepare_catalog_archive_variants(
 }
 
 impl Studio {
-    /// 本地目录导入：内容没变时返回未变化；Hub 副本没被用户改过时跟着更新；
-    /// 用户改过就拒绝覆盖。
-    pub fn import_local_skill(
-        &self,
-        config: &mut AppConfig,
-        prepared: &PreparedSkill,
-    ) -> Result<ImportOutcome> {
-        validate_prepared(prepared)?;
-        if !prepared.source.starts_with("local:") {
-            return Err(Error::invalid("不是本地 skill 来源"));
-        }
-        let hub = self.store().hub_dir(config);
-        let roots: Vec<_> = crate::models::agent::AGENTS
-            .iter()
-            .flat_map(|a| a.resolved_global_roots(&config.settings.agent_dir_overrides))
-            .collect();
-        linker::ensure_distinct_roots(&hub, &roots)?;
-        let target = hub.join(&prepared.skill_id);
-        let id = skill_id_for(&target);
-        scanner::validate_sync_source(&prepared.directory)?;
-        let hash = scanner::dir_content_hash(&prepared.directory)?;
-
-        if target.symlink_metadata().is_ok() {
-            let record = config
-                .skill_installations
-                .get(&id)
-                .filter(|record| same_installation(record, prepared))
-                .ok_or_else(|| Error::invalid("Hub 已有同名 skill，未覆盖现有内容"))?
-                .clone();
-            let current = scanner::dir_content_hash(&target)?;
-            if current == hash {
-                let skill = self.installed_view(config, &id)?;
-                if record.content_hash != hash {
-                    // The user has already brought the Hub copy up to the source's content.
-                    // This import acknowledges those bytes, so the next source update can
-                    // still distinguish a fresh change from an unapproved Hub edit.
-                    let mut next = config.clone();
-                    let mut synced = record;
-                    synced.content_hash = hash;
-                    next.skill_installations.insert(id.clone(), synced);
-                    self.save_config(&next)?;
-                    *config = next;
-                }
-                return Ok(ImportOutcome {
-                    skill,
-                    changed: false,
-                });
-            }
-            if current != record.content_hash {
-                return Err(Error::invalid(format!(
-                    "Hub 里的「{}」已被修改，未覆盖；请先移出 Hub 再重新导入",
-                    prepared.skill_id
-                )));
-            }
-            let mut next = config.clone();
-            next.skill_installations
-                .insert(id.clone(), installation(prepared, &hash));
-            let skill =
-                self.install_prepared(config, prepared, &id, &target, &hub, &hash, next, true)?;
-            return Ok(ImportOutcome {
-                skill,
-                changed: true,
-            });
-        }
-
-        let mut next = config.clone();
-        next.skill_installations
-            .insert(id.clone(), installation(prepared, &hash));
-        let skill =
-            self.install_prepared(config, prepared, &id, &target, &hub, &hash, next, false)?;
-        Ok(ImportOutcome {
-            skill,
-            changed: true,
-        })
-    }
-
     pub fn install_catalog_skill(
         &self,
         config: &mut AppConfig,
         prepared: &PreparedSkill,
     ) -> Result<Skill> {
         validate_prepared(prepared)?;
-        if prepared.source.starts_with("local:") {
-            return Ok(self.import_local_skill(config, prepared)?.skill);
-        }
         let hub = self.store().hub_dir(config);
         let roots: Vec<_> = crate::models::agent::AGENTS
             .iter()
@@ -561,7 +510,7 @@ impl Studio {
         let mut next = config.clone();
         next.skill_installations
             .insert(id.clone(), installation(prepared, &hash));
-        self.install_prepared(config, prepared, &id, &target, &hub, &hash, next, false)
+        self.install_prepared(config, prepared, &id, &target, &hub, &hash, next)
     }
 
     fn installed_view(&self, config: &AppConfig, id: &str) -> Result<Skill> {
@@ -582,12 +531,11 @@ impl Studio {
         hub: &Path,
         hash: &str,
         next: AppConfig,
-        replace: bool,
     ) -> Result<Skill> {
         let mut tx = Transaction::begin(self.store().dir().join("migration.json"))?;
         let operation = (|| -> Result<Skill> {
             fs::create_dir_all(hub).map_err(|e| Error::io(hub, e))?;
-            if !replace && target.symlink_metadata().is_ok() {
+            if target.symlink_metadata().is_ok() {
                 return Err(Error::invalid("Hub 已有同名 skill，未覆盖现有内容"));
             }
             tx.reserve(target)?;
@@ -646,18 +594,7 @@ fn installation(prepared: &PreparedSkill, hash: &str) -> SkillInstallation {
 }
 
 fn validate_prepared(prepared: &PreparedSkill) -> Result<()> {
-    if let Some(source) = prepared.source.strip_prefix("local:") {
-        if !Path::new(source).is_absolute()
-            || prepared.skill_id.is_empty()
-            || prepared.skill_id.starts_with('.')
-            || prepared.skill_id.contains(['/', '\\', ':'])
-            || Path::new(&prepared.skill_id).components().count() != 1
-        {
-            return Err(Error::invalid("本地 skill 路径无效"));
-        }
-    } else {
-        validate_coordinates(&prepared.source, &prepared.skill_id)?;
-    }
+    validate_coordinates(&prepared.source, &prepared.skill_id)?;
     let mut keys = std::collections::HashSet::new();
     for variant in &prepared.variants {
         if !keys.insert(&variant.key)
@@ -681,18 +618,20 @@ fn validate_prepared(prepared: &PreparedSkill) -> Result<()> {
     Ok(())
 }
 
-/// 本地导入的结果：`changed` 为 false 说明 Hub 里已经是同一份内容。
+/// 收录结果：有变化时原件已迁入 Hub，原位置只保留软链接。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportOutcome {
     pub skill: Skill,
     pub changed: bool,
+    pub original_path: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalSkill {
     pub path: PathBuf,
+    pub hub_id: Option<String>,
     pub name: String,
     pub description: Option<String>,
     pub error: Option<String>,
@@ -700,7 +639,8 @@ pub struct LocalSkill {
 
 /// Discover skills in a selected directory without following directory links.
 pub fn discover_local(root: &Path) -> Result<Vec<LocalSkill>> {
-    let root = fs::canonicalize(root).map_err(|e| Error::io(root, e))?;
+    fs::canonicalize(root).map_err(|e| Error::io(root, e))?;
+    let root = root.to_path_buf();
     let mut found = Vec::new();
     let mut budget = MAX_ENTRIES;
     fn walk(dir: &Path, depth: usize, budget: &mut usize, out: &mut Vec<LocalSkill>) -> Result<()> {
@@ -711,6 +651,7 @@ pub fn discover_local(root: &Path) -> Result<Vec<LocalSkill>> {
             let fm = scanner::parse_frontmatter(&dir.join("SKILL.md"));
             out.push(LocalSkill {
                 path: dir.to_path_buf(),
+                hub_id: None,
                 name: fm.name.unwrap_or_else(|| {
                     dir.file_name().unwrap_or_default().to_string_lossy().into()
                 }),
@@ -743,58 +684,4 @@ pub fn discover_local(root: &Path) -> Result<Vec<LocalSkill>> {
     walk(&root, 0, &mut budget, &mut found)?;
     found.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(found)
-}
-
-/// Stage an independent copy, retaining the user's original files.
-pub fn prepare_local(path: &Path) -> Result<PreparedSkill> {
-    let source = fs::canonicalize(path).map_err(|e| Error::io(path, e))?;
-    scanner::validate_sync_source(&source)?;
-    if scanner::parse_frontmatter(&source.join("SKILL.md")).malformed {
-        return Err(Error::invalid("SKILL.md 的 YAML 格式无效"));
-    }
-    let skill_id = source
-        .file_name()
-        .and_then(|n| n.to_str())
-        .filter(|n| !n.is_empty() && !n.starts_with('.') && !n.contains(['/', '\\', ':']))
-        .ok_or_else(|| Error::invalid("Skill 目录名称无效"))?
-        .to_owned();
-    // Limit the copied tree and reject links so the Hub copy is self-contained.
-    fn check(dir: &Path, depth: usize, count: &mut usize, size: &mut u64) -> Result<()> {
-        if depth > 32 {
-            return Err(Error::invalid("Skill 目录层级过深"));
-        }
-        for entry in fs::read_dir(dir).map_err(|e| Error::io(dir, e))? {
-            let entry = entry.map_err(|e| Error::io(dir, e))?;
-            let meta =
-                fs::symlink_metadata(entry.path()).map_err(|e| Error::io(entry.path(), e))?;
-            *count += 1;
-            *size = size.saturating_add(meta.len());
-            if *count > MAX_ENTRIES || *size > MAX_EXPANDED {
-                return Err(Error::invalid("Skill 文件数量或大小超过限制"));
-            }
-            if meta.is_symlink() || (!meta.is_dir() && !meta.is_file()) {
-                return Err(Error::invalid("Skill 包含链接或特殊文件，暂不支持导入"));
-            }
-            if meta.is_dir() {
-                check(&entry.path(), depth + 1, count, size)?;
-            }
-        }
-        Ok(())
-    }
-    check(&source, 0, &mut 0, &mut 0)?;
-    let temp = tempfile::tempdir().map_err(|e| Error::Other(e.to_string()))?;
-    let directory = temp.path().join(&skill_id);
-    let before = scanner::dir_content_hash(&source)?;
-    linker::copy_tree(&source, &directory)?;
-    if scanner::dir_content_hash(&directory)? != before {
-        return Err(Error::invalid("本地内容在导入期间发生变化，请重试"));
-    }
-    Ok(PreparedSkill {
-        _temp: temp,
-        directory,
-        source: format!("local:{}", source.display()),
-        skill_id,
-        repository_path: String::new(),
-        variants: Vec::new(),
-    })
 }

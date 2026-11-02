@@ -6,7 +6,7 @@ description: 用 Skill Studio 命令行管理 Skill 与 MCP：安装或托管到
 # Skill Studio
 
 三层：**Hub（有什么）**、**分组**、**项目（给谁用）**。桌面和 CLI 共用
-`~/.skill-studio/`，改动会实时刷新。Hub 不启用 Agent，部署只走分组或项目。
+`~/.skill-studio/`，改动会实时刷新。收录与托管都迁移原件；原入口仅留软链接，不额外启用 Agent。
 
 **先查看，再修改。** 不要手改 Studio 或 Agent 的配置，也不要直接搬删 Skill：
 那会绕过配置锁、备份、来源记录和冲突检查。找不到命令时，在桌面设置里查看命令行位置。
@@ -37,15 +37,18 @@ DeepSeek Harness 的 Agent ID 是 `deepseek-harness`（可写 `dsh`）：只管�
 skill-studio skills search pdf
 skill-studio skills install owner/repo@pdf
 skill-studio skills discover ~/my-skills  # 只扫描候选，不导入
-skill-studio skills import ~/my-skill     # 复制到 Hub，原件独立保留
-skill-studio skills adopt ~/.claude/skills/rex --yes
-skill-studio skills release ~/.skill-studio/skills/rex --yes
-skill-studio skills delete ~/.claude/skills/rex --yes
+skill-studio skills import ~/my-skill --yes # 迁移收录，原位置仅留软链接
+skill-studio skills adopt ~/.claude/skills/my-skill --yes
+skill-studio skills release ~/.skill-studio/skills/my-skill --yes
+skill-studio skills delete ~/.claude/skills/my-skill --yes
 skill-studio skills prune --yes           # 清理失效引用，不删除文件
 ```
 
-`adopt` 搬原件到 Hub，并留下 Agent 入口；共享目录原件的入口改放所属 Agent 私有目录。
-`release` 按托管来源记录还原，不覆盖外部修改。正在使用、内置或外部来源有保护检查。
+`import`、`adopt` 与项目收录均将唯一真身迁入 Hub，原位置（含共享根）仅留软链接，失败回滚，不回退复制。
+策略挂起不阻止迁移，原有启停状态不变；部署副本不能当原件收录。分组和项目部署仍可复制。
+先用 `skills show <路径或ID> --json` 核对来源和 `policySuspended`；安装器注释不是 External 分类或挂起原因。
+被拒绝后按真实原因处理，不猜桌面解除入口、不换 ID 重试、不以复制替代托管；错误解释须明确纠正。
+`release` 将真身还原到原位置；退出 Agent 管理只撤部署和恢复策略，不复制还原原件。
 删除按列表中的具体来源操作，不跟随列表外的末级软链接；目录别名仍可用。
 普通目录保留备份；项目列表里的软链接只移除链接、不删除目标。
 
@@ -70,11 +73,11 @@ skill-studio projects gitignore app
 skill-studio projects skills list app
 skill-studio projects skills disable app ./原路径
 skill-studio projects skills enable app ./原路径
-skill-studio projects skills adopt app ./原路径
+skill-studio projects skills adopt app ./原路径 --yes
 skill-studio projects skills delete app ./原路径 --yes
 ```
 
-原路径以列表为准。项目 `adopt` 是复制收录，保留项目文件，与全局搬移式托管不同。
+原路径以列表为准。项目 `adopt` 与全局托管相同；被移出目录停用的原件须先恢复，不从备份复制收录。
 部署副本不能逐项删改，须从项目/分组移出成员或停用。
 
 ## 管理 MCP
@@ -135,7 +138,7 @@ skill-studio projects delete app --yes       # 只移除记录，不动项目文
 skill-studio mcp remove context7 --yes        # 移出 Hub 并还原原配置
 ```
 
-正在使用的分组/项目先停用再删。删除/移除/恢复或管理策略变更需 `--yes`，
+正在使用的分组/项目先停用再删。收录/托管/删除/移除/恢复或管理策略变更需 `--yes`，
 **先向用户说明影响并取得确认**；不要把 `--yes` 当成用户授权。
 「原样留下」表示 Studio 不覆盖外部修改，需人工核对。
 

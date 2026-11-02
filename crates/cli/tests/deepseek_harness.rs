@@ -70,7 +70,7 @@ impl Drop for Home {
 fn harness_alias_deploys_groups_and_projects_to_private_roots() {
     let home = Home::new();
     let source = home.skill("incoming/demo", "demo");
-    home.ok(&["skills", "import", source.to_str().unwrap()]);
+    home.ok(&["skills", "import", source.to_str().unwrap(), "--yes"]);
     home.ok(&["groups", "create", "Dev", "--skills", "demo"]);
     home.ok(&["groups", "enable", "Dev", "--agent", "dsh"]);
     assert!(home.path(".dsh/skills/demo/SKILL.md").is_file());

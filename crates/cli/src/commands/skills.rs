@@ -57,6 +57,7 @@ fn origin(view: &SkillView) -> (&'static str, Option<String>, String) {
             format!("{} 目录里的原件", agent_name(owner_agent)),
         ),
         SkillOrigin::External => ("external", None, "外部来源".into()),
+        SkillOrigin::Local => ("local", None, "本地目录里的原件".into()),
     }
 }
 
@@ -201,7 +202,11 @@ fn show(ctx: &Ctx, input: &str, content: bool) -> Result<Report, CliError> {
                 view::status_label(state.status)
             );
             if state.disabled {
-                line.push_str("（已在 Agent 里停用）");
+                line.push_str(if state.policy_suspended {
+                    "（被组外策略暂时停用）"
+                } else {
+                    "（已在 Agent 配置里停用）"
+                });
             }
             if let Some(reason) = &state.unavailable_reason {
                 let _ = write!(line, "（{reason}）");
@@ -212,6 +217,9 @@ fn show(ctx: &Ctx, input: &str, content: bool) -> Result<Report, CliError> {
             agent.id.into(),
             json!({
                 "status": state.status, "disabled": state.disabled,
+                "manual": state.manual, "policyBlocked": state.policy_blocked,
+                "policySuspended": state.policy_suspended, "entryPaths": state.entry_paths,
+                "disabledReason": if !state.disabled { None } else if state.policy_suspended { Some("manual_policy") } else { Some("agent_config") },
                 "loaded": view::loaded(state), "path": state.target_path,
                 "unavailable": state.unavailable_reason,
             }),
@@ -246,6 +254,7 @@ fn show(ctx: &Ctx, input: &str, content: bool) -> Result<Report, CliError> {
         "description": view.skill.description, "origin": kind, "owner": owner,
         "path": view.skill.source_path, "tokens": view.skill.tokens,
         "groups": groups, "projects": projects, "agents": states,
+        "provenance": view.provenance, "installation": view.installation,
         "content": document.map(|d| d.raw),
     });
     Ok(Report::new(text, json))
@@ -340,7 +349,8 @@ fn import(ctx: &Ctx, path: &std::path::Path) -> Result<Report, CliError> {
     if !path.exists() {
         return Err(CliError::not_found(format!("目录不存在：{}", home(&path))));
     }
-    let found = skills::discover_local_skills(path.to_string_lossy().into_owned())?;
+    let reader = ctx.reader()?;
+    let found = skills::discover_local_skills(&reader, path.to_string_lossy().into_owned())?;
     let chosen = match found.len() {
         0 => {
             return Err(CliError::failed(format!(
@@ -371,28 +381,33 @@ fn import(ctx: &Ctx, path: &std::path::Path) -> Result<Report, CliError> {
     };
     if let Some(error) = &chosen.error {
         return Err(CliError::failed(format!(
-            "「{}」不能导入：{error}",
+            "「{}」不能收录：{error}",
             chosen.name
         )));
     }
+    ctx.confirm(format!(
+        "收录 {} 会迁移原件，原位置只留软链接，需要 --yes 确认",
+        home(&chosen.path)
+    ))?;
     let state = ctx.writer()?;
-    let imported = skills::import_local_skill(&state, chosen.path.to_string_lossy().into_owned())?;
+    let imported = state.import_local_skill(&chosen.path)?;
     let changed = imported.changed;
+    let original_path = imported.original_path;
     let skill = imported.skill;
     let message = if changed {
         format!(
-            "已把「{}」导入 Skill Hub，还没有启用到任何 Agent",
+            "已把「{}」迁移收录到 Skill Hub，原位置仅保留软链接，原有启停状态不变",
             skill.name
         )
     } else {
-        format!("「{}」已在 Skill Hub 里，内容没有变化", skill.name)
+        format!("「{}」的真身已在 Skill Hub，无需再次迁移", skill.name)
     };
     Ok(Report::write(
         message,
         changed,
-        false,
+        changed,
         &[],
-        json!({ "skill": { "id": skill.id, "name": skill.name, "path": skill.source_path } }),
+        json!({ "originalPath": original_path, "skill": { "id": skill.id, "name": skill.name, "path": skill.source_path } }),
     )
     .next(format!(
         "加入分组 skill-studio groups add <分组> {}",

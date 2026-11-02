@@ -1,16 +1,13 @@
 #[path = "support.rs"]
 mod support;
 use serial_test::serial;
-use skill_studio_core::{
-    models::project::{ProjectBinding, ProjectEntry},
-    services::marketplace::prepare_local,
-};
+use skill_studio_core::models::project::{ProjectBinding, ProjectEntry};
 use std::fs;
 use support::Env;
 
 #[test]
 #[serial]
-fn collection_tracks_original_path_and_deletion_preserves_hub_and_backup() {
+fn collection_migrates_original_and_deleting_backlink_preserves_hub() {
     let env = Env::new();
     let studio = env.studio();
     let mut config = studio.load_config().unwrap();
@@ -21,9 +18,14 @@ fn collection_tracks_original_path_and_deletion_preserves_hub_and_backup() {
     let entries = studio.project_local_skills(&config, &project).unwrap();
     assert!(!entries[0].collected);
     let skill = studio
-        .install_catalog_skill(&mut config, &prepare_local(&source).unwrap())
+        .collect_project_skill(&mut config, "p", &source)
         .unwrap();
     assert!(source.join("SKILL.md").exists());
+    assert!(skill_studio_core::services::scanner::is_symlink_or_junction(&source));
+    assert!(skill_studio_core::fs::paths::paths_alias(
+        &config.skill_provenance[&skill.id].original_path,
+        &source
+    ));
     assert!(studio.project_local_skills(&config, &project).unwrap()[0].collected);
     let other_root = env.path().join("other-repo");
     env.write_simple_skill(&other_root.join(".agents/skills"), "release");
@@ -32,18 +34,14 @@ fn collection_tracks_original_path_and_deletion_preserves_hub_and_backup() {
     studio
         .delete_project_local_skill(&config, "p", &source)
         .unwrap();
-    let record = studio.skill_backups().unwrap().remove(0);
-    let backup = studio.backup_payload(&record);
+    assert!(studio.skill_backups().unwrap().is_empty());
     assert!(!source.exists());
-    assert!(backup.join("SKILL.md").exists());
-    assert_eq!(record.original_path, source);
     assert!(skill.source_path.join("SKILL.md").exists());
     assert!(studio
         .project_local_skills(&config, &project)
         .unwrap()
         .is_empty());
-    fs::rename(&backup, &source).unwrap();
-    fs::remove_dir_all(&skill.source_path).unwrap();
+    studio.release_from_hub(&mut config, &skill.id).unwrap();
     assert!(!studio.project_local_skills(&config, &project).unwrap()[0].collected);
 }
 
