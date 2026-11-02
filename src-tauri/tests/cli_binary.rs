@@ -63,7 +63,7 @@ fn process_is_alive(pid: u32) -> bool {
 fn a_timed_out_stdio_probe_does_not_leave_descendants_running() {
     let home = tempfile::tempdir().unwrap();
     let pidfile = home.path().join("child.pid");
-    let script = "sleep 3 >/dev/null 2>&1 & printf '%s' \"$!\" > \"$PIDFILE\"; exec sleep 3";
+    let script = "sleep 3 >/dev/null 2>&1 & printf '%s' \"$!\" > \"$PIDFILE.tmp\"; mv \"$PIDFILE.tmp\" \"$PIDFILE\"; exec sleep 3";
     let added = run(
         home.path(),
         &[
@@ -106,7 +106,9 @@ fn a_timed_out_stdio_probe_does_not_leave_descendants_running() {
 fn interrupted_cli_probes_cancel_without_leaving_their_process_group_running() {
     let home = tempfile::tempdir().unwrap();
     let pidfile = home.path().join("interrupt-child.pid");
-    let script = "sleep 3 >/dev/null 2>&1 & printf '%s' \"$!\" > \"$PIDFILE\"; exec sleep 3";
+    // The existence check below is a readiness signal, so publish a complete PID
+    // atomically rather than exposing the shell redirection's initially empty file.
+    let script = "sleep 3 >/dev/null 2>&1 & printf '%s' \"$!\" > \"$PIDFILE.tmp\"; mv \"$PIDFILE.tmp\" \"$PIDFILE\"; exec sleep 3";
     let added = run(
         home.path(),
         &[
