@@ -2,7 +2,7 @@ name: Warm release cache
 
 # Release 构建最贵的是第三方依赖。标签之间不能共享 Actions 缓存，但标签可以
 # 恢复主分支缓存，所以在主分支的依赖清单变化时先编一遍 Release 依赖。
-# Windows 与 macOS 并行预热，两者都只编译、不打包、不发布。
+# Windows、macOS 与 Linux 并行预热，三者都只编译、不打包、不发布。
 on:
   workflow_dispatch:
   push:
@@ -27,6 +27,8 @@ jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
     steps:
       - uses: actions/checkout@v4
       - name: Install pinned Rust toolchain
@@ -43,13 +45,13 @@ jobs:
         shell: bash
         run: mkdir -p dist && echo '<!doctype html><title>cache</title>' > dist/index.html
       - name: Compile release dependencies
-        env:
-          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "8"
         run: cargo build --release --locked -p skill-studio --lib
 
   macos:
     runs-on: macos-15
     timeout-minutes: 30
+    env:
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "8"
     steps:
       - uses: actions/checkout@v4
       - name: Verify Apple Silicon runner and select Xcode
@@ -70,6 +72,30 @@ jobs:
         shell: bash
         run: mkdir -p dist && echo '<!doctype html><title>cache</title>' > dist/index.html
       - name: Compile release dependencies
-        env:
-          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
         run: cargo build --release --locked --target aarch64-apple-darwin -p skill-studio --lib
+
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "8"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # 与 release.yml 的 Linux 构建共用缓存。
+          shared-key: release
+          cache-on-failure: true
+          workspaces: . -> target
+      - name: Install Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libglib2.0-dev libgtk-3-dev
+      - name: Stub frontend dist
+        shell: bash
+        run: mkdir -p dist && echo '<!doctype html><title>cache</title>' > dist/index.html
+      - name: Compile release dependencies
+        run: cargo build --release --locked -p skill-studio --lib

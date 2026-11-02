@@ -83,20 +83,23 @@ jobs:
             label: macOS
             args: "--target aarch64-apple-darwin"
             rust-targets: "aarch64-apple-darwin"
-            codegen-units: "1"
+            codegen-units: "8"
           - os: ubuntu-22.04
             label: Linux
             args: "--bundles appimage,deb"
             rust-targets: ""
-            codegen-units: "1"
+            codegen-units: "8"
           - os: windows-latest
             label: Windows
             args: "--bundles msi,nsis"
             rust-targets: ""
-            # Windows 的依赖编译和最终链接占 Release 的大头；8 个代码生成单元
-            # 配合 ThinLTO，可明显缩短构建，仍保留跨单元优化。
-            codegen-units: "8"
+            # Windows 的依赖编译和最终链接占 Release 的大头；16 个代码生成单元
+            # 配合 ThinLTO，进一步并行代码生成，仍保留跨单元优化。
+            codegen-units: "16"
     runs-on: ${{ matrix.os }}
+    # 放到 job 级，rust-cache 才能把代码生成单元数计入缓存键。
+    env:
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ matrix.codegen-units }}
     steps:
       - uses: actions/checkout@v4
 
@@ -149,8 +152,6 @@ jobs:
           path: src-tauri/resources/remote
 
       - name: Build
-        env:
-          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ matrix.codegen-units }}
         run: pnpm exec tauri build ${{ matrix.args }}
 
       # 桌面和随包 CLI 均只包含 arm64；保留架构与命令行运行检查
