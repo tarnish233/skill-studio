@@ -2,6 +2,7 @@
 mod support;
 use serial_test::serial;
 use skill_studio_core::models::project::{ProjectBinding, ProjectEntry};
+#[cfg(unix)]
 use std::fs;
 use support::Env;
 
