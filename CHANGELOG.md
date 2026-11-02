@@ -3,7 +3,7 @@
 ## 未发布
 
 - **macOS 仅提供 Apple Silicon 构建**：后续版本不再编译 Intel 或合成 Universal 包；桌面与随包 CLI 均为 arm64，Homebrew 限制为 Apple Silicon。Windows／Linux 构建与发布门禁保留，v0.6.18 的历史通用包不变。
-- **发布构建提速**：桌面构建只产出 rlib，去掉移动端才需要的 staticlib／cdylib；Release 依赖缓存改为跨版本共享，并在主分支依赖变化时预热，标签构建可直接复用；Windows 使用 8 个代码生成单元配合 ThinLTO。安装包格式与发布校验不变。
+- **发布构建提速**：桌面构建只产出 rlib，去掉移动端才需要的 staticlib／cdylib；Release 依赖缓存改为跨版本共享，并在主分支依赖变化时并行预热 Windows 与 macOS，标签构建可直接复用；Windows 使用 8 个代码生成单元配合 ThinLTO。安装包格式与发布校验不变。
 
 ## v0.6.18 — 2026-11-02
 
