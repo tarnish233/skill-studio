@@ -332,7 +332,7 @@ fn prepare_copy(
             ));
         }
         tx.reserve(dest)?;
-        fs::rename(&tmp, dest).map_err(|e| Error::io(dest, e))?;
+        super::transaction::rename(&tmp, dest)?;
         Ok(after)
     })();
     match operation {
@@ -355,7 +355,7 @@ fn prepare_symlink(
         tx.reserve(&tmp)?;
         create_symlink(source, &tmp)?;
         tx.reserve(dest)?;
-        fs::rename(&tmp, dest).map_err(|e| Error::io(dest, e))?;
+        super::transaction::rename(&tmp, dest)?;
         Ok(())
     })();
     match operation {

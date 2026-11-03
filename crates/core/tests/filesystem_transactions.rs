@@ -164,7 +164,10 @@ fn recovery_cleans_read_only_trees_without_following_nested_links() {
         let outside = temp.path().join("outside");
         read_only_tree(&target, "old");
         read_only_tree(&outside, "untouched");
+        // Seed the post-reserve journal portably: older macOS cannot rename a 0555 root.
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
         fs::rename(&target, &backup).unwrap();
+        fs::set_permissions(&backup, fs::Permissions::from_mode(0o555)).unwrap();
         fs::create_dir(&target).unwrap();
         std::os::unix::fs::symlink(&outside, target.join("outside")).unwrap();
         read_only_tree(&target, "new");

@@ -53,24 +53,63 @@ pub fn remove(path: &Path) -> Result<()> {
     }
 }
 
+fn owner_writable_permissions(meta: &fs::Metadata) -> Option<fs::Permissions> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = meta.permissions().mode();
+        (meta.is_dir() && mode & 0o700 != 0o700).then(|| fs::Permissions::from_mode(mode | 0o700))
+    }
+    #[cfg(windows)]
+    {
+        if !meta.permissions().readonly() {
+            return None;
+        }
+        let mut permissions = meta.permissions();
+        // Windows clears FILE_ATTRIBUTE_READONLY, not Unix mode bits.
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        Some(permissions)
+    }
+}
+
+/// Older macOS also requires write access to the directory being renamed.
+/// Only a transaction-owned entry is adjusted, never a link or its destination.
+pub fn rename(source: &Path, target: &Path) -> Result<()> {
+    rename_with(source, target, |source, target| fs::rename(source, target))
+        .map_err(|e| Error::io(source, e))
+}
+
+fn rename_with(
+    source: &Path,
+    target: &Path,
+    move_entry: impl Fn(&Path, &Path) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let error = match move_entry(source, target) {
+        Ok(()) => return Ok(()),
+        Err(error) => error,
+    };
+    if error.kind() != std::io::ErrorKind::PermissionDenied || is_symlink_or_junction(source) {
+        return Err(error);
+    }
+    let meta = fs::symlink_metadata(source)?;
+    let Some(writable) = owner_writable_permissions(&meta) else {
+        return Err(error);
+    };
+    let original = meta.permissions();
+    fs::set_permissions(source, writable)?;
+    let moved = move_entry(source, target);
+    // On either outcome, restore the original object's mode at its current path.
+    fs::set_permissions(if moved.is_ok() { target } else { source }, original)?;
+    moved
+}
+
 fn make_removable(path: &Path) -> Result<()> {
     if is_symlink_or_junction(path) {
         return Ok(());
     }
     let meta = fs::symlink_metadata(path).map_err(|e| Error::io(path, e))?;
-    #[cfg(unix)]
-    if meta.is_dir() {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = meta.permissions().mode();
-        if mode & 0o700 != 0o700 {
-            fs::set_permissions(path, fs::Permissions::from_mode(mode | 0o700))
-                .map_err(|e| Error::io(path, e))?;
-        }
-    }
-    #[cfg(windows)]
-    if meta.permissions().readonly() {
-        let mut permissions = meta.permissions();
-        permissions.set_readonly(false);
+    if let Some(permissions) = owner_writable_permissions(&meta) {
         fs::set_permissions(path, permissions).map_err(|e| Error::io(path, e))?;
     }
     if meta.is_dir() {
@@ -209,7 +248,7 @@ impl Transaction {
         });
         self.persist()?;
         if existed {
-            fs::rename(target, &backup).map_err(|e| Error::io(target, e))?;
+            rename(target, &backup)?;
         }
         Ok(())
     }
@@ -261,8 +300,7 @@ impl Transaction {
                     match fs::symlink_metadata(&entry.backup) {
                         Ok(_) => {
                             remove(&entry.target)?;
-                            fs::rename(&entry.backup, &entry.target)
-                                .map_err(|e| Error::io(&entry.target, e))?;
+                            rename(&entry.backup, &entry.target)?;
                         }
                         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                         Err(e) => return Err(Error::io(&entry.backup, e)),
@@ -636,6 +674,84 @@ mod locking_tests {
 #[cfg(test)]
 mod audit_regressions {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn readonly_rename_retry_restores_root_and_nested_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("source");
+        let target = tmp.path().join("target");
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::set_permissions(source.join("nested"), fs::Permissions::from_mode(0o555)).unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o555)).unwrap();
+        // Deterministically exercise the older-macOS permission requirement on any Unix host.
+        let result = rename_with(&source, &target, |source, target| {
+            if fs::metadata(source)?.permissions().mode() & 0o200 == 0 {
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            } else {
+                fs::rename(source, target)
+            }
+        });
+        let mode = fs::metadata(&target)
+            .ok()
+            .map(|meta| meta.permissions().mode() & 0o777);
+        let nested = fs::metadata(target.join("nested"))
+            .ok()
+            .map(|meta| meta.permissions().mode() & 0o777);
+        let _ = make_removable(&source);
+        let _ = make_removable(&target);
+        result.unwrap();
+        assert!(!source.exists());
+        assert_eq!(mode, Some(0o555));
+        assert_eq!(nested, Some(0o555));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn denied_rename_retry_restores_source_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("source");
+        let target = tmp.path().join("target");
+        fs::create_dir(&source).unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o555)).unwrap();
+        let result = rename_with(&source, &target, |_, _| {
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        });
+        let mode = fs::metadata(&source).unwrap().permissions().mode() & 0o777;
+        make_removable(&source).unwrap();
+        assert_eq!(
+            result.unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(mode, 0o555);
+        assert!(!target.exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn denied_link_rename_does_not_change_its_destination_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let outside = tmp.path().join("outside");
+        let link = tmp.path().join("link");
+        fs::create_dir(&outside).unwrap();
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o555)).unwrap();
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        let result = rename_with(&link, &tmp.path().join("target"), |_, _| {
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        });
+        let mode = fs::metadata(&outside).unwrap().permissions().mode() & 0o777;
+        make_removable(&outside).unwrap();
+        assert_eq!(
+            result.unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(mode, 0o555);
+    }
+
     #[test]
     fn recovery_uses_opened_journal_not_serialized_path() {
         let tmp = tempfile::tempdir().unwrap();

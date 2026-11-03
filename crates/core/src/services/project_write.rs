@@ -273,7 +273,7 @@ impl Studio {
                     _ => return Err(Error::invalid("目标发生变化，请刷新后重试")),
                 }
                 tx.reserve(dest)?;
-                fs::rename(&stage, dest).map_err(|e| Error::io(dest, e))?;
+                transaction::rename(&stage, dest)?;
                 entries.push(ProjectEntry {
                     skill_id: skill.id.clone(),
                     source_path: source.clone(),
