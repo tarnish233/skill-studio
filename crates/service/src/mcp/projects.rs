@@ -55,7 +55,7 @@ pub fn save(
     ensure_writable(state)?;
     let untouched = with_write(state, |dir, config| {
         let imports = scanned_imports(config, dir, imports)?;
-        projects::save(
+        projects::save_with_agent_check(
             dir,
             project_id,
             projects::Input {
@@ -68,6 +68,7 @@ pub fn save(
             &config.settings.agent_dir_overrides,
             command(executable),
             expected,
+            |agent| ensure_managed_in(&config.settings, agent).map_err(anyhow::Error::msg),
         )
     })?;
     after_write(state);

@@ -137,22 +137,7 @@ fn set(input: &SettingsSet, ctx: &Ctx) -> Result<Report, CliError> {
         let dir = skill_studio_service::mcp::dir(&state);
         let catalog = skill_studio_mcp::management::read_only(&dir)
             .map_err(|e| CliError::from(e.to_string()))?;
-        let needs_gateway = catalog
-            .entries
-            .iter()
-            .any(|e| e.mode == "gateway" && !e.bindings.is_empty())
-            || catalog
-                .active_groups
-                .values()
-                .flatten()
-                .flat_map(|g| &g.entries)
-                .any(|e| e.mode == "gateway")
-            || catalog
-                .projects
-                .values()
-                .flat_map(|p| p.active.values())
-                .flat_map(|p| &p.entries)
-                .any(|e| e.mode == "gateway");
+        let needs_gateway = skill_studio_service::mcp::needs_gateway(&catalog);
         if needs_gateway {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()

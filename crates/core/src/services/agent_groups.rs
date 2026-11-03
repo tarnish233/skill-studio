@@ -1,7 +1,7 @@
 //! Agent-scoped combinations with reversible suspension of manual skills.
 use super::{linker, native_toggle, scanner, studio::Studio, transaction::Transaction};
 use crate::{
-    fs::{atomic, paths},
+    fs::paths,
     models::{
         agent::require_agent,
         config::{AppConfig, Registration},
@@ -434,20 +434,7 @@ impl Studio {
                 if !owned.iter().any(|entry| entry.target_path == *dest) {
                     tx.reserve(dest)?;
                 }
-                linker::copy_tree(&skill.source_path, dest)?;
-                let hash = scanner::dir_content_hash(&skill.source_path)?;
-                if scanner::dir_content_hash(dest)? != hash {
-                    return Err(Error::invalid("分组副本校验失败"));
-                }
-                atomic::write_json_file(
-                    &dest.join(scanner::COPY_SIDECAR),
-                    &scanner::CopySidecar {
-                        skill_id: skill.id.clone(),
-                        source_path: skill.source_path.clone(),
-                        source_hash: hash.clone(),
-                        copied_at: linker::now_secs(),
-                    },
-                )?;
+                let hash = linker::copy_skill(&skill.source_path, dest, &skill.id)?;
                 if agent
                     .toggle_config_path(&config.settings.agent_dir_overrides)
                     .is_some()
@@ -527,8 +514,7 @@ impl Studio {
                 }
                 next.registrations.retain(|_, regs| !regs.is_empty());
             }
-            self.store().reserve_config(&mut tx, &next)?;
-            self.save_config(&next)?;
+            self.store().save_in_transaction(&mut tx, &next)?;
             Ok(())
         })();
         if let Err(e) = operation {

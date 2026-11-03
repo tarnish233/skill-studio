@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useTarget } from "@/components/targets/TargetProvider";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -11,9 +11,8 @@ import {
   systemApi,
 } from "@/lib/api";
 import { queryKeys, NAVIGATION_STALE_TIME } from "@/lib/queryKeys";
-import { toastLinkReport } from "@/lib/linkReport";
 import { useTauriEvent } from "@/hooks/useTauriEvent";
-import type { LinkMode, SettingsPatch } from "@/types";
+import type { SettingsPatch } from "@/types";
 
 /* ─────────────────── 查询 ─────────────────── */
 
@@ -34,10 +33,9 @@ export function useAgents() {
     // Version detection enriches the inventory; it never blocks navigation.
     staleTime: 60_000,
   });
-  const details = new Map(probe.data?.map((agent) => [agent.id, agent]));
-  return {
-    ...inventory,
-    data: inventory.data?.map((agent) => {
+  const data = useMemo(() => {
+    const details = new Map(probe.data?.map((agent) => [agent.id, agent]));
+    return inventory.data?.map((agent) => {
       const detail = details.get(agent.id);
       return detail
         ? {
@@ -48,7 +46,11 @@ export function useAgents() {
             cliVersion: detail.cliVersion,
           }
         : agent;
-    }),
+    });
+  }, [inventory.data, probe.data]);
+  return {
+    ...inventory,
+    data,
     isDetecting: probe.data === undefined && !probe.isError,
     detectionFailed: probe.isError,
   };
@@ -183,42 +185,23 @@ export function useSkillsAutoRefresh() {
 /** 任何会改动文件或配置的操作都要连带刷新 skill 状态 */
 export function useInvalidateAfterWrite() {
   const qc = useQueryClient();
-  return () => {
-    void qc.invalidateQueries({ queryKey: queryKeys.skills });
-    void qc.invalidateQueries({ queryKey: queryKeys.groups });
-    void qc.invalidateQueries({ queryKey: queryKeys.projects });
-    void qc.invalidateQueries({ queryKey: queryKeys.backups });
-    void qc.invalidateQueries({ queryKey: queryKeys.config });
-    void qc.invalidateQueries({ queryKey: queryKeys.skillBackups });
-    void qc.invalidateQueries({ queryKey: queryKeys.hubBackups });
-  };
-}
-
-export function useRegisterSkills() {
-  const invalidate = useInvalidateAfterWrite();
-  return useMutation({
-    mutationFn: (v: {
-      skillIds: string[];
-      agentIds: string[];
-      mode?: LinkMode;
-      force?: boolean;
-    }) => skillsApi.register(v.skillIds, v.agentIds, v.mode, v.force ?? false),
-    onSuccess: (report) => toastLinkReport(report, "注册"),
-    onError: (e: unknown) => toast.error(String(e)),
-    onSettled: invalidate,
-  });
-}
-
-export function useSetSkillEnabled() {
-  const invalidate = useInvalidateAfterWrite();
-  return useMutation({
-    mutationFn: (v: { skillId: string; agentId: string; enabled: boolean }) =>
-      skillsApi.setEnabled(v.skillId, v.agentId, v.enabled),
-    onSuccess: (_r, v) =>
-      toast.success(v.enabled ? "已启用 skill" : "已停用 skill"),
-    onError: (e: unknown) => toast.error(String(e)),
-    onSettled: invalidate,
-  });
+  return useCallback(
+    () =>
+      Promise.all([
+        ...[
+          queryKeys.skills,
+          queryKeys.groups,
+          queryKeys.projects,
+          queryKeys.backups,
+          queryKeys.config,
+          queryKeys.skillBackups,
+          queryKeys.hubBackups,
+        ].map((queryKey) => qc.invalidateQueries({ queryKey })),
+        // Deployments can create Agent directories; refresh inventory, not CLI probes.
+        qc.invalidateQueries({ queryKey: queryKeys.agents, exact: true }),
+      ]),
+    [qc],
+  );
 }
 
 export function useAdoptToHub() {
@@ -250,34 +233,6 @@ export function useCreateProject() {
     mutationFn: (v: { name: string; root: string }) =>
       projectsApi.create(v.name, v.root),
     onSuccess: (p) => toast.success(`已添加项目：${p.name}`),
-    onError: (e: unknown) => toast.error(String(e)),
-    onSettled: invalidate,
-  });
-}
-
-export function useDeleteProject() {
-  const invalidate = useInvalidateAfterWrite();
-  return useMutation({
-    mutationFn: (projectId: string) => projectsApi.remove(projectId),
-    onSuccess: () => toast.success("项目已移除（项目目录里的文件未变动）"),
-    onError: (e: unknown) => toast.error(String(e)),
-    onSettled: invalidate,
-  });
-}
-
-export function useApplyProject() {
-  const invalidate = useInvalidateAfterWrite();
-  return useMutation({
-    mutationFn: (v: {
-      projectId: string;
-      selection: {
-        agentIds: string[];
-        skillIds: string[];
-        groupIds: string[];
-        linkMode: LinkMode;
-      };
-    }) => projectsApi.apply(v.projectId, v.selection),
-    onSuccess: () => toast.success("项目选择已保存并写入"),
     onError: (e: unknown) => toast.error(String(e)),
     onSettled: invalidate,
   });

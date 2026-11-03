@@ -441,3 +441,410 @@ fn every_operation_stops_while_mcp_management_is_off() {
         mcp::DISABLED
     );
 }
+
+#[test]
+#[serial]
+fn disabled_agents_reject_new_targets_and_adoption_including_claude_id_mapping() {
+    for (agent, app, relative, text) in [
+        (
+            "codex",
+            "codex",
+            ".codex/config.toml",
+            "[mcp_servers.existing]\ncommand='native'\n",
+        ),
+        (
+            "claude",
+            "claude-code",
+            ".claude.json",
+            r#"{"mcpServers":{"existing":{"command":"native"}}}"#,
+        ),
+    ] {
+        let env = Env::new();
+        let path = env.home.path().join(relative);
+        std::fs::write(&path, text).unwrap();
+        let state = env.process();
+        state.set_managed_agent(app, false).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let source = mcp::overview(&state, None)
+            .unwrap()
+            .scanned
+            .discovered
+            .into_iter()
+            .flat_map(|d| d.sources)
+            .find(|s| s.agent == agent && s.key == "existing")
+            .unwrap();
+        let entry = Entry {
+            id: "new".into(),
+            name: "new".into(),
+            mode: "direct".into(),
+            definition: serde_json::json!({"type":"stdio","command":"replacement"}),
+            ..Default::default()
+        };
+        for placement in [
+            Placement {
+                agents: vec![agent.into()],
+                ..Default::default()
+            },
+            Placement {
+                sources: vec![SourceRef {
+                    id: source.id,
+                    definition: source.definition,
+                }],
+                ..Default::default()
+            },
+        ] {
+            let error =
+                mcp::entries::save(&state, None, entry.clone(), None, &placement).unwrap_err();
+            assert_eq!(error, "请先开启此 Agent 的管理");
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            assert!(env.catalog().entries.is_empty());
+        }
+    }
+}
+
+#[test]
+#[serial]
+fn disabled_binding_is_not_rewritten_or_discarded_but_can_be_explicitly_withdrawn() {
+    let env = Env::new();
+    let state = env.process();
+    hub(&state, "alpha");
+    let opened = env.catalog().entries.remove(0);
+    mcp::entries::save(
+        &state,
+        None,
+        opened.clone(),
+        Some(opened),
+        &Placement {
+            agents: vec!["codex".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    state.set_managed_agent("codex", false).unwrap();
+    let opened = env.catalog().entries.remove(0);
+    let catalog_path = env.dir().join("mcp/catalog.json");
+    let before_catalog = std::fs::read(&catalog_path).unwrap();
+    let before_native = env.codex();
+    let mut edited = opened.clone();
+    edited.definition["command"] = serde_json::json!("changed");
+    let error = mcp::entries::save(
+        &state,
+        None,
+        edited,
+        Some(opened.clone()),
+        &Placement {
+            binding_ids: opened.bindings.iter().map(|b| b.id.clone()).collect(),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error, "请先开启此 Agent 的管理");
+    assert_eq!(env.codex(), before_native);
+    assert_eq!(std::fs::read(&catalog_path).unwrap(), before_catalog);
+    // Omitting bindings is an explicit withdrawal, not an automatic filtered save.
+    mcp::entries::save(
+        &state,
+        None,
+        opened.clone(),
+        Some(opened),
+        &Placement::default(),
+    )
+    .unwrap();
+    assert!(env.catalog().entries[0].bindings.is_empty());
+    assert!(!env.codex().contains("mcp_servers.alpha"));
+}
+
+#[test]
+#[serial]
+fn disabled_project_agent_blocks_resave_but_allows_empty_withdrawal() {
+    let env = Env::new();
+    let state = env.process();
+    hub(&state, "alpha");
+    hub(&state, "beta");
+    let id = project(&env, &state);
+    mcp::projects::save(
+        &state,
+        None,
+        &id,
+        Members {
+            entry_ids: vec!["alpha".into()],
+            ..Default::default()
+        },
+        &[],
+        None,
+    )
+    .unwrap();
+    mcp::projects::activate(&state, None, &id, "codex", true).unwrap();
+    state.set_managed_agent("codex", false).unwrap();
+    let path = env.home.path().join("work/.codex/config.toml");
+    let catalog_path = env.dir().join("mcp/catalog.json");
+    let before_native = std::fs::read(&path).unwrap();
+    let before_catalog = std::fs::read(&catalog_path).unwrap();
+    let error = mcp::projects::save(
+        &state,
+        None,
+        &id,
+        Members {
+            entry_ids: vec!["alpha".into(), "beta".into()],
+            ..Default::default()
+        },
+        &[],
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(error, "请先开启此 Agent 的管理");
+    assert_eq!(std::fs::read(&path).unwrap(), before_native);
+    assert_eq!(std::fs::read(&catalog_path).unwrap(), before_catalog);
+    mcp::projects::save(&state, None, &id, Members::default(), &[], None).unwrap();
+    assert!(env.catalog().projects[&id].active.is_empty());
+    assert!(!std::fs::read_to_string(&path)
+        .unwrap()
+        .contains("mcp_servers.alpha"));
+}
+
+#[test]
+#[serial]
+fn disabled_resume_checks_individual_group_and_project_bindings_before_any_write() {
+    for placement in ["entry", "group", "project"] {
+        let env = Env::new();
+        let state = env.process();
+        hub(&state, "alpha");
+        let path = match placement {
+            "entry" => {
+                let opened = env.catalog().entries.remove(0);
+                mcp::entries::save(
+                    &state,
+                    None,
+                    opened.clone(),
+                    Some(opened),
+                    &Placement {
+                        agents: vec!["codex".into()],
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                env.home.path().join(".codex/config.toml")
+            }
+            "group" => {
+                group(&state, "g", &["alpha"]);
+                mcp::groups::set(&state, None, "codex", "g", true).unwrap();
+                env.home.path().join(".codex/config.toml")
+            }
+            _ => {
+                let id = project(&env, &state);
+                mcp::projects::save(
+                    &state,
+                    None,
+                    &id,
+                    Members {
+                        entry_ids: vec!["alpha".into()],
+                        ..Default::default()
+                    },
+                    &[],
+                    None,
+                )
+                .unwrap();
+                mcp::projects::activate(&state, None, &id, "codex", true).unwrap();
+                env.home.path().join("work/.codex/config.toml")
+            }
+        };
+        state.set_mcp_management(false).unwrap();
+        state.set_managed_agent("codex", false).unwrap();
+        let before_native = std::fs::read(&path).unwrap();
+        let catalog_path = env.dir().join("mcp/catalog.json");
+        let before_catalog = std::fs::read(&catalog_path).unwrap();
+        let error = state.set_mcp_management(true).unwrap_err();
+        assert!(
+            error.to_string().contains("请先开启此 Agent 的管理"),
+            "{error}"
+        );
+        assert!(!state.config().settings.manage_mcp);
+        assert!(env.catalog().suspended);
+        assert_eq!(std::fs::read(&path).unwrap(), before_native);
+        assert_eq!(std::fs::read(&catalog_path).unwrap(), before_catalog);
+        state.set_managed_agent("codex", true).unwrap();
+        state.set_mcp_management(true).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            skill_studio_mcp::native::entry(&text, "codex", None, "alpha")
+                .unwrap()
+                .is_some(),
+            "{placement}: {text}"
+        );
+    }
+}
+
+#[test]
+#[serial]
+fn disabled_sources_can_be_explicitly_removed_without_enabling_management() {
+    for (agent, app, relative, text) in [
+        ("codex", "codex", ".codex/config.toml", "model='keep'\n[mcp_servers.existing]\ncommand='native'\n[mcp_servers.other]\ncommand='other'\n"),
+        ("claude", "claude-code", ".claude.json", r#"{"model":"keep","mcpServers":{"existing":{"command":"native"},"other":{"command":"other"}}}"#),
+        ("grok", "grok", ".grok/config.toml", "model='keep'\ndisabled_mcp_servers=['existing']\n[mcp_servers.existing]\ncommand='native'\n[mcp_servers.other]\ncommand='other'\n"),
+    ] {
+        let env = Env::new();
+        let path = env.home.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        let state = env.process();
+        state.set_managed_agent(app, false).unwrap();
+        let source = mcp::overview(&state, None).unwrap().scanned.discovered.into_iter().flat_map(|d| d.sources).find(|source| source.agent == agent && source.key == "existing").unwrap();
+        mcp::entries::remove_sources(&state, &[SourceRef { id: source.id, definition: source.definition }]).unwrap();
+        let actual = std::fs::read_to_string(&path).unwrap();
+        assert!(skill_studio_mcp::native::entry(&actual, agent, None, "existing").unwrap().is_none());
+        assert!(skill_studio_mcp::native::entry(&actual, agent, None, "other").unwrap().is_some());
+        assert!(actual.contains("keep"));
+        assert!(state.config().settings.disabled_agents.contains(&app.to_string()));
+    }
+}
+
+#[test]
+#[serial]
+#[cfg(unix)]
+fn mcp_management_toggles_preserve_the_config_dotfile_symlink() {
+    let env = Env::new();
+    let state = env.process();
+    state
+        .mutate(|_, config| {
+            config.settings.language = "en".into();
+            Ok(())
+        })
+        .unwrap();
+    let logical = env.dir().join("config.json");
+    let physical = env.home.path().join("dotfiles/config.json");
+    std::fs::create_dir_all(physical.parent().unwrap()).unwrap();
+    std::fs::rename(&logical, &physical).unwrap();
+    std::os::unix::fs::symlink(&physical, &logical).unwrap();
+    for enabled in [false, true] {
+        state.set_mcp_management(enabled).unwrap();
+        assert!(logical.symlink_metadata().unwrap().file_type().is_symlink());
+        let config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&physical).unwrap()).unwrap();
+        assert_eq!(config["settings"]["manageMcp"], enabled);
+        assert_eq!(config["settings"]["language"], "en");
+    }
+}
+
+#[test]
+fn gateway_requirement_covers_individual_group_and_project_deployments() {
+    let gateway = Entry {
+        id: "gateway".into(),
+        name: "Gateway".into(),
+        mode: "gateway".into(),
+        definition: serde_json::json!({"type":"stdio","command":"demo"}),
+        ..Default::default()
+    };
+    let mut catalog = management::Catalog {
+        entries: vec![gateway.clone()],
+        ..Default::default()
+    };
+    assert!(
+        !mcp::needs_gateway(&catalog),
+        "an unplaced Hub entry alone does not require startup"
+    );
+    catalog.active_groups.insert(
+        "codex".into(),
+        vec![management::groups::ActiveGroup {
+            group_id: "g".into(),
+            entries: vec![gateway.clone()],
+            bindings: vec![],
+        }],
+    );
+    assert!(mcp::needs_gateway(&catalog));
+    catalog.active_groups.clear();
+    catalog.projects.insert(
+        "p".into(),
+        management::projects::Project {
+            root: PathBuf::from("project"),
+            active: std::collections::BTreeMap::from([(
+                "codex".into(),
+                management::projects::Deployment {
+                    entries: vec![gateway],
+                    bindings: vec![],
+                },
+            )]),
+            ..Default::default()
+        },
+    );
+    assert!(
+        mcp::needs_gateway(&catalog),
+        "project-only gateway deployments must start the gateway"
+    );
+    catalog
+        .projects
+        .get_mut("p")
+        .unwrap()
+        .active
+        .get_mut("codex")
+        .unwrap()
+        .entries[0]
+        .mode = "direct".into();
+    assert!(!mcp::needs_gateway(&catalog));
+    catalog.entries[0].bindings.push(management::Binding {
+        id: "b".into(),
+        agent: "codex".into(),
+        path: PathBuf::from("config.toml"),
+        project: None,
+        key: "gateway".into(),
+        original: None,
+        installed: serde_json::json!({"command":"studio"}),
+    });
+    assert!(mcp::needs_gateway(&catalog));
+}
+
+#[test]
+#[serial]
+fn entry_save_response_is_the_exact_committed_revision_for_the_next_edit() {
+    let env = Env::new();
+    let state = env.process();
+    hub(&state, "alpha");
+    let opened = env.catalog().entries.remove(0);
+    mcp::entries::save(
+        &state,
+        None,
+        opened.clone(),
+        Some(opened),
+        &Placement {
+            agents: vec!["codex".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let opened = env.catalog().entries.remove(0);
+    let mut submitted = opened.clone();
+    submitted.definition["command"] = serde_json::json!("changed");
+    let response = mcp::requests::request(
+        &state,
+        None,
+        None,
+        "saveEntry",
+        &serde_json::json!({
+            "entry": submitted, "expectedEntry": opened,
+            "bindingIds": submitted.bindings.iter().map(|b| &b.id).collect::<Vec<_>>()
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        response,
+        serde_json::to_value(&env.catalog().entries[0]).unwrap()
+    );
+    assert_eq!(response["bindings"][0]["installed"]["command"], "changed");
+    assert_ne!(
+        response["bindings"][0]["installed"],
+        submitted.bindings[0].installed
+    );
+    let committed: Entry = serde_json::from_value(response).unwrap();
+    let mut next = committed.clone();
+    next.name = "Next edit".into();
+    mcp::entries::save(
+        &state,
+        None,
+        next,
+        Some(committed.clone()),
+        &Placement {
+            binding_ids: committed.bindings.iter().map(|b| b.id.clone()).collect(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+}

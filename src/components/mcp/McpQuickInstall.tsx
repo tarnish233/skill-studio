@@ -11,7 +11,7 @@ import {
 import { McpChoiceCards } from "./McpChoiceCards";
 import { McpDefinitionFields, readDefinition } from "./McpDefinitionFields";
 import { useEffect, useId, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMcpGatewayCheck } from "@/hooks/useMcpGatewayCheck";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -162,15 +162,10 @@ export function McpQuickInstall({
   const gateway = entry?.mode === "gateway";
   const local = definition.type === "stdio";
   const effective = entry ? { ...entry, definition, oauth: false } : null;
-  const check = useQuery({
-    queryKey: ["mcp-check", effective],
-    queryFn: () =>
-      mcpRequest<{ issue: string | null }>("gatewayCheck", {
-        entry: effective,
-      }),
-    enabled: !!gateway && !!effective,
-    retry: false,
-  });
+  const check = useMcpGatewayCheck(
+    effective,
+    !!gateway && !!effective && !configError,
+  );
   const invalid =
     !entry ||
     !entry.name.trim() ||

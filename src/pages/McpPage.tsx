@@ -136,17 +136,29 @@ function McpHub() {
   const [detail, setDetail] = useState<{
     key: number;
     id: string | null;
+    opened: McpRow | null;
   } | null>(null);
   const sessions = useRef(0);
   usePageReset(() => setDetail(null));
   const appear = useDetailAppear();
   const open = (id: string | null) =>
-    requestNavigation(() => setDetail({ key: ++sessions.current, id }));
-  /** 操作完成后转到某个服务的整页；已经在这一页就不动 */
-  const show = (id: string) =>
-    setDetail((d) => (d?.id === id ? d : { key: ++sessions.current, id }));
+    requestNavigation(() => {
+      const opened = id
+        ? (allRows.find((row) => row.entry.id === id) ?? null)
+        : null;
+      if (id && !opened) return;
+      setDetail({ key: ++sessions.current, id, opened });
+    });
+  /** Keep the mounting identity when a save merely updates the same entry. */
+  const show = (id: string, opened: McpRow) =>
+    setDetail((d) =>
+      d?.id === id ? { ...d, opened } : { key: ++sessions.current, id, opened },
+    );
   const [remove, setRemove] = useState<McpRow | null>(null);
   const [adopt, setAdopt] = useState<McpRow | null>(null);
+  const adoptSources = (adopt?.sources ?? []).filter(
+    (source) => !settings?.disabledAgents?.includes(mcpAppId(source.agent)),
+  );
   const [restore, setRestore] = useState(true);
   const [busy, setBusy] = useState(false);
   const [pendingLogin, setPendingLogin] = useState<{
@@ -168,9 +180,11 @@ function McpHub() {
     JSON.stringify({ mode: entry.mode, definition: entry.definition });
   const [backupsOpen, setBackupsOpen] = useState(false);
   const backups = [...(status.data?.backups ?? [])].reverse();
-  const detailRow = detail?.id
-    ? catalog.find((r) => r.entry.id === detail.id)
+  const liveDetailRow = detail?.id
+    ? allRows.find((r) => r.entry.id === detail.id)
     : undefined;
+  const detailRow = liveDetailRow ?? detail?.opened ?? undefined;
+  const detailMissing = !!detail?.id && status.isSuccess && !liveDetailRow;
   /** 只认对当前配置做的测试：改过配置后旧结果不再显示 */
   const testFor = (row: McpRow): McpTestState | undefined =>
     lastTest[row.entry.id]?.signature === signature(row.entry)
@@ -346,7 +360,11 @@ function McpHub() {
           setAuthRequired((ids) =>
             ids.filter((id) => id !== pendingLogin.entry.id),
           );
-          show(pendingLogin.entry.id);
+          show(pendingLogin.entry.id, {
+            entry: pendingLogin.entry,
+            managed: true,
+            sources: [],
+          });
           toast.success("登录成功，正在测试连接");
           void run(() => runtime(pendingLogin.entry, "test"));
           return;
@@ -386,8 +404,15 @@ function McpHub() {
       setQuery("");
       setFilter(null);
     }
-    await status.refetch();
-    show(entry.id);
+    const refreshed = await status.refetch();
+    show(
+      entry.id,
+      rows(refreshed.data).find((row) => row.entry.id === entry.id) ?? {
+        entry,
+        managed: true,
+        sources: [],
+      },
+    );
     if (result?.setupError)
       toast.warning(`配置已保存，连接设置尚未完成：${result.setupError}`);
     else if (result?.loginUrl) {
@@ -413,16 +438,22 @@ function McpHub() {
         confirmText="托管"
         variant="info"
         pending={busy}
-        description={`将「${adopt?.entry.name ?? ""}」保存到 MCP Hub，并管理它的 ${adopt?.sources.length ?? 0} 处原有接入。配置文件会先备份，之后可移出 Hub 并还原。`}
+        confirmDisabled={!adoptSources.length}
+        description={
+          adoptSources.length
+            ? `将「${adopt?.entry.name ?? ""}」保存到 MCP Hub，并管理它的 ${adoptSources.length} 处原有接入。已退出管理的来源保持不变。配置文件会先备份，之后可移出 Hub 并还原。`
+            : "这些来源的 Agent 已退出管理，请先在设置中开启管理；原配置保持不变。"
+        }
         onConfirm={() =>
           adopt &&
+          adoptSources.length > 0 &&
           void run(async () => {
             const id = crypto.randomUUID();
             await mcpRequest("saveEntry", {
               entry: { ...adopt.entry, id },
               expectedEntry: null,
               bindingIds: [],
-              sources: adopt.sources.map((source) => ({
+              sources: adoptSources.map((source) => ({
                 id: source.id,
                 definition: source.definition,
               })),
@@ -433,8 +464,15 @@ function McpHub() {
             setAdopt(null);
             setFilter(null);
             if (detail?.id === adopt.entry.id) {
-              await status.refetch();
-              show(id);
+              const refreshed = await status.refetch();
+              show(
+                id,
+                rows(refreshed.data).find((row) => row.entry.id === id) ?? {
+                  entry: { ...adopt.entry, id },
+                  managed: true,
+                  sources: adoptSources,
+                },
+              );
             }
             toast.success("已托管到 MCP Hub");
           })
@@ -570,7 +608,7 @@ function McpHub() {
     />
   );
   const back = () => requestNavigation(() => setDetail(null));
-  if (detail && (detail.id === null || detailRow))
+  if (detail)
     return (
       <>
         {pageTools}
@@ -578,6 +616,11 @@ function McpHub() {
           {detailRow ? (
             <McpEntryDetail
               row={detailRow}
+              missing={detailMissing}
+              canAdopt={detailRow.sources.some(
+                (source) =>
+                  !settings?.disabledAgents?.includes(mcpAppId(source.agent)),
+              )}
               running={running}
               busy={busy}
               authPending={authRequired.includes(detailRow.entry.id)}

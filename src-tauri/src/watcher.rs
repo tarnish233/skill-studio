@@ -21,7 +21,8 @@ pub const CONFIG_CHANGED_EVENT: &str = "config-changed";
 /// MCP 托管状态变了（含本进程的写入：重取一次 MCP 状态无妨）
 pub const MCP_CHANGED_EVENT: &str = "mcp-changed";
 const DEBOUNCE: Duration = Duration::from_millis(400);
-const RECONCILE: Duration = Duration::from_secs(1);
+const CHECK_CONFIG: Duration = Duration::from_secs(1);
+const RECONCILE: Duration = Duration::from_secs(30);
 
 pub struct SkillWatcher {
     stop: Arc<AtomicBool>,
@@ -160,10 +161,11 @@ pub fn spawn(app: AppHandle, state: AppState) -> Option<SkillWatcher> {
     })
     .ok()?;
     let mut watched = HashSet::new();
+    let mut observed_roots = roots(&state);
     reconcile(
         &mut watcher,
         &mut watched,
-        desired_directories(&roots(&state)),
+        desired_directories(&observed_roots),
     );
     log::info!("已监听 {} 个 skill 目录（含内部资源目录）", watched.len());
     let stop = Arc::new(AtomicBool::new(false));
@@ -177,29 +179,45 @@ pub fn spawn(app: AppHandle, state: AppState) -> Option<SkillWatcher> {
     std::thread::spawn(move || {
         let mut pending: Option<Instant> = None;
         let mut refreshed = Instant::now();
+        let mut checked_config = Instant::now();
+        let mut hierarchy_changed = false;
         let mut catalog_seen = file_version(&catalog);
         while !stopped.load(Ordering::Relaxed) {
             match rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(Ok(event)) if is_interesting(&event) => {
+                    hierarchy_changed |= directory_structure_changed(&event, &watched);
                     pending.get_or_insert_with(Instant::now);
                 }
                 Ok(Err(e)) => log::debug!("文件监听事件错误: {e}"),
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 _ => {}
             }
-            if refreshed.elapsed() >= RECONCILE {
-                if reconcile(
-                    &mut watcher,
-                    &mut watched,
-                    desired_directories(&roots(&state)),
-                ) {
-                    pending.get_or_insert_with(Instant::now);
+            if checked_config.elapsed() >= CHECK_CONFIG {
+                let next = roots(&state);
+                if next != observed_roots {
+                    observed_roots = next;
+                    hierarchy_changed = true;
                 }
                 for event in outside_changes(&state, &catalog, &mut catalog_seen) {
                     if let Err(e) = app.emit(event, ()) {
                         log::debug!("推送 {event} 失败: {e}");
                     }
                 }
+                checked_config = Instant::now();
+            }
+            // File contents do not change subscriptions. Rebuild only after a
+            // batched structural/config change, with a slower lost-event fallback.
+            if refreshed.elapsed() >= RECONCILE
+                || (hierarchy_changed && pending.is_none_or(|since| since.elapsed() >= DEBOUNCE))
+            {
+                if reconcile(
+                    &mut watcher,
+                    &mut watched,
+                    desired_directories(&observed_roots),
+                ) {
+                    pending.get_or_insert_with(Instant::now);
+                }
+                hierarchy_changed = false;
                 refreshed = Instant::now();
             }
             if pending.is_some_and(|since| since.elapsed() >= DEBOUNCE) {
@@ -220,9 +238,47 @@ fn is_interesting(event: &notify::Event) -> bool {
     )
 }
 
+fn directory_structure_changed(event: &notify::Event, watched: &HashSet<PathBuf>) -> bool {
+    use notify::event::{CreateKind, ModifyKind, RemoveKind};
+    match event.kind {
+        notify::EventKind::Create(CreateKind::Folder)
+        | notify::EventKind::Remove(RemoveKind::Folder)
+        | notify::EventKind::Modify(ModifyKind::Any | ModifyKind::Other) => true,
+        notify::EventKind::Create(_)
+        | notify::EventKind::Remove(_)
+        | notify::EventKind::Modify(ModifyKind::Name(_) | ModifyKind::Metadata(_)) => {
+            event.paths.is_empty()
+                || event.paths.iter().any(|path| {
+                    watched.contains(path) || path.is_dir() || scanner::is_symlink_or_junction(path)
+                })
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_edits_do_not_rebuild_directory_subscriptions_but_structure_changes_do() {
+        use notify::event::{CreateKind, DataChange, ModifyKind, RemoveKind, RenameMode};
+        let edit = notify::Event::new(notify::EventKind::Modify(ModifyKind::Data(
+            DataChange::Content,
+        )));
+        assert!(is_interesting(&edit));
+        assert!(!directory_structure_changed(&edit, &HashSet::new()));
+        for kind in [
+            notify::EventKind::Create(CreateKind::Any),
+            notify::EventKind::Remove(RemoveKind::Any),
+            notify::EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
+        ] {
+            assert!(directory_structure_changed(
+                &notify::Event::new(kind),
+                &HashSet::new()
+            ));
+        }
+    }
 
     #[test]
     fn only_changes_made_elsewhere_refresh_the_configuration_and_each_mcp_write_refreshes_mcp() {

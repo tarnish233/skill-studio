@@ -200,6 +200,16 @@ fn find_closing_fence(rest: &str) -> Option<usize> {
     None
 }
 
+#[cfg(all(test, unix))]
+thread_local! {
+    static SCAN_COUNTS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+#[cfg(all(test, unix))]
+pub(crate) fn take_scan_counts() -> (usize, usize) {
+    SCAN_COUNTS.with(|counts| counts.replace((0, 0)))
+}
+
 /// 计算目录内容哈希（SHA-256 前 32 位十六进制）。
 ///
 /// 用于复制模式的 drift 检测。规则：
@@ -208,6 +218,11 @@ fn find_closing_fence(rest: &str) -> Option<usize> {
 /// - 跳过复制边车自身（它含哈希，会自我循环）
 /// - 符号链接只记录目标，不遍历；内部目标使用相对路径，迁移不改变哈希
 pub fn dir_content_hash(dir: &Path) -> Result<String> {
+    #[cfg(all(test, unix))]
+    SCAN_COUNTS.with(|counts| {
+        let (roots, hashes) = counts.get();
+        counts.set((roots, hashes + 1));
+    });
     content_hash(dir, false)
 }
 
@@ -376,6 +391,11 @@ pub fn classify_entry(path: &Path) -> EntryKind {
 
 /// 扫描一个全局 / 项目 skill 根目录。根目录不存在时返回空列表，不报错。
 pub fn scan_root(root: &Path, agent: &AgentDescriptor) -> Result<Vec<ScannedEntry>> {
+    #[cfg(all(test, unix))]
+    SCAN_COUNTS.with(|counts| {
+        let (roots, hashes) = counts.get();
+        counts.set((roots + 1, hashes));
+    });
     let entries = match fs::read_dir(root) {
         Ok(e) => e,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),

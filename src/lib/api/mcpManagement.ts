@@ -204,6 +204,14 @@ export function entrySnapshot(entry: ManagedMcp) {
   ]);
 }
 
+/** Match the backend optimistic revision; provenance is display-only metadata. */
+export function entryRevision(entry: ManagedMcp | null): string {
+  if (!entry) return "null";
+  const value = { ...entry };
+  delete value.provenance;
+  return stable(value);
+}
+
 /** 分组和项目写进 Agent 配置的接入：它们不属于 Hub 条目，由启用它们的分组 / 项目管理 */
 export function ownedBindings(status?: ManagementStatus): ManagedBinding[] {
   return [

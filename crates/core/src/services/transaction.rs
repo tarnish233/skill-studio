@@ -28,15 +28,58 @@ pub struct Transaction {
 
 pub fn remove(path: &Path) -> Result<()> {
     if is_symlink_or_junction(path) {
-        super::linker::remove_symlink_or_junction(path).map_err(|e| Error::io(path, e))
-    } else {
-        match fs::symlink_metadata(path) {
-            Ok(m) if m.is_dir() => fs::remove_dir_all(path).map_err(|e| Error::io(path, e)),
-            Ok(_) => fs::remove_file(path).map_err(|e| Error::io(path, e)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(Error::io(path, e)),
+        return super::linker::remove_symlink_or_junction(path).map_err(|e| Error::io(path, e));
+    }
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(Error::io(path, e)),
+    };
+    let delete = || {
+        if meta.is_dir() {
+            fs::remove_dir_all(path)
+        } else {
+            fs::remove_file(path)
+        }
+    };
+    match delete() {
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            // Only called after ownership/confinement checks. A copied read-only
+            // directory needs owner access for unlink; never chmod through a link.
+            make_removable(path)?;
+            delete().map_err(|e| Error::io(path, e))
+        }
+        result => result.map_err(|e| Error::io(path, e)),
+    }
+}
+
+fn make_removable(path: &Path) -> Result<()> {
+    if is_symlink_or_junction(path) {
+        return Ok(());
+    }
+    let meta = fs::symlink_metadata(path).map_err(|e| Error::io(path, e))?;
+    #[cfg(unix)]
+    if meta.is_dir() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = meta.permissions().mode();
+        if mode & 0o700 != 0o700 {
+            fs::set_permissions(path, fs::Permissions::from_mode(mode | 0o700))
+                .map_err(|e| Error::io(path, e))?;
         }
     }
+    #[cfg(windows)]
+    if meta.permissions().readonly() {
+        let mut permissions = meta.permissions();
+        permissions.set_readonly(false);
+        fs::set_permissions(path, permissions).map_err(|e| Error::io(path, e))?;
+    }
+    if meta.is_dir() {
+        for entry in fs::read_dir(path).map_err(|e| Error::io(path, e))? {
+            let entry = entry.map_err(|e| Error::io(path, e))?;
+            make_removable(&entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 const BACKUP_LABEL: &str = "backup";
@@ -209,22 +252,36 @@ impl Transaction {
             .find(|p| !is_direct_child(p, dir))
     }
     fn finish(&self) -> Result<()> {
+        let mut errors = Vec::new();
         for entry in self.entries.iter().rev() {
-            if self.committed {
-                remove(&entry.backup)?;
-            } else if entry.existed {
-                match fs::symlink_metadata(&entry.backup) {
-                    Ok(_) => {
-                        remove(&entry.target)?;
-                        fs::rename(&entry.backup, &entry.target)
-                            .map_err(|e| Error::io(&entry.target, e))?;
+            let result = (|| -> Result<()> {
+                if self.committed {
+                    remove(&entry.backup)?;
+                } else if entry.existed {
+                    match fs::symlink_metadata(&entry.backup) {
+                        Ok(_) => {
+                            remove(&entry.target)?;
+                            fs::rename(&entry.backup, &entry.target)
+                                .map_err(|e| Error::io(&entry.target, e))?;
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(e) => return Err(Error::io(&entry.backup, e)),
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) => return Err(Error::io(&entry.backup, e)),
+                } else {
+                    remove(&entry.target)?;
                 }
-            } else {
-                remove(&entry.target)?;
+                Ok(())
+            })();
+            if let Err(error) = result {
+                errors.push(error.to_string());
             }
+        }
+        if !errors.is_empty() {
+            // Keep the recovery map until every undo/cleanup step has succeeded.
+            return Err(Error::Other(format!(
+                "事务恢复未完成：{}",
+                errors.join("；")
+            )));
         }
         fs::remove_file(&self.journal).map_err(|e| Error::io(&self.journal, e))
     }

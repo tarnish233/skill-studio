@@ -91,7 +91,7 @@ function McpGroups() {
     () => mcpAgents.filter((a) => !settings?.disabledAgents?.includes(a.id)),
     [mcpAgents, settings?.disabledAgents],
   );
-  const managedIds = new Set(agents.map((a) => a.id));
+  const managedIds = useMemo(() => new Set(agents.map((a) => a.id)), [agents]);
   const status = useQuery({
     queryKey: STATUS_KEY,
     queryFn: managementApi.list,
@@ -127,6 +127,7 @@ function McpGroups() {
   const [detail, setDetail] = useState<{
     key: number;
     id: string | null;
+    opened: McpGroup | null;
   } | null>(null);
   const sessions = useRef(0);
   usePageReset(() => setDetail(null));
@@ -176,7 +177,13 @@ function McpGroups() {
       .includes(keyword),
   );
   const open = (id: string | null) =>
-    requestNavigation(() => setDetail({ key: ++sessions.current, id }));
+    requestNavigation(() => {
+      const opened = id
+        ? (groups.find((group) => group.id === id) ?? null)
+        : null;
+      if (id && !opened) return;
+      setDetail({ key: ++sessions.current, id, opened });
+    });
   const options: ChecklistItem[] = catalog.map((row) => {
     const target = mcpTarget(row.entry.definition);
     const kind = row.managed
@@ -275,6 +282,8 @@ function McpGroups() {
     opened: GroupDraft | null,
   ): Promise<GroupSaveResult> {
     const stored = groups.find((g) => g.id === id);
+    if (id && !stored)
+      return { saved: false, error: "记录已在别处删除，修改已保留" };
     const group: McpGroup = {
       ...(stored ?? { id: crypto.randomUUID(), sortOrder: groups.length }),
       name: draft.name,
@@ -324,7 +333,8 @@ function McpGroups() {
         },
       },
     );
-    if (outcome.saved && !stored) setDetail((d) => d && { ...d, id: group.id });
+    if (outcome.saved)
+      setDetail((d) => d && { ...d, id: group.id, opened: group });
     return {
       saved: outcome.saved,
       error:
@@ -368,10 +378,12 @@ function McpGroups() {
     />
   );
 
-  const editing = detail?.id
+  const liveEditing = detail?.id
     ? groups.find((g) => g.id === detail.id)
     : undefined;
-  if (detail && (detail.id === null || editing)) {
+  const editing = liveEditing ?? detail?.opened ?? undefined;
+  const missing = !!detail?.id && status.isSuccess && !liveEditing;
+  if (detail) {
     // 新建的分组还没有启用记录：标题栏的 Agent 图标全部未启用、先保存才能用
     const current = editing ?? {
       id: "",
@@ -404,6 +416,7 @@ function McpGroups() {
               )
               .map((a) => a.displayName)}
             busy={busy}
+            missing={missing}
             loading={status.isPending || !!status.error}
             onToggle={(agentId, on) => toggle(current, agentId, on)}
             onReapply={reapply}

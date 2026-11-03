@@ -112,12 +112,74 @@ const registered = registeredCommands();
 const defined = definedCommands();
 const invoked = invokedCommands();
 
+/** Remote writes use service::dispatch rather than Tauri's typed wrappers. */
+function dispatchedCommands(): Map<string, string[]> {
+  const source = readFileSync(join(ROOT, "crates/service/src/lib.rs"), "utf8");
+  const branches = Array.from(source.matchAll(/^ {8}"(\w+)"\s*=>/gm));
+  const result = new Map<string, string[]>();
+  for (let index = 0; index < branches.length; index++) {
+    const branch = branches[index];
+    const body = source.slice(
+      branch.index,
+      branches[index + 1]?.index ?? source.length,
+    );
+    result.set(
+      branch[1],
+      Array.from(
+        body.matchAll(/arg(?:\s*::<[^>]+>)?\(\s*&params,\s*"(\w+)"\s*\)/g),
+      ).map((match) => match[1]),
+    );
+  }
+  return result;
+}
+const dispatched = dispatchedCommands();
+// Local UI/system commands or routes handled separately by the SSH/MCP protocol.
+const separateRoutes = new Set([
+  "mcp_request",
+  "list_servers",
+  "list_ssh_hosts",
+  "save_servers",
+  "connect_server",
+  "disconnect_server",
+  "remote_request",
+  "answer_ssh_prompt",
+  "set_window_theme",
+  "get_window_material",
+  "init_native_page_tools",
+  "update_native_page_tools",
+  "destroy_native_page_tools",
+  "get_init_error",
+  "get_app_version",
+  "get_cli_info",
+  "open_skill_document",
+  "pick_directory",
+  "reveal_path",
+]);
+
 /** snake_case -> camelCase */
 function toCamel(s: string): string {
   return s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
 }
 
 describe("前后端 IPC 契约", () => {
+  it("远端可写方法与桌面管理命令对齐，新增命令不能漏掉 dispatch", () => {
+    expect(dispatched.size).toBeGreaterThan(40);
+    expect([...dispatched.keys()].sort()).toEqual(
+      registered.filter((command) => !separateRoutes.has(command)).sort(),
+    );
+  });
+
+  it("远端 JSON 参数名与桌面 typed wrapper 一致", () => {
+    for (const [command, args] of dispatched) {
+      const definition = defined.get(command)!;
+      expect([...args].sort(), command).toEqual(
+        definition.args
+          .map((arg) => (definition.camel ? toCamel(arg) : arg))
+          .sort(),
+      );
+    }
+  });
+
   it("能解析出命令清单（防止正则失效导致空跑通过）", () => {
     expect(registered.length).toBeGreaterThan(20);
     expect(defined.size).toBeGreaterThan(20);

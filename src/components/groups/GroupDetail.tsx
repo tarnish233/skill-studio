@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { DetailHeader } from "@/components/common/DetailHeader";
+import { DetailConflictNotice } from "@/components/common/DetailConflictNotice";
 import { GroupAgentToggles } from "@/components/common/GroupAgentToggles";
 import { useUnsavedProject } from "@/components/common/NavigationGuard";
 import {
@@ -41,6 +42,7 @@ export function GroupDetail({
   state,
   writesTo,
   busy,
+  missing = false,
   loading,
   onToggle,
   onReapply,
@@ -66,6 +68,7 @@ export function GroupDetail({
   writesTo: string[];
   /** 页面上的启停、重新应用等操作正在进行 */
   busy: boolean;
+  missing?: boolean;
   /** 数据还没读完或读取失败：不能保存 */
   loading?: boolean;
   onToggle: (agentId: string, activate: boolean) => void;
@@ -88,8 +91,8 @@ export function GroupDetail({
   const [error, setError] = useState<string | null>(null);
   const isNew = !group;
   const dirty = fingerprint(value) !== fingerprint(saved);
-  const locked = saving || busy;
-  useUnsavedProject(dirty, locked);
+  const locked = saving || busy || missing;
+  useUnsavedProject(dirty, saving || busy);
 
   // 已不在 Hub 里的成员仍列出来：取消勾选即移除，之后不能再选回
   const items: ChecklistItem[] = [
@@ -130,11 +133,13 @@ export function GroupDetail({
             groupName={saved.name || "新分组"}
             busy={locked}
             locked={
-              isNew
-                ? "先保存分组，再为 Agent 启用"
-                : dirty
-                  ? "先保存修改，再为 Agent 启停"
-                  : undefined
+              missing
+                ? "记录已在别处删除"
+                : isNew
+                  ? "先保存分组，再为 Agent 启用"
+                  : dirty
+                    ? "先保存修改，再为 Agent 启停"
+                    : undefined
             }
             agents={state.toggles}
             onToggle={onToggle}
@@ -157,6 +162,7 @@ export function GroupDetail({
             : "保存成员；还没有 Agent 在用，不写入",
         }}
       />
+      <DetailConflictNotice missing={missing} />
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}

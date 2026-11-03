@@ -5,7 +5,7 @@ use super::{
     transaction::{self, Transaction},
 };
 use crate::{
-    fs::{atomic, paths},
+    fs::paths,
     models::{
         agent::{require_agent, AGENTS},
         config::AppConfig,
@@ -262,22 +262,7 @@ impl Studio {
                     }
                 };
                 if !linked {
-                    let hash = scanner::dir_content_hash(source)?;
-                    linker::copy_tree(source, &stage)?;
-                    if scanner::dir_content_hash(source)? != hash
-                        || scanner::dir_content_hash(&stage)? != hash
-                    {
-                        return Err(Error::invalid("复制期间源内容发生变化"));
-                    }
-                    atomic::write_json_file(
-                        &stage.join(scanner::COPY_SIDECAR),
-                        &scanner::CopySidecar {
-                            skill_id: skill.id.clone(),
-                            source_path: source.clone(),
-                            source_hash: hash,
-                            copied_at: linker::now_secs(),
-                        },
-                    )?;
+                    linker::copy_skill(source, &stage, &skill.id)?;
                 }
                 // Detect destination edits made while staging.
                 match linker::link_status(source, dest) {
@@ -307,8 +292,7 @@ impl Studio {
                 });
             }
             next.project_mut(id).unwrap().managed_entries = entries;
-            self.store().reserve_config(&mut tx, &next)?;
-            self.save_config(&next)?;
+            self.store().save_in_transaction(&mut tx, &next)?;
             Ok(report)
         })();
         match operation {

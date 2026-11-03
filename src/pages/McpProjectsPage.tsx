@@ -102,10 +102,14 @@ function McpProjectsContent() {
     () => allAgents.filter((a) => supportsMcp(a.id)),
     [allAgents],
   );
-  const managedIds = new Set(
-    mcpAgents
-      .filter((a) => !settings?.disabledAgents?.includes(a.id))
-      .map((a) => a.id),
+  const managedIds = useMemo(
+    () =>
+      new Set(
+        mcpAgents
+          .filter((a) => !settings?.disabledAgents?.includes(a.id))
+          .map((a) => a.id),
+      ),
+    [mcpAgents, settings?.disabledAgents],
   );
   const [viewAgentId, setViewAgentId] = useGroupAgentView(
     "mcp",
@@ -114,7 +118,10 @@ function McpProjectsContent() {
   );
   const viewAgent = mcpAgents.find((a) => a.id === viewAgentId);
   const [query, setQuery] = useState("");
-  const [detail, setDetail] = useState<string | null>(null);
+  const [detail, setDetail] = useState<{
+    id: string;
+    opened: ProjectBinding;
+  } | null>(null);
   usePageReset(() => setDetail(null));
   const appear = useDetailAppear();
   const [creating, setCreating] = useState(false);
@@ -273,7 +280,8 @@ function McpProjectsContent() {
     </>
   );
 
-  const active = projects.find((p) => p.id === detail);
+  const liveActive = projects.find((p) => p.id === detail?.id);
+  const active = liveActive ?? detail?.opened;
   if (active && status.data)
     return (
       <>
@@ -282,6 +290,7 @@ function McpProjectsContent() {
         <DetailTransition key={active.id} appear={appear}>
           <McpProjectDetail
             project={active}
+            missing={projectsQuery.isSuccess && !liveActive}
             status={status.data}
             refetch={() => status.refetch()}
             state={cardState(active)}
@@ -438,7 +447,7 @@ function McpProjectsContent() {
                 }
                 busy={busy}
                 deleting={busy && deleting?.id === p.id}
-                onOpen={() => setDetail(p.id)}
+                onOpen={() => setDetail({ id: p.id, opened: p })}
                 onDelete={() => setDeleting(p)}
                 onToggle={(agentId, on) => toggle(p, agentId, on)}
                 onReapply={(agentIds) => reapply(p, agentIds)}

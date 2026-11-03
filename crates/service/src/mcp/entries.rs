@@ -10,7 +10,7 @@ use skill_studio_mcp::{
     native,
 };
 
-use super::{after_write, command, ensure_writable, with_write};
+use super::{after_write, command, ensure_managed_in, ensure_writable, with_write};
 use crate::state::AppState;
 
 /// 扫描到的一处原有配置：按 id 重新扫描定位，定义必须和提交时一样
@@ -50,14 +50,31 @@ pub fn save(
     expected: Option<Entry>,
     placement: &Placement,
 ) -> Result<(), String> {
+    save_returning_entry(state, executable, entry, expected, placement).map(|_| ())
+}
+
+/// Editors need the exact committed binding snapshots for the next optimistic save.
+pub fn save_returning_entry(
+    state: &AppState,
+    executable: Option<&Path>,
+    entry: Entry,
+    expected: Option<Entry>,
+    placement: &Placement,
+) -> Result<Entry, String> {
     ensure_writable(state)?;
-    with_write(state, |dir, config| {
+    let saved = with_write(state, |dir, config| {
         let catalog = management::read(dir)?;
-        let targets = targets(config, dir, placement, &entry, &catalog)?;
-        management::save(dir, entry, targets, command(executable), expected.as_ref())
+        let targets = targets(config, dir, placement, &entry, &catalog, true)?;
+        management::save_returning_entry(
+            dir,
+            entry,
+            targets,
+            command(executable),
+            expected.as_ref(),
+        )
     })?;
     after_write(state);
-    Ok(())
+    Ok(saved)
 }
 
 /// 删除 Hub 里的 MCP。`restore` 时把接入还原成原来的配置，否则直接撤掉；被其他程序改写过的
@@ -78,7 +95,7 @@ pub fn remove_sources(state: &AppState, sources: &[SourceRef]) -> Result<(), Str
     };
     with_write(state, |dir, config| {
         let catalog = management::read(dir)?;
-        let targets = targets(config, dir, &placement, &Entry::default(), &catalog)?;
+        let targets = targets(config, dir, &placement, &Entry::default(), &catalog, false)?;
         management::remove_sources(dir, targets)
     })?;
     after_write(state);
@@ -92,6 +109,7 @@ fn targets(
     placement: &Placement,
     entry: &Entry,
     catalog: &Catalog,
+    require_managed: bool,
 ) -> anyhow::Result<Vec<Target>> {
     use anyhow::{bail, Context};
     let mut targets = vec![];
@@ -102,6 +120,9 @@ fn targets(
             .find(|e| e.id == entry.id)
             .and_then(|e| e.bindings.iter().find(|b| b.id == *id))
             .context("接入记录已变化，请刷新后重试")?;
+        if require_managed {
+            ensure_managed_in(&config.settings, &binding.agent).map_err(anyhow::Error::msg)?;
+        }
         targets.push(Target {
             agent: binding.agent.clone(),
             path: binding.path.clone(),
@@ -120,6 +141,9 @@ fn targets(
                 .flat_map(|d| &d.sources)
                 .find(|s| s.id == source.id)
                 .context("来源不存在，请刷新后重试")?;
+            if require_managed {
+                ensure_managed_in(&config.settings, &found.agent).map_err(anyhow::Error::msg)?;
+            }
             if found.definition != source.definition {
                 bail!("来源配置已变化，请刷新后重试");
             }
@@ -145,6 +169,9 @@ fn targets(
         bail!("请选择安装项目");
     }
     for agent in placement.agents.iter().map(String::as_str) {
+        if require_managed {
+            ensure_managed_in(&config.settings, agent).map_err(anyhow::Error::msg)?;
+        }
         let mut target_project = None;
         let path = if let Some(id) = project_id {
             let project = config
@@ -177,7 +204,7 @@ fn targets(
             });
         }
     }
-    if targets.iter().any(|target| target.agent == "grok") {
+    if require_managed && targets.iter().any(|target| target.agent == "grok") {
         let path = mcp_agents::write_path("grok", overrides, None)?;
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,

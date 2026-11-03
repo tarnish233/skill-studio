@@ -34,11 +34,7 @@ pub fn scan_inventory(store: &Store) -> Result<Inventory, String> {
     }
     let (mut files, mut warnings) = discovery::scan_files(&config);
     files.retain(|file| {
-        let app = if file.agent == "claude" {
-            "claude-code"
-        } else {
-            &file.agent
-        };
+        let app = super::app_agent(&file.agent);
         !config.settings.disabled_agents.iter().any(|id| id == app)
     });
     let scanned = discovery::scan(&files, &[], &store.dir().join("mcp"));

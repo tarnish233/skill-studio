@@ -198,6 +198,30 @@ pub fn save(
     executable: &Path,
     expected: Option<&Snapshot>,
 ) -> Result<Vec<Untouched>> {
+    save_with_agent_check(
+        dir,
+        id,
+        input,
+        imports,
+        overrides,
+        executable,
+        expected,
+        |_| Ok(()),
+    )
+}
+
+/// Agent validation runs inside the same catalog lock as the automatic redeployment.
+#[allow(clippy::too_many_arguments)]
+pub fn save_with_agent_check(
+    dir: &Path,
+    id: &str,
+    input: Input,
+    imports: Vec<Entry>,
+    overrides: &HashMap<String, PathBuf>,
+    executable: &Path,
+    expected: Option<&Snapshot>,
+    ensure_agent: impl Fn(&str) -> Result<()>,
+) -> Result<Vec<Untouched>> {
     if id.is_empty() {
         bail!("缺少项目");
     }
@@ -231,6 +255,11 @@ pub fn save(
     let mut files = BTreeMap::new();
     let mut untouched = vec![];
     let empty = project.entry_ids.is_empty() && project.group_ids.is_empty();
+    if !empty {
+        for agent in project.active.keys() {
+            ensure_agent(agent)?;
+        }
+    }
     for agent in project.active.keys().cloned().collect::<Vec<_>>() {
         untouched.extend(switch(
             dir,

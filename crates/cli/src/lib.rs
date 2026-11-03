@@ -71,8 +71,11 @@ where
             return error.exit_code();
         }
     };
+    if matches!(&cli.command, args::Command::Docs) {
+        return print_result(Ok(commands::docs()), cli.json, out, err);
+    }
     let store = Store::default();
-    if let Err(error) = ensure_cli_enabled(&store, cli.command.config_recovery()) {
+    if let Err(error) = ensure_cli_enabled(&store, &cli.command) {
         print_error(err, cli.json, &error);
         return error.exit_code();
     }
@@ -89,9 +92,18 @@ where
     if cli.command.writes() {
         audit(&ctx, &args, &result);
     }
+    print_result(result, cli.json, out, err)
+}
+
+fn print_result(
+    result: Result<report::Report, CliError>,
+    json: bool,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
     match result {
         Ok(report) => {
-            if cli.json {
+            if json {
                 let _ = writeln!(out, "{}", report.json);
             } else {
                 let _ = writeln!(out, "{}", report.text);
@@ -99,7 +111,7 @@ where
             report.exit
         }
         Err(error) => {
-            print_error(err, cli.json, &error);
+            print_error(err, json, &error);
             error.exit_code()
         }
     }
@@ -110,19 +122,25 @@ pub(crate) fn cli_disabled() -> CliError {
         .hint("前往 Skill Studio 设置 › 通用重新开启「启用 CLI 与内置 skill」")
 }
 
-fn ensure_cli_enabled(store: &Store, config_recovery: bool) -> Result<(), CliError> {
+fn ensure_cli_enabled(store: &Store, command: &args::Command) -> Result<(), CliError> {
     // This is a usage preference, not a security boundary. `serve` is used by
     // the desktop over SSH and intentionally bypasses the interactive CLI.
     // A read-only check never creates a config directory or recovery journal.
-    let _lock = lock_existing(&store.lock_path(), lock_wait(), false)?;
+    let diagnostic = matches!(command, args::Command::Doctor);
+    // Doctor must be able to describe a busy lock rather than wait for it.
+    let _lock = if diagnostic {
+        None
+    } else {
+        lock_existing(&store.lock_path(), lock_wait(), false)?
+    };
     let config = match store.read() {
         Ok(config) => config,
-        // A corrupt config cannot reveal the preference. Permit only explicit backup listing/repair;
-        // never use a default config to grant other management operations.
-        Err(_) if config_recovery => return Ok(()),
+        // Unknown preferences permit only read-only diagnosis or explicit repair,
+        // never ordinary management operations under a default configuration.
+        Err(_) if command.config_recovery() || diagnostic => return Ok(()),
         Err(error) => return Err(error.into()),
     };
-    if config.is_none() && store.pending_transactions() {
+    if config.is_none() && store.pending_transactions() && !diagnostic {
         return Err(CliError::failed(
             "Skill Studio 有一项写入还没完成，请先打开 Skill Studio 完成恢复，再查看",
         ));

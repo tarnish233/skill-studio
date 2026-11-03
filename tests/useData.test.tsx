@@ -13,8 +13,15 @@ import {
   useAgents,
   useSettings,
   useUpdateSettings,
+  useInvalidateAfterWrite,
 } from "@/hooks/useData";
-import { calls, handlers, makeSkill, defaultSettings } from "./mocks/tauri";
+import {
+  calls,
+  handlers,
+  makeSkill,
+  defaultSettings,
+  claudeAgent,
+} from "./mocks/tauri";
 
 /**
  * scan_skills 在后台线程遍历全库并占用配置锁，避免导航触发无谓的重复扫描。
@@ -42,6 +49,43 @@ function scans() {
 afterEach(() => {
   focusManager.setFocused(undefined);
   vi.mocked(listen).mockImplementation(async () => () => {});
+});
+
+it("keeps the enriched Agent array stable across unrelated renders", async () => {
+  handlers.set("list_agents", ({ skipCliProbe }) => [
+    skipCliProbe ? claudeAgent : { ...claudeAgent, cliVersion: "test-version" },
+  ]);
+  const { result, rerender } = renderHook(() => useAgents(), {
+    wrapper: wrapper(),
+  });
+  await waitFor(() => expect(result.current.isDetecting).toBe(false));
+  expect(result.current.data?.[0].cliVersion).toBe("test-version");
+  const previous = result.current.data;
+  rerender();
+  expect(result.current.data).toBe(previous);
+});
+
+it("write invalidation refreshes inventory without invalidating CLI probes or unrelated MCP queries", async () => {
+  const client = new QueryClient();
+  for (const key of [
+    queryKeys.skills,
+    queryKeys.agents,
+    queryKeys.agentProbe,
+    queryKeys.mcpStatus,
+    queryKeys.backups,
+  ])
+    client.setQueryData(key, []);
+  const { result } = renderHook(() => useInvalidateAfterWrite(), {
+    wrapper: wrapper(client),
+  });
+  await act(async () => {
+    await result.current();
+  });
+  for (const key of [queryKeys.skills, queryKeys.agents, queryKeys.backups])
+    expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+  expect(client.getQueryState(queryKeys.agentProbe)?.isInvalidated).toBe(false);
+  expect(client.getQueryState(queryKeys.mcpStatus)?.isInvalidated).toBe(false);
+  client.clear();
 });
 
 describe("useSkills 的扫描时机", () => {

@@ -73,14 +73,16 @@ pub fn run(ctx: &Ctx) -> Result<Report, CliError> {
             false
         }
     };
+    let pending = store.pending_transactions();
     let mcp_pending = store.dir().join("mcp/management-transaction.json").exists();
-    if store.pending_transactions() || mcp_pending {
+    let busy = store.lock_path().exists() && store.lock_shared(Duration::ZERO).is_none();
+    if pending || mcp_pending {
         push(
             Level::Warn,
             "写入",
             "有一项写入没有完成（另一个程序正在写，或上次写到一半退出）；打开 Skill Studio 或运行任一修改命令会自动恢复".into(),
         );
-    } else if store.lock_path().exists() && store.lock_shared(Duration::ZERO).is_none() {
+    } else if busy {
         push(
             Level::Warn,
             "写入",
@@ -107,7 +109,7 @@ pub fn run(ctx: &Ctx) -> Result<Report, CliError> {
         );
     }
     let mut problems = Vec::new();
-    if readable {
+    if readable && !pending && !busy {
         let state = ctx.reader()?;
         let data = view::load(&state)?;
         let mcp = load_mcp(&state, &data);

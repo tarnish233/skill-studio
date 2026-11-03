@@ -365,11 +365,6 @@ fn comparison_key(value: &Value, file: &ScanFile) -> Value {
     let mut result = crate::native::canonical(value, &file.agent);
     if let Some(object) = result.as_object_mut() {
         object.remove("enabled");
-        if file.agent == "codex" {
-            if let Some(headers) = object.remove("http_headers") {
-                object.insert("headers".into(), headers);
-            }
-        }
         let http = object.contains_key("url");
         object
             .entry("type")
@@ -436,9 +431,6 @@ pub fn normalize(name: &str, id: &str, value: &Value, agent: &str) -> Result<Ser
     let mut normalized = value.clone();
     let object = normalized.as_object_mut().unwrap();
     object.remove("type");
-    if let Some(headers) = object.remove("http_headers") {
-        object.insert("headers".into(), headers);
-    }
     object.insert("id".into(), json!(id));
     object.insert("name".into(), json!(name));
     object.insert(

@@ -216,18 +216,20 @@ impl Store {
         atomic::write_json_file(&self.config_path(), config)
     }
 
-    /// 把 config.json 纳入 `tx` 的回滚日志，并在它被移走之前先轮转一份备份。
-    ///
-    /// [`Self::save`] 的备份是从 config.json 的**当前内容**复制出来的，而
-    /// `Transaction::reserve` 会把目标 rename 到兄弟位置。所以"先 reserve 再 save"时
-    /// `rotate_backup` 会 stat 不到文件、直接静默跳过 —— 分组切换、Hub 托管/还原、项目
-    /// 写入这些最该能回退的操作，恰好一份备份都不留。顺序必须是先备份、再 reserve。
-    pub fn reserve_config(&self, tx: &mut Transaction, config: &AppConfig) -> Result<()> {
-        if self.config_path().exists() && !self.config_path().is_file() {
+    /// Back up once, then journal and write the same physical file. Dotfiles
+    /// symlinks stay in place, and a dangling link is never silently replaced.
+    pub(crate) fn save_in_transaction(
+        &self,
+        tx: &mut Transaction,
+        config: &AppConfig,
+    ) -> Result<()> {
+        let path = self.config_path();
+        if path.exists() && !path.is_file() {
             return Err(Error::config("配置路径不是普通文件，拒绝替换"));
         }
         self.rotate_backup(config.settings.backup_keep)?;
-        tx.reserve(&self.config_path())
+        let physical = tx.reserve_file_for_update(&path)?;
+        atomic::write_json_file(&physical, config)
     }
 
     /// 把当前 config.json 复制一份到 backups/，并只保留最近 `keep` 份。
@@ -424,8 +426,7 @@ mod tests {
         let mut next = cfg.clone();
         next.groups = vec![Group::new("g2".into(), "新".into())];
         let mut tx = Transaction::begin(s.dir().join("group-switch.json")).unwrap();
-        s.reserve_config(&mut tx, &next).unwrap();
-        s.save(&next).unwrap();
+        s.save_in_transaction(&mut tx, &next).unwrap();
         tx.commit().unwrap();
 
         let backups = s.list_backups();

@@ -1,8 +1,9 @@
 //! 编排层：把 scanner / detector / linker / store / native_toggle 串起来，
 //! 对上暴露 Tauri 命令直接需要的粗粒度操作。
 
+use crate::fs::paths;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -56,6 +57,128 @@ pub struct SkillView {
     pub installation: Option<crate::models::config::SkillInstallation>,
 }
 
+type RootScans = HashMap<(&'static str, PathBuf), RootScan>;
+
+/// These indexes belong to one read-only scan; write-time ownership checks never use them.
+struct RootScan {
+    entries: Vec<scanner::ScannedEntry>,
+    literal: HashMap<String, Vec<usize>>,
+    physical: HashMap<PathBuf, Vec<usize>>,
+}
+
+impl RootScan {
+    fn new(entries: Vec<scanner::ScannedEntry>) -> Self {
+        let mut scan = Self {
+            entries,
+            literal: HashMap::new(),
+            physical: HashMap::new(),
+        };
+        for (index, entry) in scan.entries.iter().enumerate() {
+            let target = match &entry.kind {
+                EntryKind::Link {
+                    target: Some(target),
+                } => Some(paths::normalize_path_lexically(&if target.is_absolute() {
+                    target.clone()
+                } else {
+                    entry.path.parent().unwrap().join(target)
+                })),
+                _ => None,
+            };
+            let candidates: Vec<&Path> = match &entry.kind {
+                EntryKind::RealSkill => vec![entry.path.as_path()],
+                EntryKind::ManagedCopy { source_path, .. } => vec![source_path.as_path()],
+                EntryKind::Link { .. } => std::iter::once(entry.path.as_path())
+                    .chain(target.as_deref())
+                    .collect(),
+                EntryKind::NotASkill => vec![],
+            };
+            for path in candidates {
+                scan.literal
+                    .entry(paths::comparable_path_key(path))
+                    .or_default()
+                    .push(index);
+                if let Ok(path) = path.canonicalize() {
+                    scan.physical.entry(path).or_default().push(index);
+                }
+            }
+        }
+        scan
+    }
+
+    fn targets(&self, source: &Path) -> Vec<PathBuf> {
+        let mut matches = self
+            .literal
+            .get(&paths::comparable_path_key(source))
+            .cloned()
+            .unwrap_or_default();
+        if let Ok(source) = source.canonicalize() {
+            if let Some(indices) = self.physical.get(&source) {
+                matches.extend(indices);
+            }
+        }
+        // Keep the same scan/name order even when both alias indexes match.
+        matches.sort_unstable();
+        matches.dedup();
+        matches
+            .into_iter()
+            .map(|index| self.entries[index].path.clone())
+            .collect()
+    }
+}
+
+#[derive(Default)]
+struct SourcePaths {
+    literal: HashSet<String>,
+    physical: HashSet<PathBuf>,
+}
+impl SourcePaths {
+    fn insert(&mut self, path: &Path) -> bool {
+        let literal = paths::comparable_path_key(path);
+        let physical = path.canonicalize().ok();
+        if self.literal.contains(&literal)
+            || physical
+                .as_ref()
+                .is_some_and(|path| self.physical.contains(path))
+        {
+            return false;
+        }
+        self.literal.insert(literal);
+        if let Some(path) = physical {
+            self.physical.insert(path);
+        }
+        true
+    }
+}
+
+#[derive(Default)]
+struct ScanSnapshot {
+    roots: RootScans,
+    variants: HashMap<(String, PathBuf), Option<String>>,
+    toggles: native_toggle::ToggleSnapshot,
+}
+impl ScanSnapshot {
+    fn unavailable(
+        &mut self,
+        config: &AppConfig,
+        skill: &Skill,
+        agent: &str,
+        identity: &Result<Skill>,
+    ) -> Option<String> {
+        let source = match identity {
+            Ok(source) => source,
+            Err(error) => return Some(error.to_string()),
+        };
+        self.variants
+            .entry((skill.id.clone(), source.source_path.clone()))
+            .or_insert_with(|| {
+                super::variants::for_agent(config, skill, agent)
+                    .err()
+                    .map(|e| e.to_string())
+            })
+            .clone()
+    }
+}
+
 pub struct Studio {
     store: Store,
 }
@@ -103,30 +226,61 @@ impl Studio {
         detector::describe_all(&config.settings.agent_dir_overrides, skip_cli_probe)
     }
 
-    /// 扫出全部 skill 真身。
-    ///
-    /// 真身来自两处：各 agent 全局根里的**真目录**（原地模式），以及 Hub 目录。
-    /// 目标位置上的链接与复制不是真身，它们只是注册结果。
-    pub fn scan_skills(&self, config: &AppConfig) -> Result<Vec<SkillView>> {
+    fn scan_snapshot(&self, config: &AppConfig) -> Result<ScanSnapshot> {
+        let mut snapshot = ScanSnapshot::default();
+        for agent in AGENTS {
+            for root in agent.resolved_global_roots(&config.settings.agent_dir_overrides) {
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    snapshot.roots.entry((agent.id, root.clone()))
+                {
+                    entry.insert(RootScan::new(scanner::scan_root(&root, agent)?));
+                }
+            }
+        }
+        let hub = self.store.hub_dir(config);
+        if let std::collections::hash_map::Entry::Vacant(entry) =
+            snapshot.roots.entry((AGENTS[0].id, hub.clone()))
+        {
+            entry.insert(RootScan::new(scanner::scan_root(&hub, &AGENTS[0])?));
+        }
+        Ok(snapshot)
+    }
+
+    /// Discover every identity, but only read/hash bodies for requested IDs on a lookup.
+    fn scan_sources(
+        &self,
+        config: &AppConfig,
+        scans: &RootScans,
+        wanted: Option<&HashSet<&str>>,
+    ) -> Result<HashMap<String, Skill>> {
         let overrides = &config.settings.agent_dir_overrides;
-        // skill_id -> Skill，同一路径只收一次
         let mut sources: HashMap<String, Skill> = HashMap::new();
+        let mut seen = SourcePaths::default();
+        let build = |id: String,
+                     name: &str,
+                     source: PathBuf,
+                     root: PathBuf,
+                     origin: SkillOrigin,
+                     fm: Option<Frontmatter>| {
+            let content = wanted.is_none_or(|ids| ids.contains(id.as_str()));
+            build_skill_with_content(id, name, source, root, origin, fm, content)
+        };
 
         for agent in AGENTS {
             for root in agent.resolved_global_roots(overrides) {
-                for entry in scanner::scan_root(&root, agent)? {
+                let scan = scans
+                    .get(&(agent.id, root.clone()))
+                    .ok_or_else(|| Error::invalid("扫描目录已变化，请重试"))?;
+                for entry in &scan.entries {
                     if !matches!(entry.kind, EntryKind::RealSkill) {
                         continue;
                     }
-                    if sources
-                        .values()
-                        .any(|s| crate::fs::paths::paths_alias(&s.source_path, &entry.path))
-                    {
+                    if !seen.insert(&entry.path) {
                         continue;
                     }
                     let id = skill_id_for(&entry.path);
                     sources.entry(id.clone()).or_insert_with(|| {
-                        build_skill(
+                        build(
                             id.clone(),
                             &entry.name,
                             entry.path.clone(),
@@ -145,19 +299,19 @@ impl Studio {
         // 只是为了复用扫描逻辑；Hub 里本不该有 synced。
         let hub = self.store.hub_dir(config);
         let claude = &AGENTS[0];
-        for entry in scanner::scan_root(&hub, claude)? {
+        let hub_scan = scans
+            .get(&(claude.id, hub.clone()))
+            .ok_or_else(|| Error::invalid("Hub 目录已变化，请重试"))?;
+        for entry in &hub_scan.entries {
             if !matches!(entry.kind, EntryKind::RealSkill) {
                 continue;
             }
-            if sources
-                .values()
-                .any(|s| crate::fs::paths::paths_alias(&s.source_path, &entry.path))
-            {
+            if !seen.insert(&entry.path) {
                 continue;
             }
             let id = skill_id_for(&entry.path);
             sources.entry(id.clone()).or_insert_with(|| {
-                build_skill(
+                build(
                     id.clone(),
                     &entry.name,
                     entry.path.clone(),
@@ -176,7 +330,7 @@ impl Studio {
                 && record.original_path.join(scanner::SKILL_FILE).is_file()
             {
                 sources.entry(id.clone()).or_insert_with(|| {
-                    build_skill(
+                    build(
                         id.clone(),
                         record
                             .original_path
@@ -211,7 +365,7 @@ impl Studio {
                     .is_some_and(|i| !i.variants.is_empty())
                 {
                     sources.entry(id.clone()).or_insert_with(|| {
-                        build_skill(
+                        build(
                             id,
                             &entry.file_name().to_string_lossy(),
                             path,
@@ -267,7 +421,10 @@ impl Studio {
         }
         for agent in AGENTS {
             for root in agent.resolved_global_roots(overrides) {
-                for entry in scanner::scan_root(&root, agent)? {
+                let scan = scans
+                    .get(&(agent.id, root.clone()))
+                    .ok_or_else(|| Error::invalid("扫描目录已变化，请重试"))?;
+                for entry in &scan.entries {
                     if !matches!(entry.kind, EntryKind::Link { .. }) {
                         continue;
                     }
@@ -292,25 +449,32 @@ impl Studio {
                         .to_string();
                     sources.insert(
                         id.clone(),
-                        build_skill(
+                        build(
                             id,
                             &name,
                             source,
                             root.clone(),
                             SkillOrigin::External,
-                            entry.frontmatter,
+                            entry.frontmatter.clone(),
                         ),
                     );
                 }
             }
         }
 
+        Ok(sources)
+    }
+
+    /// Sources come from real Agent directories and the Hub, not deployment copies.
+    pub fn scan_skills(&self, config: &AppConfig) -> Result<Vec<SkillView>> {
+        let mut snapshot = self.scan_snapshot(config)?;
+        let sources = self.scan_sources(config, &snapshot.roots, None)?;
         // 来源标注使用的共享根在一轮扫描里只解析一次，全部 skill 复用同一个切片。
         let roots = shared_roots(config);
         let mut views: Vec<SkillView> = sources
             .into_values()
             .map(|skill| {
-                let agents = self.agent_states(config, &skill);
+                let agents = self.agent_states_using(config, &skill, Some(&mut snapshot));
                 let group_ids = config
                     .groups_containing(&skill.id)
                     .into_iter()
@@ -375,6 +539,16 @@ impl Studio {
         skill: &Skill,
         agent: &crate::models::agent::AgentDescriptor,
     ) -> Vec<PathBuf> {
+        self.agent_targets_from(config, skill, agent, None)
+    }
+
+    fn agent_targets_from(
+        &self,
+        config: &AppConfig,
+        skill: &Skill,
+        agent: &crate::models::agent::AgentDescriptor,
+        scans: Option<&RootScans>,
+    ) -> Vec<PathBuf> {
         let mut targets = Vec::new();
         if let Some(reg) = config.registration(&skill.id, agent.id) {
             targets.push(reg.target_path.clone());
@@ -394,7 +568,9 @@ impl Studio {
                         .cloned(),
                 );
             }
-            if let Ok(entries) = scanner::scan_root(&root, agent) {
+            if let Some(scan) = scans.and_then(|scans| scans.get(&(agent.id, root.clone()))) {
+                targets.extend(scan.targets(&skill.source_path));
+            } else if let Ok(entries) = scanner::scan_root(&root, agent) {
                 for entry in entries {
                     let matches = match entry.kind {
                         EntryKind::Link { .. } => {
@@ -434,19 +610,37 @@ impl Studio {
     /// 会遍历该 agent 的**全部**全局根，而不是只看写入根 —— 否则用户手工放到
     /// `~/.agents/skills` 的 skill 会被误报成未注册。
     fn agent_states(&self, config: &AppConfig, skill: &Skill) -> HashMap<String, AgentSkillState> {
+        self.agent_states_using(config, skill, None)
+    }
+
+    fn agent_states_using(
+        &self,
+        config: &AppConfig,
+        skill: &Skill,
+        mut snapshot: Option<&mut ScanSnapshot>,
+    ) -> HashMap<String, AgentSkillState> {
         let overrides = &config.settings.agent_dir_overrides;
         let mut out = HashMap::new();
 
         for agent in AGENTS {
-            let resolved = super::variants::for_agent(config, skill, agent.id);
-            let unavailable = resolved.as_ref().err().map(ToString::to_string);
             let identity = super::variants::deployment_source(config, skill, agent.id);
+            let unavailable = match snapshot.as_deref_mut() {
+                Some(snapshot) => snapshot.unavailable(config, skill, agent.id, &identity),
+                None => super::variants::for_agent(config, skill, agent.id)
+                    .err()
+                    .map(|e| e.to_string()),
+            };
             let skill = identity.as_ref().unwrap_or(skill);
             let roots = agent.resolved_global_roots(overrides);
             let primary = roots.first().cloned().unwrap_or_default();
             let mut best: Option<(LinkStatus, PathBuf)> = None;
 
-            let targets = self.agent_targets(config, skill, agent);
+            let targets = self.agent_targets_from(
+                config,
+                skill,
+                agent,
+                snapshot.as_deref().map(|snapshot| &snapshot.roots),
+            );
             let entry_paths: Vec<PathBuf> = targets
                 .iter()
                 .filter(|p| p.symlink_metadata().is_ok())
@@ -502,7 +696,19 @@ impl Studio {
                     .unwrap_or(&skill.name)
             };
             let disabled = status.is_registered()
-                && native_toggle::is_skill_disabled_at(agent, overrides, toggle_name, &document);
+                && match snapshot.as_deref_mut() {
+                    Some(snapshot) => {
+                        snapshot
+                            .toggles
+                            .is_disabled(agent, overrides, toggle_name, &document)
+                    }
+                    None => native_toggle::is_skill_disabled_at(
+                        agent,
+                        overrides,
+                        toggle_name,
+                        &document,
+                    ),
+                };
             let mode = config.registration(&skill.id, agent.id).map(|r| r.mode);
 
             out.insert(
@@ -570,12 +776,45 @@ impl Studio {
         out
     }
 
+    /// Preserve the preview/open allowlist without hashing bodies or building every state.
+    pub fn knows_skill_path(&self, config: &AppConfig, path: &Path) -> Result<bool> {
+        let snapshot = self.scan_snapshot(config)?;
+        let sources = self.scan_sources(config, &snapshot.roots, Some(&HashSet::new()))?;
+        for skill in sources.values() {
+            if skill.source_path == path {
+                return Ok(true);
+            }
+            for agent in AGENTS {
+                let identity = super::variants::deployment_source(config, skill, agent.id);
+                let source = identity.as_ref().unwrap_or(skill);
+                let targets = self.agent_targets_from(config, source, agent, Some(&snapshot.roots));
+                let mut present = false;
+                for target in targets {
+                    if target.symlink_metadata().is_ok() {
+                        if target == path {
+                            return Ok(true);
+                        }
+                        present = true;
+                    }
+                }
+                let primary = agent
+                    .resolved_global_roots(&config.settings.agent_dir_overrides)
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default();
+                if !present && primary.join(&source.name) == path {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
     /// 按 ID 找一个 skill 真身
     pub fn find_skill(&self, config: &AppConfig, skill_id: &str) -> Result<Skill> {
-        self.scan_skills(config)?
-            .into_iter()
-            .find(|v| v.skill.id == skill_id)
-            .map(|v| v.skill)
+        let snapshot = self.scan_snapshot(config)?;
+        self.scan_sources(config, &snapshot.roots, Some(&HashSet::from([skill_id])))?
+            .remove(skill_id)
             .ok_or_else(|| Error::NotFound(format!("skill {skill_id}")))
     }
 
@@ -670,11 +909,7 @@ impl Studio {
                             source_hash_at_copy: done.source_hash.clone(),
                         },
                     );
-                    if let Err(error) = self
-                        .store()
-                        .reserve_config(&mut tx, &next)
-                        .and_then(|_| self.save_config(&next))
-                    {
+                    if let Err(error) = self.store().save_in_transaction(&mut tx, &next) {
                         if let Err(rollback) = tx.rollback() {
                             return Err(Error::Other(format!("{error}; 回滚失败: {rollback}")));
                         }
@@ -808,8 +1043,7 @@ impl Studio {
                     report.push_ok(result(&skill, &agent, LinkStatus::NotLinked, None));
                 }
             }
-            self.store().reserve_config(&mut tx, &next)?;
-            self.save_config(&next)?;
+            self.store().save_in_transaction(&mut tx, &next)?;
             Ok(())
         })();
         if let Err(error) = operation {
@@ -1320,8 +1554,7 @@ impl Studio {
                 crate::fs::atomic::write_json_file(path, sidecar)?;
             }
             // Configuration is part of the same undo journal as filesystem changes.
-            self.store.reserve_config(&mut tx, &next)?;
-            self.store.save(&next)?;
+            self.store.save_in_transaction(&mut tx, &next)?;
             Ok(())
         })();
         if let Err(err) = operation {
@@ -1348,16 +1581,13 @@ impl Studio {
     }
 
     fn resolve_skills(&self, config: &AppConfig, ids: &[String]) -> Result<Vec<Skill>> {
-        let all = self.scan_skills(config)?;
-        let by_id: HashMap<&str, &Skill> = all
-            .iter()
-            .map(|v| (v.skill.id.as_str(), &v.skill))
-            .collect();
+        let snapshot = self.scan_snapshot(config)?;
+        let wanted: HashSet<_> = ids.iter().map(String::as_str).collect();
+        let all = self.scan_sources(config, &snapshot.roots, Some(&wanted))?;
         ids.iter()
             .map(|id| {
-                by_id
-                    .get(id.as_str())
-                    .map(|s| (*s).clone())
+                all.get(id)
+                    .cloned()
                     .ok_or_else(|| Error::NotFound(format!("skill {id}")))
             })
             .collect()
@@ -1465,9 +1695,29 @@ pub(super) fn build_skill(
     origin: SkillOrigin,
     frontmatter: Option<Frontmatter>,
 ) -> Skill {
+    build_skill_with_content(id, name, source_path, root, origin, frontmatter, true)
+}
+
+fn build_skill_with_content(
+    id: String,
+    name: &str,
+    source_path: PathBuf,
+    root: PathBuf,
+    origin: SkillOrigin,
+    frontmatter: Option<Frontmatter>,
+    content: bool,
+) -> Skill {
     let fm = frontmatter.unwrap_or_default();
-    let content_hash = scanner::dir_content_hash(&source_path).unwrap_or_default();
-    let token_estimate = tokens::estimate_skill(&source_path);
+    let content_hash = if content {
+        scanner::dir_content_hash(&source_path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let token_estimate = if content {
+        tokens::estimate_skill(&source_path)
+    } else {
+        Default::default()
+    };
     Skill {
         id,
         name: name.to_string(),
@@ -1565,4 +1815,85 @@ fn original_source_ids(
     let mut ids: Vec<_> = ids.into_iter().collect();
     ids.sort();
     ids
+}
+
+#[cfg(all(test, unix))]
+#[path = "../../tests/support.rs"]
+mod scan_test_support;
+
+#[cfg(all(test, unix))]
+mod scan_cost_tests {
+    use super::*;
+    use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn root_scans_are_bounded_and_single_lookup_only_hashes_its_source() {
+        let env = scan_test_support::Env::new();
+        std::fs::create_dir_all(env.claude_skills()).unwrap();
+        for index in 0..50 {
+            let name = format!("skill-{index}");
+            let source = env.write_simple_skill(&env.hub(), &name);
+            std::os::unix::fs::symlink(&source, env.claude_skills().join(name)).unwrap();
+        }
+        let studio = env.studio();
+        let config = studio.load_config().unwrap();
+        let mut roots: HashSet<_> = AGENTS
+            .iter()
+            .flat_map(|agent| {
+                agent
+                    .resolved_global_roots(&config.settings.agent_dir_overrides)
+                    .into_iter()
+                    .map(move |root| (agent.id, root))
+            })
+            .collect();
+        roots.insert((AGENTS[0].id, env.hub()));
+        scanner::take_scan_counts();
+        let skills = studio.scan_skills(&config).unwrap();
+        assert_eq!(skills.len(), 50);
+        assert_eq!(
+            scanner::take_scan_counts().0,
+            roots.len(),
+            "each (Agent, root) is scanned once, not once per skill"
+        );
+        let selected = studio.find_skill(&config, &skills[0].skill.id).unwrap();
+        assert_eq!(selected.content_hash, skills[0].skill.content_hash);
+        assert_eq!(selected.tokens, skills[0].skill.tokens);
+        assert_eq!(
+            scanner::take_scan_counts(),
+            (roots.len(), 1),
+            "lookup must not build all Agent states or hash unrelated skills"
+        );
+        assert!(studio
+            .knows_skill_path(&config, &env.claude_skills().join(&selected.name))
+            .unwrap());
+        assert_eq!(
+            scanner::take_scan_counts(),
+            (roots.len(), 0),
+            "preview authorization must not hash payloads"
+        );
+        assert!(!studio
+            .knows_skill_path(&config, &env.claude_skills().join("unrelated"))
+            .unwrap());
+    }
+
+    #[test]
+    #[ignore = "manual debug-build scaling benchmark"]
+    #[serial]
+    fn scan_scaling_benchmark() {
+        for count in [50, 100, 200] {
+            let env = scan_test_support::Env::new();
+            std::fs::create_dir_all(env.claude_skills()).unwrap();
+            for index in 0..count {
+                let name = format!("skill-{index}");
+                let source = env.write_simple_skill(&env.hub(), &name);
+                std::os::unix::fs::symlink(&source, env.claude_skills().join(name)).unwrap();
+            }
+            let studio = env.studio();
+            let config = studio.load_config().unwrap();
+            let started = std::time::Instant::now();
+            assert_eq!(studio.scan_skills(&config).unwrap().len(), count);
+            println!("{count} skills: {:?}", started.elapsed());
+        }
+    }
 }

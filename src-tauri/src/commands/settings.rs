@@ -39,15 +39,7 @@ pub async fn update_settings(
     let mut started_gateway = false;
     if enabling {
         let catalog = skill_studio_mcp::management::read(&mcp_dir).map_err(|e| e.to_string())?;
-        let needs_gateway = catalog
-            .entries
-            .iter()
-            .any(|entry| entry.mode == "gateway" && !entry.bindings.is_empty())
-            || catalog
-                .active_groups
-                .values()
-                .flatten()
-                .any(|group| group.entries.iter().any(|entry| entry.mode == "gateway"));
+        let needs_gateway = skill_studio_service::mcp::needs_gateway(&catalog);
         if needs_gateway
             && skill_studio_mcp::gateway::request(&mcp_dir, "list", serde_json::Value::Null)
                 .await

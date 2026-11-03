@@ -81,7 +81,7 @@ pub fn app_agent(agent: &str) -> &str {
 
 /// 设置里退出管理的 Agent 不再写入；停用（撤回）不受限制。
 /// 只检查调用方在配置锁内取得的快照，不在 MCP 锁内重新读取 AppState。
-fn ensure_managed_in(settings: &Settings, agent: &str) -> Result<(), String> {
+pub(crate) fn ensure_managed_in(settings: &Settings, agent: &str) -> Result<(), String> {
     let app = app_agent(agent);
     if settings.disabled_agents.iter().any(|a| a == app) {
         return Err("请先开启此 Agent 的管理".into());
@@ -144,6 +144,28 @@ pub fn overview(state: &AppState, servers: Option<Vec<Server>>) -> Result<Overvi
     })
 }
 
+/// Re-enabling management must make every remembered gateway deployment usable,
+/// including project-only deployments with no standalone entry binding.
+pub fn needs_gateway(catalog: &Catalog) -> bool {
+    catalog
+        .entries
+        .iter()
+        .any(|entry| entry.mode == "gateway" && !entry.bindings.is_empty())
+        || catalog
+            .active_groups
+            .values()
+            .flatten()
+            .flat_map(|group| &group.entries)
+            .chain(
+                catalog
+                    .projects
+                    .values()
+                    .flat_map(|project| project.active.values())
+                    .flat_map(|deployment| &deployment.entries),
+            )
+            .any(|entry| entry.mode == "gateway")
+}
+
 /// 界面的 MCP 一览。`gateway` 是运行中的网关返回的状态；没在运行时为 `None`，按网关配置填
 pub fn status(state: &AppState, gateway: Option<Value>) -> Result<Value, String> {
     ensure_enabled(state)?;
@@ -163,7 +185,8 @@ pub fn status(state: &AppState, gateway: Option<Value>) -> Result<Value, String>
     } = overview(state, Some(servers))?;
     value["gatewayOutdated"] = json!(
         value["running"].as_bool() == Some(true)
-            && value["configurationVersion"].as_u64() != Some(3)
+            && value["configurationVersion"].as_u64()
+                != Some(skill_studio_mcp::gateway::CONFIGURATION_VERSION)
     );
     value["groupIssues"] = json!(management::groups::issues(&catalog));
     value["projects"] = json!(catalog.projects);

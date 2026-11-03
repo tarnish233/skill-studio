@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMcpGatewayCheck } from "@/hooks/useMcpGatewayCheck";
 import {
   Activity,
   LogIn,
@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AgentIcon } from "@/components/common/AgentIcon";
 import { DetailHeader } from "@/components/common/DetailHeader";
+import { DetailConflictNotice } from "@/components/common/DetailConflictNotice";
 import { ListContainer, ListItemRow } from "@/components/common/ListItemRow";
 import { useUnsavedProject } from "@/components/common/NavigationGuard";
 import { SettingCard, SettingsSection } from "@/components/common/SettingCard";
@@ -24,6 +25,7 @@ import { useTarget } from "@/components/targets/TargetProvider";
 import { McpChoiceCards } from "./McpChoiceCards";
 import { McpDefinitionFields, readDefinition } from "./McpDefinitionFields";
 import { mcpRequest } from "@/lib/api/mcp";
+import { entryRevision } from "@/lib/api/mcpManagement";
 import type {
   ManagedMcp,
   McpInstallResult,
@@ -109,6 +111,8 @@ export function McpEntryDetail({
   row,
   running,
   busy,
+  missing = false,
+  canAdopt = true,
   authPending,
   test,
   onBack,
@@ -123,6 +127,8 @@ export function McpEntryDetail({
   running: boolean;
   /** 页面上的测试、登录、托管等操作正在进行 */
   busy: boolean;
+  missing?: boolean;
+  canAdopt?: boolean;
   authPending: boolean;
   test?: McpTestState;
   onBack: () => void;
@@ -137,6 +143,9 @@ export function McpEntryDetail({
   const remote = useTarget().id !== "local";
   // 指向 Studio 网关的原有配置不是独立的服务，不能另存或托管
   const viaGateway = !managed && row.sources.some((s) => s.gateway);
+  const [expectedEntry, setExpectedEntry] = useState<ManagedMcp | null>(() =>
+    managed ? (JSON.parse(JSON.stringify(row.entry)) as ManagedMcp) : null,
+  );
   const [entry, setEntry] = useState<ManagedMcp>(() => ({
     ...row.entry,
     id: managed ? row.entry.id : crypto.randomUUID(),
@@ -151,8 +160,10 @@ export function McpEntryDetail({
   const [error, setError] = useState<string | null>(null);
   const formId = useId();
   const dirty = JSON.stringify({ entry, raw }) !== original;
-  const locked = saving || busy;
-  useUnsavedProject(dirty, locked);
+  const locked = saving || busy || missing;
+  useUnsavedProject(dirty, saving || busy);
+  const remoteChanged =
+    managed && entryRevision(row.entry) !== entryRevision(expectedEntry);
   const { definition, error: definitionError } = readDefinition(raw);
   const effective: ManagedMcp = {
     ...entry,
@@ -162,15 +173,10 @@ export function McpEntryDetail({
     oauth:
       entry.mode === "gateway" && definition.type !== "stdio" && entry.oauth,
   };
-  const gatewayCheck = useQuery({
-    queryKey: ["mcp-check", effective],
-    queryFn: () =>
-      mcpRequest<{ issue: string | null }>("gatewayCheck", {
-        entry: effective,
-      }),
-    enabled: entry.mode === "gateway" && !definitionError,
-    retry: false,
-  });
+  const gatewayCheck = useMcpGatewayCheck(
+    effective,
+    entry.mode === "gateway" && !definitionError && !missing,
+  );
   const local = definition.type === "stdio";
   const sse =
     row.entry.mode === "direct" && row.entry.definition.type === "sse";
@@ -193,9 +199,9 @@ export function McpEntryDetail({
     setError(null);
     const snapshot = JSON.stringify({ entry, raw });
     try {
-      await mcpRequest("saveEntry", {
+      const committed = await mcpRequest<ManagedMcp | null>("saveEntry", {
         entry: effective,
-        expectedEntry: managed ? row.entry : null,
+        expectedEntry,
         bindingIds: effective.bindings.map((b) => b.id),
         sources: [],
         agents: [],
@@ -203,6 +209,9 @@ export function McpEntryDetail({
         scope: "user",
       });
       setOriginal(snapshot);
+      setExpectedEntry(
+        JSON.parse(JSON.stringify(committed ?? effective)) as ManagedMcp,
+      );
       onSaved(effective, { installed: effective.bindings.length > 0 });
     } catch (e) {
       setError(
@@ -277,7 +286,7 @@ export function McpEntryDetail({
               variant="outline"
               size="sm"
               title={`保存到 MCP Hub，并管理它的 ${row.sources.length} 处原有接入。配置文件会先备份，之后可移出 Hub 并还原。`}
-              disabled={locked || viaGateway}
+              disabled={locked || viaGateway || !canAdopt}
               onClick={onAdopt}
             >
               <PackagePlus className="h-4 w-4" />
@@ -298,6 +307,7 @@ export function McpEntryDetail({
           pendingLabel: "正在保存…",
         }}
       />
+      <DetailConflictNotice missing={missing} changed={remoteChanged} />
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}

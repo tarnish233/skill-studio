@@ -1,10 +1,11 @@
 import { useMemo, useRef, useState } from "react";
 import { usePageReset } from "@/components/common/PageReset";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { queryKeys, NAVIGATION_STALE_TIME } from "@/lib/queryKeys";
 import { groupsApi, settingsApi } from "@/lib/api";
 import {
   useAgents,
+  useInvalidateAfterWrite,
   useGroups,
   useProjects,
   useSettings,
@@ -112,18 +113,19 @@ function GroupsContent() {
     () => [...rawGroups].sort((a, b) => a.sortOrder - b.sortOrder),
     [rawGroups],
   );
-  const client = useQueryClient();
+  const invalidateAfterWrite = useInvalidateAfterWrite();
   /** 展开的整页编辑：id 为 null 是新建；key 区分每次打开，新建保存后换成真实 id 也不重新挂载 */
   const [detail, setDetail] = useState<{
     key: number;
     id: string | null;
+    opened: Group | null;
   } | null>(null);
   const sessions = useRef(0);
   usePageReset(() => setDetail(null));
   const appear = useDetailAppear();
   const [deleting, setDeleting] = useState<Group | null>(null);
   const [query, setQuery] = useState("");
-  const managedIds = new Set(agents.map((a) => a.id));
+  const managedIds = useMemo(() => new Set(agents.map((a) => a.id)), [agents]);
   const activeGroups = config?.activeGroups ?? {};
   const [viewAgentId, setViewAgentId] = useGroupAgentView(
     "skills",
@@ -140,7 +142,7 @@ function GroupsContent() {
   const agentName = (id: string) =>
     allAgents.find((a) => a.id === id)?.displayName ?? id;
 
-  const { busy, run } = useGroupRunner(() => client.invalidateQueries());
+  const { busy, run } = useGroupRunner(invalidateAfterWrite);
   const reorder = useGroupReorder<Group[]>({
     queryKey: queryKeys.groups,
     reorder: sortedBy,
@@ -213,7 +215,7 @@ function GroupsContent() {
     const targets = id
       ? agents.filter((a) => activeIds(a.id).includes(id))
       : [];
-    const outcome: { id: string | null; error?: string } = { id: null };
+    const outcome: { group: Group | null; error?: string } = { group: null };
     await run(
       async () => {
         const group = await groupsApi.save(
@@ -222,7 +224,7 @@ function GroupsContent() {
           draft.memberIds,
           opened && { name: opened.name, skillIds: opened.memberIds },
         );
-        outcome.id = group.id;
+        outcome.group = group;
         const untouched: UntouchedCopy[] = [];
         for (const agent of targets) {
           try {
@@ -251,8 +253,8 @@ function GroupsContent() {
         },
       },
     );
-    const saved = outcome.id;
-    if (saved && saved !== id) setDetail((d) => d && { ...d, id: saved });
+    const saved = outcome.group;
+    if (saved) setDetail((d) => d && { ...d, id: saved.id, opened: saved });
     return {
       saved: !!saved,
       error:
@@ -325,7 +327,13 @@ function GroupsContent() {
       .includes(keyword),
   );
   const open = (id: string | null) =>
-    requestNavigation(() => setDetail({ key: ++sessions.current, id }));
+    requestNavigation(() => {
+      const opened = id
+        ? (groups.find((group) => group.id === id) ?? null)
+        : null;
+      if (id && !opened) return;
+      setDetail({ key: ++sessions.current, id, opened });
+    });
   const options: ChecklistItem[] = skills.map((s) => ({
     id: s.id,
     name: s.name,
@@ -382,10 +390,12 @@ function GroupsContent() {
     />
   );
 
-  const editing = detail?.id
+  const liveEditing = detail?.id
     ? groups.find((g) => g.id === detail.id)
     : undefined;
-  if (detail && (detail.id === null || editing)) {
+  const editing = liveEditing ?? detail?.opened ?? undefined;
+  const missing = !!detail?.id && groupsQuery.isSuccess && !liveEditing;
+  if (detail) {
     // 新建的分组还没有启用记录：标题栏的 Agent 图标全部未启用、先保存才能用
     const current = editing ?? {
       id: "",
@@ -417,7 +427,13 @@ function GroupsContent() {
               .filter((a) => editing && activeIds(a.id).includes(editing.id))
               .map((a) => a.displayName)}
             busy={busy}
-            loading={groupsQuery.isPending || configQuery.isPending}
+            missing={missing}
+            loading={
+              groupsQuery.isPending ||
+              groupsQuery.isError ||
+              configQuery.isPending ||
+              configQuery.isError
+            }
             onToggle={(agentId, on) => toggle(current, agentId, on)}
             onReapply={reapply}
             onBack={() => requestNavigation(() => setDetail(null))}

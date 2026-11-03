@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTarget } from "@/components/targets/TargetProvider";
 import { getTarget } from "@/lib/api/transport";
 import { usePageReset } from "@/components/common/PageReset";
+import { DetailConflictNotice } from "@/components/common/DetailConflictNotice";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderOpen, PackagePlus, Play, Square, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -58,6 +59,7 @@ import { ProjectCreateDialog } from "@/components/projects/ProjectCreateDialog";
 import { ProjectDetailHeader } from "@/components/projects/ProjectDetailHeader";
 import {
   useAgents,
+  useInvalidateAfterWrite,
   useGroups,
   useProjects,
   useSettings,
@@ -133,10 +135,14 @@ function ProjectsContent() {
     () => allAgents.filter((a) => a.supportsProjectSkills),
     [allAgents],
   );
-  const managedIds = new Set(
-    projectAgents
-      .filter((a) => !settings?.disabledAgents?.includes(a.id))
-      .map((a) => a.id),
+  const managedIds = useMemo(
+    () =>
+      new Set(
+        projectAgents
+          .filter((a) => !settings?.disabledAgents?.includes(a.id))
+          .map((a) => a.id),
+      ),
+    [projectAgents, settings?.disabledAgents],
   );
   const [viewAgentId, setViewAgentId] = useGroupAgentView(
     "skills",
@@ -145,12 +151,21 @@ function ProjectsContent() {
   );
   const viewAgent = projectAgents.find((a) => a.id === viewAgentId);
   const [query, setQuery] = useState("");
-  const [detail, setDetail] = useState<string | null>(null);
+  const [detail, setDetail] = useState<{
+    id: string;
+    opened: ProjectBinding;
+  } | null>(null);
   usePageReset(() => setDetail(null));
   const appear = useDetailAppear();
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<ProjectBinding | null>(null);
-  const { busy, run } = useGroupRunner(() => client.invalidateQueries());
+  const invalidateAfterWrite = useInvalidateAfterWrite();
+  const { busy, run } = useGroupRunner(() =>
+    Promise.all([
+      invalidateAfterWrite(),
+      client.invalidateQueries({ queryKey: queryKeys.mcpStatus }),
+    ]),
+  );
   const reorder = useGroupReorder<ProjectBinding[]>({
     queryKey: queryKeys.projects,
     reorder: (data, ids) =>
@@ -276,7 +291,8 @@ function ProjectsContent() {
     </>
   );
 
-  const active = projects.find((p) => p.id === detail) ?? null;
+  const liveActive = projects.find((p) => p.id === detail?.id);
+  const active = liveActive ?? detail?.opened ?? null;
   if (active)
     return (
       <>
@@ -284,6 +300,7 @@ function ProjectsContent() {
         <DetailTransition key={active.id} appear={appear}>
           <ProjectDetail
             project={active}
+            missing={projectsQuery.isSuccess && !liveActive}
             state={cardState(active)}
             busy={busy}
             onToggle={(agentId, on) => toggle(active, agentId, on)}
@@ -432,7 +449,7 @@ function ProjectsContent() {
                 }
                 busy={busy}
                 deleting={busy && deleting?.id === p.id}
-                onOpen={() => setDetail(p.id)}
+                onOpen={() => setDetail({ id: p.id, opened: p })}
                 onDelete={() => setDeleting(p)}
                 onToggle={(agentId, on) => toggle(p, agentId, on)}
                 onReapply={() => reapply(p)}
@@ -459,6 +476,7 @@ function ProjectDetail({
   project,
   state,
   busy,
+  missing = false,
   onToggle,
   onReapply,
   onBack,
@@ -466,11 +484,12 @@ function ProjectDetail({
   project: ProjectBinding;
   state: GroupCardState;
   busy: boolean;
+  missing?: boolean;
   onToggle: (agentId: string, on: boolean) => void;
   onReapply: () => void;
   onBack: () => void;
 }) {
-  const qc = useQueryClient();
+  const refreshLocal = useInvalidateAfterWrite();
   const { previewSkill, previewDialog } = useSkillPreview();
   const [deletingLocal, setDeletingLocal] = useState<ProjectLocalSkill | null>(
     null,
@@ -518,21 +537,12 @@ function ProjectDetail({
       groupIds: [...v.groupIds].sort(),
     });
   const dirty = fingerprint(value) !== fingerprint(saved);
-  const locked = writing || busy || !!pending;
-  useUnsavedProject(dirty, locked);
+  const locked = writing || busy || !!pending || missing;
+  useUnsavedProject(dirty, writing || busy || !!pending);
   const activeAgents = (project.deployments ?? []).map((d) => d.agentId);
   const agentName = (id: string) =>
     agents.find((a) => a.id === id)?.displayName ?? id;
 
-  const refreshLocal = () =>
-    Promise.all([
-      qc.invalidateQueries({ queryKey: queryKeys.projects }),
-      qc.invalidateQueries({ queryKey: queryKeys.skills }),
-      qc.invalidateQueries({ queryKey: queryKeys.skillBackups }),
-      qc.invalidateQueries({ queryKey: queryKeys.groups }),
-      qc.invalidateQueries({ queryKey: queryKeys.config }),
-      qc.invalidateQueries({ queryKey: queryKeys.hubBackups }),
-    ]);
   /** 项目里已有 skill 的就地操作：同一时间只做一件 */
   async function local(
     key: string,
@@ -570,7 +580,7 @@ function ProjectDetail({
       // 写入哪些 Agent 由后端按当前部署确定；打开时的成员用来核对别处是否改过
       const report = checked(await projectsApi.save(project.id, value, saved));
       setSaved(value);
-      await qc.invalidateQueries();
+      await refreshLocal();
       const done = activeAgents.length
         ? `已保存并写入 ${activeAgents.map(agentName).join("、")}，${RELOAD}`
         : "已保存，可在卡片上为需要的 Agent 启用";
@@ -594,7 +604,13 @@ function ProjectDetail({
           <GroupAgentToggles
             groupName={project.name}
             busy={locked}
-            locked={dirty ? "先保存修改，再为 Agent 启停" : undefined}
+            locked={
+              missing
+                ? "记录已在别处删除"
+                : dirty
+                  ? "先保存修改，再为 Agent 启停"
+                  : undefined
+            }
             agents={state.toggles}
             onToggle={onToggle}
             reapply={
@@ -611,6 +627,7 @@ function ProjectDetail({
           <Button
             variant="outline"
             size="sm"
+            disabled={locked}
             onClick={() => gitignore.mutate(project.id)}
           >
             写入 .gitignore
@@ -625,6 +642,7 @@ function ProjectDetail({
             : "保存成员；还没有 Agent 启用，不写入项目",
         }}
       />
+      <DetailConflictNotice missing={missing} />
       {error && (
         <p role="alert" className="text-sm text-destructive">
           写入失败，修改已保留：{error}

@@ -162,16 +162,8 @@ pub fn ensure_known_skill(state: &AppState, path: &std::path::Path) -> Result<()
     let config = state.config();
     let mut known = state
         .studio()
-        .scan_skills(&config)
-        .map_err(String::from)?
-        .iter()
-        .any(|s| {
-            s.skill.source_path.as_path() == path
-                || s.agents.values().any(|a| {
-                    a.target_path.as_path() == path
-                        || a.entry_paths.iter().any(|p| p.as_path() == path)
-                })
-        });
+        .knows_skill_path(&config, path)
+        .map_err(String::from)?;
     if !known {
         for p in &config.projects {
             if state

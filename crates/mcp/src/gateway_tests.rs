@@ -508,3 +508,163 @@ fn a_stopped_gateway_still_forgets_removed_servers_and_their_credentials() {
     assert_eq!(forget_removed(&dir).unwrap(), 0);
     assert!(dir.join("oauth-kept.json").exists());
 }
+
+mod initialization_boundaries {
+    use super::*;
+
+    struct OAuthFixture {
+        _dir: tempfile::TempDir,
+        app: Arc<App>,
+        started: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Semaphore>,
+        calls: Arc<AtomicUsize>,
+        server: tokio::task::JoinHandle<()>,
+    }
+    impl Drop for OAuthFixture {
+        fn drop(&mut self) {
+            self.server.abort();
+        }
+    }
+
+    async fn access(app: Arc<App>, id: &'static str) -> Response {
+        mcp(
+            State(app),
+            RoutePath(id.into()),
+            Request::builder()
+                .uri(format!("/mcp/{id}"))
+                .header("authorization", format!("Bearer {id}-token"))
+                .header("accept", "text/event-stream")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+    }
+
+    async fn fixture() -> OAuthFixture {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let resource = json!({"resource":format!("{base}/mcp"),"authorization_servers":[base]});
+        let authorization = json!({"issuer":base,"authorization_endpoint":format!("{base}/authorize"),"token_endpoint":format!("{base}/token"),"response_types_supported":["code"],"grant_types_supported":["authorization_code","refresh_token"],"token_endpoint_auth_methods_supported":["none"]});
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let notify = started.clone();
+        let gate = release.clone();
+        let count = calls.clone();
+        let router = Router::new().fallback(move |uri: axum::extract::OriginalUri| {
+            let (notify, gate, count, resource, authorization) = (
+                notify.clone(),
+                gate.clone(),
+                count.clone(),
+                resource.clone(),
+                authorization.clone(),
+            );
+            async move {
+                notify.notify_one();
+                if uri.0.path() == "/.well-known/oauth-authorization-server" {
+                    count.fetch_add(1, Ordering::SeqCst);
+                }
+                let _permit = gate.acquire().await.unwrap();
+                Json(if uri.0.path().contains("oauth-authorization-server") {
+                    authorization
+                } else {
+                    resource
+                })
+            }
+        });
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let mut a = definition(format!("{base}/mcp"), true);
+        a.id = "a".into();
+        let mut b = definition("http://127.0.0.1:9/unused".into(), false);
+        b.id = "b".into();
+        let app = Arc::new(App {
+            shutdown: tokio::sync::Notify::new(),
+            dir: dir.path().to_path_buf(),
+            config: Mutex::new(Config {
+                servers: vec![a, b],
+                tokens: std::collections::BTreeMap::from([
+                    ("a".into(), "a-token".into()),
+                    ("b".into(), "b-token".into()),
+                ]),
+                ..Default::default()
+            }),
+            services: Mutex::new(HashMap::new()),
+            credentials: Mutex::new(HashMap::new()),
+            pending: Mutex::new(HashMap::new()),
+            auth_required: Arc::new(Mutex::new(HashSet::new())),
+        });
+        app.credentials("a").await.save(serde_json::from_value(json!({"client_id":"fixture-client","token_response":{"access_token":"fixture-token","token_type":"Bearer"}})).unwrap()).await.unwrap();
+        // Cache B first: even requests for an existing service must not wait for A's OAuth IO.
+        assert_ne!(
+            access(app.clone(), "b").await.status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        OAuthFixture {
+            _dir: dir,
+            app,
+            started,
+            release,
+            calls,
+            server,
+        }
+    }
+
+    #[tokio::test]
+    async fn oauth_initialization_does_not_block_other_services_and_is_shared_per_id() {
+        let f = fixture().await;
+        let first = tokio::spawn(access(f.app.clone(), "a"));
+        tokio::time::timeout(Duration::from_secs(5), f.started.notified())
+            .await
+            .unwrap();
+        let second = tokio::spawn(access(f.app.clone(), "a"));
+        let other = tokio::time::timeout(Duration::from_secs(1), access(f.app.clone(), "b")).await;
+        // Always release/reap before asserting, including on the old blocking implementation.
+        f.release.add_permits(1);
+        let first = tokio::time::timeout(Duration::from_secs(5), first)
+            .await
+            .unwrap()
+            .unwrap();
+        let second = tokio::time::timeout(Duration::from_secs(5), second)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            other.is_ok(),
+            "one OAuth endpoint blocked a different cached service"
+        );
+        assert_ne!(first.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_ne!(second.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            f.calls.load(Ordering::SeqCst),
+            1,
+            "one successful issuer discovery, shared by both requests"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalidated_initialization_cannot_publish_a_retired_service() {
+        let f = fixture().await;
+        let request = tokio::spawn(access(f.app.clone(), "a"));
+        tokio::time::timeout(Duration::from_secs(5), f.started.notified())
+            .await
+            .unwrap();
+        f.app
+            .config
+            .lock()
+            .await
+            .servers
+            .retain(|server| server.id != "a");
+        let invalidated = tokio::time::timeout(Duration::from_secs(1), f.app.invalidate("a")).await;
+        f.release.add_permits(1);
+        let response = tokio::time::timeout(Duration::from_secs(5), request)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(invalidated.is_ok());
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!f.app.services.lock().await.contains_key("a"));
+    }
+}

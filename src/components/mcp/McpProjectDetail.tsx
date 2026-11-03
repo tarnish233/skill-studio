@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { DetailConflictNotice } from "@/components/common/DetailConflictNotice";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -61,6 +62,7 @@ export function McpProjectDetail({
   refetch,
   state,
   busy,
+  missing = false,
   onToggle,
   onReapply,
   onBack,
@@ -70,11 +72,15 @@ export function McpProjectDetail({
   refetch: () => Promise<unknown>;
   state: GroupCardState;
   busy: boolean;
+  missing?: boolean;
   onToggle: (agentId: string, on: boolean) => void;
   onReapply: () => void;
   onBack: () => void;
 }) {
   const record = status.projects?.[project.id];
+  const recordSeen = useRef(!!record);
+  if (record) recordSeen.current = true;
+  const removed = missing || (recordSeen.current && !record);
   const catalog = rows(status);
   const remote = {
     entryIds: record?.entryIds ?? [],
@@ -99,8 +105,8 @@ export function McpProjectDetail({
       groupIds: [...v.groupIds].sort(),
     });
   const dirty = fingerprint(value) !== fingerprint(saved);
-  const locked = writing || busy || !!pending;
-  useUnsavedProject(dirty, locked);
+  const locked = writing || busy || !!pending || removed;
+  useUnsavedProject(dirty, writing || busy || !!pending);
   const activeAgents = Object.keys(record?.active ?? {});
   // 这个项目自己写进去的接入，不算「项目里已有的」
   const deployed = Object.values(record?.active ?? {}).flatMap(
@@ -235,7 +241,13 @@ export function McpProjectDetail({
           <GroupAgentToggles
             groupName={project.name}
             busy={locked}
-            locked={dirty ? "先保存修改，再为 Agent 启停" : undefined}
+            locked={
+              removed
+                ? "记录已在别处删除"
+                : dirty
+                  ? "先保存修改，再为 Agent 启停"
+                  : undefined
+            }
             agents={state.toggles}
             onToggle={onToggle}
             reapply={
@@ -257,6 +269,7 @@ export function McpProjectDetail({
             : "保存成员；还没有 Agent 启用，不写入项目",
         }}
       />
+      <DetailConflictNotice missing={removed} />
       {error && (
         <p role="alert" className="text-sm text-destructive">
           写入失败，修改已保留：{error}

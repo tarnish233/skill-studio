@@ -108,6 +108,34 @@ pub fn group_agents(config: &AppConfig, group_id: &str) -> Vec<String> {
     )
 }
 
+/// 移出成员时先认分组里已有的成员：那个成员可能已经不在 Hub 里，按名称重新解析会
+/// 落到同名的新 skill 上，结果「本来就不在分组里」。同名多个时不猜，交给完整调用方处理
+pub fn existing_skill_member(
+    data: &Data,
+    member_ids: &[String],
+    input: &str,
+) -> Option<(String, String)> {
+    let input = input.trim();
+    if let Some(id) = member_ids.iter().find(|id| *id == input) {
+        return Some((id.clone(), data.skill_name(id).unwrap_or(id).to_string()));
+    }
+    if input.contains('/') || input.contains('\\') || input.starts_with('~') {
+        return None;
+    }
+    let wanted = input.to_lowercase();
+    let mut matches = member_ids.iter().filter(|id| {
+        data.skill_name(id)
+            .is_some_and(|n| n.to_lowercase() == wanted)
+    });
+    let first = matches.next()?;
+    matches.next().is_none().then(|| {
+        (
+            first.clone(),
+            data.skill_name(first).unwrap_or(first).to_string(),
+        )
+    })
+}
+
 /// 按名称移出「已经不在 Hub 里」的成员时，`resolve` 给的是去搜索的提示——那会装回一个
 /// 同名的新成员，正是当初要避免的。目标里已有缺失成员时，改成提示按 ID 移出。
 /// `subject` 如「分组「前端」」，`show` 如 `groups show`

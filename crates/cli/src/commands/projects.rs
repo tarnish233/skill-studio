@@ -92,29 +92,6 @@ fn names(data: &Data, project: &ProjectBinding) -> (Vec<String>, Vec<String>) {
     (skills, groups)
 }
 
-/// 移出成员时先认项目里已有的成员，理由同分组：那个成员可能已经不在 Hub 里
-fn member(data: &Data, member_ids: &[String], input: &str) -> Option<(String, String)> {
-    let input = input.trim();
-    if let Some(id) = member_ids.iter().find(|id| *id == input) {
-        return Some((id.clone(), data.skill_name(id).unwrap_or(id).to_string()));
-    }
-    if input.contains('/') || input.contains('\\') || input.starts_with('~') {
-        return None;
-    }
-    let wanted = input.to_lowercase();
-    let mut matches = member_ids.iter().filter(|id| {
-        data.skill_name(id)
-            .is_some_and(|n| n.to_lowercase() == wanted)
-    });
-    let first = matches.next()?;
-    matches.next().is_none().then(|| {
-        (
-            first.clone(),
-            data.skill_name(first).unwrap_or(first).to_string(),
-        )
-    })
-}
-
 fn list_projects(ctx: &Ctx) -> Result<Report, CliError> {
     let state = ctx.reader()?;
     let data = view::load(&state)?;
@@ -326,7 +303,9 @@ fn members(
         let mut touched = Vec::new();
         let mut skipped = Vec::new();
         for skill in skills.iter().filter(|s| !s.trim().is_empty()) {
-            let (id, name) = match member(&data, &project.skill_ids, skill).filter(|_| !add) {
+            let (id, name) = match view::existing_skill_member(&data, &project.skill_ids, skill)
+                .filter(|_| !add)
+            {
                 Some(found) => found,
                 None => {
                     let view = resolve::skill(&data.skills, skill).map_err(|error| {

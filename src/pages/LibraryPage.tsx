@@ -15,7 +15,7 @@ import {
 } from "@/components/common/SkillBackups";
 import { SkillStudioIcon } from "@/components/common/SkillStudioIcon";
 import { InstallSkillsPage } from "@/pages/InstallSkillsPage";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { PageTools } from "@/components/common/PageTools";
 import { useEffect, useMemo, useState } from "react";
@@ -66,6 +66,7 @@ import {
 } from "@/components/common/ListItemRow";
 import {
   useAdoptToHub,
+  useInvalidateAfterWrite,
   useAgents,
   useSkills,
   useSettings,
@@ -101,7 +102,7 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
   const visibleAgents = agents.filter(
     (a) => !settings?.disabledAgents?.includes(a.id),
   );
-  const client = useQueryClient();
+  const invalidateAfterWrite = useInvalidateAfterWrite();
   const { previewSkill, previewDialog } = useSkillPreview();
   const [releaseTarget, setReleaseTarget] = useState<SkillView | null>(null);
   /** 左侧筛选：某个来源；null 是「全部」 */
@@ -145,7 +146,7 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
       toast.success("已移出 Hub 并还原到原始目录");
     },
     onError: (e) => toast.error(String(e)),
-    onSettled: () => client.invalidateQueries(),
+    onSettled: invalidateAfterWrite,
   });
   const adopt = useAdoptToHub();
   const adoptAndKeepVisible = (skillId: string) =>

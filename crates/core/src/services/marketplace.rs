@@ -549,8 +549,7 @@ impl Studio {
                 .find(|view| view.skill.id == id)
                 .ok_or_else(|| Error::invalid("安装后无法识别 skill"))?
                 .skill;
-            self.store().reserve_config(&mut tx, &next)?;
-            self.save_config(&next)?;
+            self.store().save_in_transaction(&mut tx, &next)?;
             Ok(skill)
         })();
         match operation {

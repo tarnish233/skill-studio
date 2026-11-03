@@ -20,6 +20,7 @@ interface ConfirmDialogProps {
   cancelText?: string;
   variant?: "destructive" | "info";
   pending?: boolean;
+  confirmDisabled?: boolean;
   onConfirm: () => void;
 }
 
@@ -33,6 +34,7 @@ export function ConfirmDialog({
   cancelText = "取消",
   variant = "destructive",
   pending,
+  confirmDisabled,
   onConfirm,
 }: ConfirmDialogProps) {
   const target = useSyncExternalStore(subscribeTransport, getTarget, getTarget);
@@ -75,7 +77,7 @@ export function ConfirmDialog({
             variant={variant === "destructive" ? "destructive" : "default"}
             size="sm"
             onClick={onConfirm}
-            disabled={pending}
+            disabled={pending || confirmDisabled}
           >
             {pending ? "处理中…" : confirmText}
           </Button>

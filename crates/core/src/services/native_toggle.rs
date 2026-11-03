@@ -112,14 +112,15 @@ pub fn set_claude_skill_enabled(
 pub fn is_claude_skill_disabled(settings_path: &Path, skill_name: &str) -> bool {
     read_json_object(settings_path)
         .ok()
-        .and_then(|root| {
-            root.get(CLAUDE_OVERRIDES_KEY)?
-                .as_object()?
-                .get(skill_name)?
-                .as_str()
-                .map(|v| v == CLAUDE_OFF)
-        })
-        .unwrap_or(false)
+        .is_some_and(|root| claude_disabled(&root, skill_name))
+}
+
+fn claude_disabled(root: &Map<String, Value>, name: &str) -> bool {
+    root.get(CLAUDE_OVERRIDES_KEY)
+        .and_then(Value::as_object)
+        .and_then(|overrides| overrides.get(name))
+        .and_then(Value::as_str)
+        == Some(CLAUDE_OFF)
 }
 
 fn codex_config_array(doc: &mut DocumentMut) -> Result<&mut ArrayOfTables> {
@@ -152,6 +153,10 @@ pub fn is_codex_skill_disabled_at(config_path: &Path, skill_name: &str, document
     let Ok(doc) = text.parse::<DocumentMut>() else {
         return false;
     };
+    codex_disabled(&doc, skill_name, document)
+}
+
+fn codex_disabled(doc: &DocumentMut, skill_name: &str, document: &Path) -> bool {
     let Some(config) = doc.get("skills").and_then(|s| s.get("config")) else {
         return false;
     };
@@ -270,17 +275,18 @@ fn pi_excludes(entry: &Value, dir: &Path) -> bool {
 
 /// Pi 里这个 skill 是否被停用。Pi 按**未解析软链**的路径匹配，这里同样不跟随链接。
 pub fn is_pi_skill_disabled_at(settings_path: &Path, document: &Path) -> bool {
+    read_json_object(settings_path)
+        .ok()
+        .is_some_and(|root| pi_disabled(&root, document))
+}
+
+fn pi_disabled(root: &Map<String, Value>, document: &Path) -> bool {
     let Some(dir) = document.parent() else {
         return false;
     };
-    read_json_object(settings_path)
-        .ok()
-        .and_then(|root| {
-            root.get(PI_SKILLS_KEY)?
-                .as_array()
-                .map(|list| list.iter().any(|entry| pi_excludes(entry, dir)))
-        })
-        .unwrap_or(false)
+    root.get(PI_SKILLS_KEY)
+        .and_then(Value::as_array)
+        .is_some_and(|list| list.iter().any(|entry| pi_excludes(entry, dir)))
 }
 
 /// 停用写一条 `-<skill 目录绝对路径>`；启用则移除指向它的精确排除。
@@ -313,6 +319,49 @@ pub fn set_pi_skill_enabled_at(settings_path: &Path, document: &Path, enabled: b
         root.remove(PI_SKILLS_KEY);
     }
     write_json_preserving_order(settings_path, &root)
+}
+
+/// Parsed native settings live for one read-only scan, never across writes or refreshes.
+#[derive(Default)]
+pub(crate) struct ToggleSnapshot {
+    json: HashMap<PathBuf, Option<Map<String, Value>>>,
+    toml: HashMap<PathBuf, Option<DocumentMut>>,
+}
+
+impl ToggleSnapshot {
+    pub(crate) fn is_disabled(
+        &mut self,
+        agent: &AgentDescriptor,
+        overrides: &HashMap<String, PathBuf>,
+        name: &str,
+        document: &Path,
+    ) -> bool {
+        let Some(path) = agent.toggle_config_path(overrides) else {
+            return false;
+        };
+        let key = path.canonicalize().unwrap_or_else(|_| path.clone());
+        match agent.toggle {
+            ToggleMechanism::CodexConfigToml => {
+                let doc = self
+                    .toml
+                    .entry(key)
+                    .or_insert_with(|| std::fs::read_to_string(&path).ok()?.parse().ok());
+                doc.as_ref()
+                    .is_some_and(|doc| codex_disabled(doc, name, document))
+            }
+            ToggleMechanism::ClaudeSettingsJson | ToggleMechanism::PiSettingsJson => {
+                let root = self
+                    .json
+                    .entry(key)
+                    .or_insert_with(|| read_json_object(&path).ok());
+                root.as_ref().is_some_and(|root| match agent.toggle {
+                    ToggleMechanism::ClaudeSettingsJson => claude_disabled(root, name),
+                    _ => pi_disabled(root, document),
+                })
+            }
+            ToggleMechanism::None => false,
+        }
+    }
 }
 
 pub fn is_skill_disabled_at(

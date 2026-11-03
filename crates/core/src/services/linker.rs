@@ -168,24 +168,28 @@ pub fn remove_symlink_or_junction(path: &Path) -> std::io::Result<()> {
 
 /// 移除目标位置的内容。只处理链接与本工具管理的复制。
 fn remove_dest(dest: &Path) -> Result<()> {
-    if is_symlink_or_junction(dest) {
-        return remove_symlink_or_junction(dest)
-            .map_err(|e| Error::io_context(format!("移除链接失败: {}", dest.display()), e));
-    }
-    if dest.is_dir() {
-        return fs::remove_dir_all(dest)
-            .map_err(|e| Error::io_context(format!("移除目录失败: {}", dest.display()), e));
-    }
-    if dest.exists() {
-        return fs::remove_file(dest)
-            .map_err(|e| Error::io_context(format!("移除文件失败: {}", dest.display()), e));
-    }
-    Ok(())
+    super::transaction::remove(dest)
 }
 
 /// Copy without following links. Internal absolute links move with the tree;
 /// external relative links retain their original destination.
 pub(crate) fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
+    copy_tree_contents(src, dst)?;
+    copy_root_permissions(src, dst)
+}
+
+fn copy_root_permissions(src: &Path, dst: &Path) -> Result<()> {
+    fs::set_permissions(
+        dst,
+        fs::metadata(src)
+            .map_err(|e| Error::io(src, e))?
+            .permissions(),
+    )
+    .map_err(|e| Error::io(dst, e))
+}
+
+/// Leave the new root writable until its Studio metadata has been written.
+fn copy_tree_contents(src: &Path, dst: &Path) -> Result<()> {
     fn walk(root: &Path, target: &Path, src: &Path, dst: &Path, depth: usize) -> Result<()> {
         if depth > MAX_SCAN_DEPTH {
             return Err(Error::invalid("目录层级过深"));
@@ -248,16 +252,35 @@ pub(crate) fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
                 )));
             }
         }
-        fs::set_permissions(
-            dst,
-            fs::metadata(src)
-                .map_err(|e| Error::io(src, e))?
-                .permissions(),
-        )
-        .map_err(|e| Error::io(dst, e))?;
+        if dst != target {
+            copy_root_permissions(src, dst)?;
+        }
         Ok(())
     }
     walk(src, dst, src, dst, 0)
+}
+
+/// All deployment copies share verification, sidecar ordering and source permissions.
+pub(crate) fn copy_skill(source: &Path, dest: &Path, skill_id: &str) -> Result<String> {
+    validate_sync_source(source)?;
+    let before = scanner::dir_content_hash(source)?;
+    copy_tree_contents(source, dest)?;
+    let after = scanner::dir_content_hash(source)?;
+    if before != after || scanner::dir_content_hash(dest)? != after {
+        return Err(Error::invalid("复制校验失败或源在复制期间发生变化"));
+    }
+    validate_sync_source(dest)?;
+    atomic::write_json_file(
+        &dest.join(COPY_SIDECAR),
+        &CopySidecar {
+            skill_id: skill_id.to_owned(),
+            source_path: source.to_owned(),
+            source_hash: after.clone(),
+            copied_at: now_secs(),
+        },
+    )?;
+    copy_root_permissions(source, dest)?;
+    Ok(after)
 }
 
 /// 用 tmp + rename 的方式把 `source` 复制到 `dest`，并写下复制边车。
@@ -301,23 +324,8 @@ fn prepare_copy(
     let mut tx = super::transaction::Transaction::begin(journal)?;
     let tmp = super::transaction::sibling(dest, "staging");
     let operation = (|| -> Result<String> {
-        let before = scanner::dir_content_hash(source)?;
         tx.reserve(&tmp)?;
-        copy_tree(source, &tmp)?;
-        let after = scanner::dir_content_hash(source)?;
-        if before != after || scanner::dir_content_hash(&tmp)? != after {
-            return Err(Error::invalid(
-                "复制校验失败或源在复制期间发生变化，原目标已保留",
-            ));
-        }
-        validate_sync_source(&tmp)?;
-        let sidecar = CopySidecar {
-            skill_id: skill_id.to_string(),
-            source_path: source.to_path_buf(),
-            source_hash: after.clone(),
-            copied_at: now_secs(),
-        };
-        atomic::write_json_file(&tmp.join(COPY_SIDECAR), &sidecar)?;
+        let after = copy_skill(source, &tmp, skill_id)?;
         if destination_fingerprint(dest)? != dest_before {
             return Err(Error::invalid(
                 "目标在复制期间发生变化，已保留目标，请刷新后重试",

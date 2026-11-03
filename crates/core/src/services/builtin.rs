@@ -187,8 +187,7 @@ impl Studio {
                     },
                 );
             }
-            self.store().reserve_config(&mut tx, &next)?;
-            self.save_config(&next)?;
+            self.store().save_in_transaction(&mut tx, &next)?;
             let views = self.scan_skills(&next)?;
             Ok(plan
                 .iter()
@@ -269,8 +268,7 @@ impl Studio {
                 }
                 tx.reserve(target)?;
             }
-            self.store().reserve_config(&mut tx, &next)?;
-            self.save_config(&next)?;
+            self.store().save_in_transaction(&mut tx, &next)?;
             Ok(())
         })();
         match operation {

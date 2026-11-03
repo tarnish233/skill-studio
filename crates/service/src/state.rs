@@ -568,7 +568,10 @@ impl AppState {
             return Ok(());
         }
         let dir = self.studio.store().dir().join("mcp");
-        skill_studio_mcp::management::set_enabled(&dir, enabled).map_err(|error| {
+        skill_studio_mcp::management::set_enabled_with_agent_check(&dir, enabled, |agent| {
+            crate::mcp::ensure_managed_in(&guard.settings, agent).map_err(anyhow::Error::msg)
+        })
+        .map_err(|error| {
             Error::invalid(format!(
                 "无法{} MCP 管理：{error:#}。开关保持原状态，请核对配置文件后重试",
                 if enabled { "开启" } else { "关闭" }

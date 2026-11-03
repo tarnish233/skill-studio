@@ -354,6 +354,16 @@ fn ensure_active(catalog: &Catalog) -> Result<()> {
 /// Restore only Studio-owned native MCP entries. Hub metadata remains available
 /// for a later opt-in, and the existing journal rolls back every file together.
 pub fn set_enabled(dir: &Path, enabled: bool) -> Result<()> {
+    set_enabled_with_agent_check(dir, enabled, |_| Ok(()))
+}
+
+/// Validate reactivation against the caller's locked management preference.
+/// Withdrawal and rollback remain possible even after an Agent opts out.
+pub fn set_enabled_with_agent_check(
+    dir: &Path,
+    enabled: bool,
+    ensure_agent: impl Fn(&str) -> Result<()>,
+) -> Result<()> {
     let _lock = lock(dir)?;
     let mut catalog = read_unlocked(dir)?;
     if catalog.suspended == !enabled {
@@ -361,6 +371,14 @@ pub fn set_enabled(dir: &Path, enabled: bool) -> Result<()> {
     }
     let mut files = BTreeMap::new();
     if enabled {
+        for binding in catalog
+            .entries
+            .iter()
+            .flat_map(|e| &e.bindings)
+            .chain(catalog.owned_bindings())
+        {
+            ensure_agent(&binding.agent)?;
+        }
         for entry in &catalog.entries {
             for binding in &entry.bindings {
                 stage_binding(
@@ -513,11 +531,22 @@ pub fn projection(dir: &Path) -> Result<Option<Projection>> {
 }
 pub fn save(
     dir: &Path,
-    mut entry: Entry,
+    entry: Entry,
     targets: Vec<Target>,
     executable: &Path,
     expected_entry: Option<&Entry>,
 ) -> Result<()> {
+    save_returning_entry(dir, entry, targets, executable, expected_entry).map(|_| ())
+}
+
+/// Return the committed revision, not a later read which may already contain someone else's edit.
+pub fn save_returning_entry(
+    dir: &Path,
+    mut entry: Entry,
+    targets: Vec<Target>,
+    executable: &Path,
+    expected_entry: Option<&Entry>,
+) -> Result<Entry> {
     let _lock = lock(dir)?;
     if entry.id.is_empty()
         || !entry
@@ -652,8 +681,9 @@ pub fn save(
     }
     entry.bindings = installed;
     catalog.entries.retain(|e| e.id != entry.id);
-    catalog.entries.push(entry);
-    commit(dir, files, &catalog)
+    catalog.entries.push(entry.clone());
+    commit(dir, files, &catalog)?;
+    Ok(entry)
 }
 /// 删除托管、移除项目接入时原样留下的接入：文件里同名的配置已被其他程序改写，不再是 Studio 写的
 #[derive(Debug, Serialize)]

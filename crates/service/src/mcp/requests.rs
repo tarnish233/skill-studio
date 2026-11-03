@@ -154,8 +154,9 @@ pub fn request(
             let entry: management::Entry = param(params, "entry")?;
             let expected: Option<management::Entry> = param(params, "expectedEntry")?;
             let placement: entries::Placement = whole(params)?;
-            entries::save(state, exe, entry, expected, &placement)?;
-            Value::Null
+            to_value(entries::save_returning_entry(
+                state, exe, entry, expected, &placement,
+            )?)?
         }
         "removeEntry" => {
             let id: String = param(params, "id").map_err(|_| "缺少 ID")?;

@@ -36,8 +36,19 @@ use std::{
 use tokio::sync::{Mutex, OnceCell};
 use tower::ServiceExt as TowerServiceExt;
 
+/// Wire compatibility between a running daemon and management clients.
+pub const CONFIGURATION_VERSION: u64 = 3;
+
 type Upstream = RunningService<RoleClient, ClientConfig>;
 type HttpService = StreamableHttpService<Bridge, LocalSessionManager>;
+type ServiceSlot = Arc<OnceCell<HttpService>>;
+
+fn same_authentication(left: &Server, right: &Server) -> bool {
+    serde_json::to_value(&left.connection).ok() == serde_json::to_value(&right.connection).ok()
+        && left.oauth == right.oauth
+        && left.client_id == right.client_id
+        && left.scopes == right.scopes
+}
 #[derive(Clone)]
 struct Runtime {
     server: Server,
@@ -54,7 +65,7 @@ struct App {
     shutdown: tokio::sync::Notify,
     dir: PathBuf,
     config: Mutex<Config>,
-    services: Mutex<HashMap<String, HttpService>>,
+    services: Mutex<HashMap<String, ServiceSlot>>,
     credentials: Mutex<HashMap<String, Credentials>>,
     pending: Mutex<HashMap<String, Pending>>,
     auth_required: Arc<Mutex<HashSet<String>>>,
@@ -349,13 +360,7 @@ impl App {
         }
         for old in &current.servers {
             let next = servers.iter().find(|s| s.id == old.id);
-            let authentication_changed = next.is_none_or(|s| {
-                serde_json::to_value(&s.connection).ok()
-                    != serde_json::to_value(&old.connection).ok()
-                    || s.oauth != old.oauth
-                    || s.client_id != old.client_id
-                    || s.scopes != old.scopes
-            });
+            let authentication_changed = next.is_none_or(|s| !same_authentication(s, old));
             if authentication_changed || next.is_some_and(|s| s.enabled != old.enabled) {
                 self.invalidate(&old.id).await;
             }
@@ -432,8 +437,10 @@ impl App {
     }
     async fn invalidate(&self, id: &str) {
         self.auth_required.lock().await.remove(id);
-        if let Some(s) = self.services.lock().await.remove(id) {
-            s.config.cancellation_token.cancel();
+        if let Some(slot) = self.services.lock().await.remove(id) {
+            if let Some(service) = slot.get() {
+                service.config.cancellation_token.cancel();
+            }
         }
     }
 }
@@ -466,33 +473,72 @@ async fn mcp(
     {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    // Serialize service creation so sessions share one OAuth manager/refresh owner.
-    let mut services = app.services.lock().await;
-    if !services.contains_key(&id) {
-        let runtime = match app.runtime(server).await {
-            Ok(r) => r,
-            Err(_) => {
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "MCP 未就绪，请在 Studio 中测试连接或登录",
-                )
-                    .into_response()
-            }
-        };
-        let service = StreamableHttpService::new(
-            move || {
-                Ok(Bridge {
-                    runtime: runtime.clone(),
-                    upstream: Arc::new(OnceCell::new()),
-                })
-            },
-            Arc::new(LocalSessionManager::default()),
-            StreamableHttpServerConfig::default(),
-        );
-        services.insert(id.clone(), service);
+    // Reserve a per-id initialization cell under the map lock; OAuth discovery
+    // runs outside it. Clients of this id still share one manager/refresh owner.
+    let slot = app
+        .services
+        .lock()
+        .await
+        .entry(id.clone())
+        .or_insert_with(|| Arc::new(OnceCell::new()))
+        .clone();
+    let initializing = slot.get().is_none();
+    let service = match slot
+        .get_or_try_init(|| async {
+            let runtime = app.runtime(server.clone()).await?;
+            Ok::<_, anyhow::Error>(StreamableHttpService::new(
+                move || {
+                    Ok(Bridge {
+                        runtime: runtime.clone(),
+                        upstream: Arc::new(OnceCell::new()),
+                    })
+                },
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default(),
+            ))
+        })
+        .await
+    {
+        Ok(service) => service,
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "MCP 未就绪，请在 Studio 中测试连接或登录",
+            )
+                .into_response()
+        }
+    };
+    if initializing && app.reload().await.is_err() {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    let service = services[&id].clone();
-    drop(services);
+    {
+        // Follow the same config -> services order as reload. A retired cell or
+        // a request whose configuration changed while it waited cannot publish.
+        let config = app.config.lock().await;
+        let mut services = app.services.lock().await;
+        let attached = services
+            .get(&id)
+            .is_some_and(|current| Arc::ptr_eq(current, &slot));
+        let current = config.servers.iter().find(|current| current.id == id);
+        if !attached
+            || !current
+                .is_some_and(|current| current.enabled && same_authentication(current, &server))
+        {
+            if attached {
+                services.remove(&id);
+            }
+            service.config.cancellation_token.cancel();
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+        if !config
+            .tokens
+            .get(&id)
+            .is_some_and(|token| authorized(request.headers(), token))
+        {
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+    }
+    let service = service.clone();
     match service.oneshot(request).await {
         Ok(r) => r.into_response(),
         Err(e) => match e {},
@@ -567,7 +613,7 @@ async fn action(app: &Arc<App>, method: &str, mut p: Value) -> Result<Value> {
                 servers.push(v);
             }
             Ok(
-                json!({"running":true,"configurationVersion":3,"port":c.port,"servers":servers,"bindings":c.bindings}),
+                json!({"running":true,"configurationVersion":CONFIGURATION_VERSION,"port":c.port,"servers":servers,"bindings":c.bindings}),
             )
         }
         "save" => {
@@ -577,11 +623,7 @@ async fn action(app: &Arc<App>, method: &str, mut p: Value) -> Result<Value> {
             let mut next = c.clone();
             if let Some(old) = next.servers.iter_mut().find(|old| old.id == s.id) {
                 // Editing while credentials are live could send old tokens to a new endpoint.
-                if serde_json::to_value(&old.connection)? != serde_json::to_value(&s.connection)?
-                    || old.oauth != s.oauth
-                    || old.client_id != s.client_id
-                    || old.scopes != s.scopes
-                {
+                if !same_authentication(old, &s) {
                     app.revoke(&s.id).await?;
                 }
                 *old = s.clone();
@@ -850,8 +892,10 @@ pub async fn serve(dir: PathBuf) -> Result<()> {
     axum::serve(listener, router)
         .with_graceful_shutdown(async move {
             app.shutdown.notified().await;
-            for service in app.services.lock().await.values() {
-                service.config.cancellation_token.cancel();
+            for slot in app.services.lock().await.values() {
+                if let Some(service) = slot.get() {
+                    service.config.cancellation_token.cancel();
+                }
             }
         })
         .await?;

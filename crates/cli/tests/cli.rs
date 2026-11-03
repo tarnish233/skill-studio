@@ -151,6 +151,13 @@ fn disabling_cli_rejects_read_and_write_commands_without_audit_or_side_effects()
     // 安装包探测和阅读帮助仍可用，远程辅助协议另走 serve 入口。
     assert_eq!(home.run(&["--help"]).code, 0);
     assert_eq!(home.run(&["--version"]).code, 0);
+    assert_eq!(home.run(&["docs"]).code, 0);
+    assert_eq!(home.json(&["docs"]).json(), serde_json::json!({}));
+    assert_eq!(
+        home.run(&["doctor"]).code,
+        1,
+        "a readable disabled preference still applies"
+    );
 }
 
 #[test]
@@ -1024,4 +1031,67 @@ fn a_builtin_skill_is_labelled_as_built_in() {
     assert!(listed.contains("Skill Studio 内置"), "{listed}");
     let shown = home.json(&["skills", "show", "skill-studio"]).json();
     assert_eq!(shown["origin"], "builtin", "{shown}");
+}
+
+#[test]
+#[serial]
+fn diagnostics_remain_available_with_corrupt_or_missing_pending_config_without_repair() {
+    for corrupt in [true, false] {
+        let home = Home::new();
+        let dir = home.path(".skill-studio");
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = dir.join("config.json");
+        let journal = dir.join("migration.json");
+        if corrupt {
+            std::fs::write(&config, "{ broken config").unwrap();
+        } else {
+            std::fs::write(&journal, "incomplete recovery record").unwrap();
+        }
+        let before_config = std::fs::read(&config).ok();
+        let before_journal = std::fs::read(&journal).ok();
+        home.ok(&["docs"]);
+        let report = home.json(&["doctor"]);
+        assert_eq!(report.code, 1, "doctor reports an unhealthy configuration");
+        assert!(
+            report.err.is_empty(),
+            "diagnosis must be returned, not a preflight error: {}",
+            report.err
+        );
+        let value: Value = serde_json::from_str(&report.out).unwrap();
+        assert_eq!(value["ok"], false);
+        assert!(value["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check["title"] == "配置" && check["level"] == "error"));
+        assert_eq!(std::fs::read(&config).ok(), before_config);
+        assert_eq!(std::fs::read(&journal).ok(), before_journal);
+        for path in ["config.lock", "logs", "backups", "mcp"] {
+            assert!(!dir.join(path).exists(), "{path}");
+        }
+    }
+}
+
+#[test]
+#[serial]
+fn diagnostics_do_not_wait_for_a_busy_config_lock() {
+    let home = Home::new();
+    let store = skill_studio_core::services::store::Store::new(home.path(".skill-studio"));
+    store
+        .save(&skill_studio_core::models::config::AppConfig::default())
+        .unwrap();
+    let _lock = store.lock_exclusive(std::time::Duration::ZERO).unwrap();
+    std::env::set_var("SKILL_STUDIO_LOCK_WAIT_MS", "0");
+    let docs = home.run(&["docs"]);
+    let doctor = home.json(&["doctor"]);
+    std::env::remove_var("SKILL_STUDIO_LOCK_WAIT_MS");
+    assert_eq!(docs.code, 0, "{}", docs.err);
+    assert!(doctor.err.is_empty(), "{}", doctor.err);
+    assert_eq!(doctor.code, 0);
+    let value: Value = serde_json::from_str(&doctor.out).unwrap();
+    assert!(value["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|check| check["title"] == "写入" && check["level"] == "warn"));
 }

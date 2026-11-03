@@ -184,8 +184,7 @@ impl Studio {
                 let path = tx.reserve_file_for_update(&change.path)?;
                 super::isolation::apply(change, &path)?;
             }
-            self.store().reserve_config(&mut tx, &next)?;
-            self.save_config(&next)?;
+            self.store().save_in_transaction(&mut tx, &next)?;
             Ok(())
         })();
         if let Err(error) = result {
