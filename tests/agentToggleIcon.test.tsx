@@ -82,6 +82,31 @@ it("unavailable inactive Agents are dimmed further, while an enabled Agent stays
     screen.getByRole("button", { name: "Pi 开关" }).querySelector("svg"),
   ).not.toHaveClass("grayscale", "opacity-25");
 });
+it("keeps the DeepSeek Harness whale blue only while the Agent is enabled", () => {
+  const view = renderWithProviders(
+    <AgentToggleIcon
+      item={item({ agentId: "deepseek-harness", tone: "off" })}
+      busy={false}
+    />,
+  );
+  const mark = screen
+    .getByRole("button", { name: "Pi 开关" })
+    .querySelector("svg")!;
+  expect(mark).toHaveClass("grayscale");
+  view.rerender(
+    <TooltipProvider>
+      <AgentToggleIcon
+        item={item({ agentId: "deepseek-harness", tone: "on" })}
+        busy={false}
+      />
+    </TooltipProvider>,
+  );
+  const lit = screen
+    .getByRole("button", { name: "Pi 开关" })
+    .querySelector("svg")!;
+  expect(lit).not.toHaveClass("grayscale");
+  expect(lit.querySelector("path")).toHaveAttribute("fill", "#4D6BFE");
+});
 it("keeps the original click and busy behavior", () => {
   const onClick = vi.fn();
   const view = renderWithProviders(

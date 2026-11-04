@@ -2,7 +2,7 @@
 
 ## DeepSeek Harness
 
-The DeepSeek Harness whale mark in `src/components/common/AgentIcon.tsx` is adapted from the official `deepseek-ai/deepseek-harness`, `apps/desktop/renderer/assets/welcome-brand.svg`, at tag `dsh-v0.2.1-rc.5`. The whale geometry is preserved; the wordmark, CSS, and clipping IDs are omitted, and the viewBox is adjusted to the existing brand-size baseline. Fill follows the UI foreground, matching the official light/dark primary-label treatment.
+The DeepSeek Harness whale mark in `src/components/common/AgentIcon.tsx` is adapted from the official `deepseek-ai/deepseek-harness`, `apps/desktop/renderer/assets/welcome-brand.svg`, at tag `dsh-v0.2.1-rc.5`. The whale geometry is preserved; the wordmark, CSS, and clipping IDs are omitted, and the viewBox is adjusted to the existing brand-size baseline. Fill uses the DeepSeek brand blue `#4D6BFE` in the app, matching the color identity rather than the official foreground-following treatment.
 
 MIT License
 

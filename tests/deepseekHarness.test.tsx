@@ -59,7 +59,7 @@ it("includes Harness in the shared-directory explanation", () => {
   expect(SOURCE_TITLES.agent).toContain("DeepSeek Harness");
 });
 
-it("uses the official Harness whale mark at the existing 20px and 16px sizes", () => {
+it("uses the official Harness whale mark in DeepSeek brand blue at the existing 20px and 16px sizes", () => {
   expect(agentIcon(harness.id)).not.toBe(Boxes);
   const { container } = renderWithProviders(
     <>
@@ -73,7 +73,9 @@ it("uses the official Harness whale mark at the existing 20px and 16px sizes", (
   expect(marks[1]).toHaveClass("h-4", "w-4", "shrink-0");
   for (const mark of marks) {
     expect(mark).toHaveAttribute("aria-hidden", "true");
-    expect(mark.querySelector("path")?.getAttribute("d")).toContain("M168.384");
+    const path = mark.querySelector("path");
+    expect(path?.getAttribute("d")).toContain("M168.384");
+    expect(path).toHaveAttribute("fill", "#4D6BFE");
     expect(mark.querySelector("clipPath")).toBeNull();
   }
 });
