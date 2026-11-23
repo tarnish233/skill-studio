@@ -2,6 +2,16 @@
 
 ## 未发布
 
+## v0.6.21 — 2026-11-23
+
+- **新增插件 Hub**：按 Agent 汇总本机插件，展示名称、版本、来源、组件与启用状态，可按 Agent 过滤并跳转到组件关联。默认只读扫描；在设置中开启「插件管理」后才允许改动，开启本身不会启用、迁移或卸载任何已有插件。
+- **识别 Agent Plugins v1 与各原生包**：支持开放标准的根 `plugin.json`（闭合字段、路径包围、`${PLUGIN_ROOT}`／`${PLUGIN_DATA}` 占位符、单个 MCP 条目失败不影响其他组件），以及 Claude Code、Pi、OpenCode、Codex、Grok Build、DeepSeek Harness 的原生清单和目录布局。Skills 只按标准目录或显式声明发现，不执行插件代码推断能力。
+- **原生安装、启用、更新、卸载**：Claude Code、OpenCode、Pi 调用各自原生命令并透传结果；Pi 与 OpenCode 的启停按其配置写入精确声明（保留注释、保留包文件与数据），OpenCode 同时支持新旧两个插件键并按声明所在键定位。Codex、Grok Build、DeepSeek Harness 首版只读。同一 Bundle 被多个 Profile 选中时聚合为一行并列出 Profile。
+- **写入安全**：每次改动前确认具体插件与版本摘要；配置在确认后被外部修改则拒绝覆盖；改动前保存原生配置快照，停用记录与待处理日志以私有权限落盘并可核对恢复；原生命令超时未完成时不自动回滚也不谎报成功。安装来源拒绝带凭据或查询参数的地址、选项注入和控制字符。
+- **CLI 与文档**：新增 `skill-studio plugins list/show/inspect/agents/install/enable/disable/update/uninstall/forget/recover`，查询命令不需要初始化配置或写入；同步更新内置 Skill 的命令参考、README 与插件说明文档。
+- **与现有功能隔离**：插件目录不再被当作 Skill 同步源或普通 Skill 扫描；插件组件在 Skill／MCP Hub 中只读关联，不复制、不转换、不导出。插件分组、插件项目与远程插件管理不作为本期能力。
+- **插件清单修正**：Claude 未登记在 `enabledPlugins` 的插件按原生语义视为默认启用，界面不再同时出现启用与停用两个图标；OpenCode 新版 `plugins` 键与旧版 `plugin` 键并存时两者都扫描，不再漏掉旧键条目；OpenCode 2.3+ 存放在 npm 缓存中的插件能定位到包文件并显示版本与组件，不再误判为插件 ID 规则。
+
 ## v0.6.20 — 2026-11-04
 
 - **DeepSeek Harness 图标改为品牌蓝**：鲸鱼标记从跟随文字前景色改为固定 DeepSeek 品牌蓝 `#4D6BFE`，与 Claude 橙、Pi 三色一样保持品牌识别；分组和项目开关在停用时仍统一压灰，启用后显示蓝色。同步更新第三方说明和图标回归测试。

@@ -415,6 +415,9 @@ pub fn scan_root(root: &Path, agent: &AgentDescriptor) -> Result<Vec<ScannedEntr
             continue;
         }
         let path = entry.path();
+        if super::plugins::is_plugin_directory(&path) {
+            continue;
+        }
         let kind = classify_entry(&path);
         if matches!(kind, EntryKind::NotASkill) {
             continue;
@@ -459,6 +462,11 @@ pub fn scan_project(root: &Path) -> Result<Vec<ScannedEntry>> {
 pub fn validate_sync_source(source: &Path) -> Result<()> {
     if !source.is_dir() {
         return Err(Error::invalid(format!("源不是目录: {}", source.display())));
+    }
+    if super::plugins::is_plugin_directory(source) {
+        return Err(Error::invalid(
+            "该目录是完整插件，请通过插件管理操作，不能作为 Skill 同步源",
+        ));
     }
     if !source.join(SKILL_FILE).is_file() {
         return Err(Error::invalid(format!(

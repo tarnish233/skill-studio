@@ -360,9 +360,8 @@ it("hides MCP navigation and returns a saved MCP mode to Skill management when d
     "aria-current",
     "page",
   );
-  expect(
-    screen.queryByRole("group", { name: "资源类型" }),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "MCP" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Plugin" })).toBeInTheDocument();
   expect(screen.queryByText("网关已关闭")).not.toBeInTheDocument();
   expect(calls.filter((call) => call.command === "mcp_request")).toHaveLength(
     0,
@@ -396,9 +395,8 @@ it("returns from MCP settings to Skill Hub when management is turned off", async
     screen.getByRole("navigation", { name: "主导航" }),
   ).findByRole("button", { name: "Hub" });
   await waitFor(() => expect(hub).toHaveAttribute("aria-current", "page"));
-  expect(
-    screen.queryByRole("group", { name: "资源类型" }),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "MCP" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Plugin" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
     "Skill Hub",
   );

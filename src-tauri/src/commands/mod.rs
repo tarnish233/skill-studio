@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod cli;
 pub mod groups;
+pub mod plugins;
 pub mod projects;
 pub mod remote;
 pub mod settings;
@@ -11,6 +12,7 @@ pub use remote::*;
 pub use agents::*;
 pub use cli::*;
 pub use groups::*;
+pub use plugins::*;
 pub use projects::*;
 pub use settings::*;
 pub use skills::*;

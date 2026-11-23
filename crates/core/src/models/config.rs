@@ -61,6 +61,10 @@ pub struct Settings {
     /// Whether Studio manages MCP connections. Existing installations stay enabled.
     #[serde(default = "default_manage_mcp")]
     pub manage_mcp: bool,
+    /// Opt-in for native plugin operations; inventory stays read-only when disabled.
+    /// Additive field: older builds ignore it, so the config version does not change.
+    #[serde(default)]
+    pub manage_plugins: bool,
     /// 新建注册时的默认链接方式
     #[serde(default)]
     pub default_link_mode: LinkMode,
@@ -116,6 +120,7 @@ impl Default for Settings {
             cli_skill_enabled: true,
             cli_skill_warning: None,
             manage_mcp: true,
+            manage_plugins: false,
             default_link_mode: LinkMode::default(),
             preserve_manual_skills: true,
             language: default_language(),

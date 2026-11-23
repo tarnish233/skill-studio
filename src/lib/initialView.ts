@@ -1,7 +1,7 @@
 import type { Settings } from "@/types";
 
 export type ViewId = "hub" | "groups" | "projects" | "settings" | "install";
-export type Resource = "skills" | "mcp";
+export type Resource = "skills" | "mcp" | "plugins";
 export const VIEW_STORAGE_KEY = "skill-studio-view";
 export const RESOURCE_STORAGE_KEY = "skill-studio-resource";
 
@@ -12,8 +12,7 @@ export function readInitialView(): ViewId {
 }
 
 export function initialResource(settings?: Settings): Resource {
-  if (settings?.manageMcp === false) return "skills";
-  return localStorage.getItem(RESOURCE_STORAGE_KEY) === "mcp"
-    ? "mcp"
-    : "skills";
+  const stored = localStorage.getItem(RESOURCE_STORAGE_KEY);
+  if (stored === "plugins") return "plugins";
+  return stored === "mcp" && settings?.manageMcp !== false ? "mcp" : "skills";
 }

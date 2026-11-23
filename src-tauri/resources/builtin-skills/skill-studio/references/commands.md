@@ -4,7 +4,7 @@
 
 ## skill-studio
 
-Skill Studio 命令行：查看和管理 Skill 与 MCP 的 Hub、分组与项目，按 Agent 启用。
+Skill Studio 命令行：管理 Skill 与 MCP 的 Hub、分组与项目，以及本机 Plugin Hub。
 与桌面应用共用同一份配置，改动会实时出现在 Skill Studio 里。
 
 用法：skill-studio [选项] <命令>
@@ -16,6 +16,7 @@ Skill Studio 命令行：查看和管理 Skill 与 MCP 的 Hub、分组与项目
   groups    分组：一组 skill，可为每个 Agent 单独启用，多个分组可以叠加
   projects  项目：把 skill 和分组写进项目目录，按 Agent 启用
   mcp       MCP：Hub 里的 MCP、MCP 分组与项目里的 MCP
+  plugins   Plugin Hub：本机原生插件、只读组件与原生生命周期管理
   settings  设置：查看与修改管理策略、目录和备份保留份数
   backups   备份：配置、删除的 skill、托管完整快照与 MCP 配置
   doctor    自检：配置能否读取、有没有未完成的写入、Agent 目录、需要检查的问题
@@ -1106,6 +1107,180 @@ MCP 分组：一组 MCP，可为每个 Agent 单独启用，多个分组可以�
   -y, --yes   确认删除这类不可撤销的操作
   -h, --help  显示帮助
 
+## skill-studio plugins
+
+Plugin Hub：本机原生插件、只读组件与原生生命周期管理
+
+用法：skill-studio plugins [选项] <命令>
+
+命令：
+  list       本机插件清单：原生声明、可读文件、组件与配置启停；不运行插件
+  show       查看插件来源、作用域和只读组件；同名时用列表里的 ID
+  inspect    只读检查标准或原生插件目录，不导入、安装或执行代码
+  agents     核对原生 CLI 的版本和命令能力；不代表已加载插件
+  recover    核对待处理写入，只完成管理记录，不修改 Agent（需要 --yes）
+  install    调用原生 CLI 安装到个人配置（需要 --yes）；不转换或拆包
+  enable     启用个人配置中的插件（需要 --yes；不授予额外信任）
+  disable    停用个人配置，保留包和数据（需要 --yes）
+  update     使用原生命令更新一个插件；Git 有本地改动时拒绝（需要 --yes）
+  uninstall  从个人配置移除插件；缓存和数据由原生工具处理（需要 --yes）
+  forget     仅清除 Studio 停用记录，不改原生配置或文件（需要 --yes）
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio plugins list
+
+本机插件清单：原生声明、可读文件、组件与配置启停；不运行插件
+
+用法：skill-studio plugins list [选项]
+
+选项：
+      --agent <AGENT>
+      --json           输出 JSON，给脚本和 Agent 解析
+  -q, --query <QUERY>
+  -y, --yes            确认删除这类不可撤销的操作
+  -h, --help           显示帮助
+
+## skill-studio plugins show
+
+查看插件来源、作用域和只读组件；同名时用列表里的 ID
+
+用法：skill-studio plugins show [选项] <PLUGIN>
+
+参数：
+  <PLUGIN>
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio plugins inspect
+
+只读检查标准或原生插件目录，不导入、安装或执行代码
+
+用法：skill-studio plugins inspect [选项] <PATH>
+
+参数：
+  <PATH>
+
+选项：
+      --agent <AGENT>
+      --json           输出 JSON，给脚本和 Agent 解析
+  -y, --yes            确认删除这类不可撤销的操作
+  -h, --help           显示帮助
+
+## skill-studio plugins agents
+
+核对原生 CLI 的版本和命令能力；不代表已加载插件
+
+用法：skill-studio plugins agents [选项]
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio plugins recover
+
+核对待处理写入，只完成管理记录，不修改 Agent（需要 --yes）
+
+用法：skill-studio plugins recover [选项]
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio plugins install
+
+调用原生 CLI 安装到个人配置（需要 --yes）；不转换或拆包
+
+用法：skill-studio plugins install [选项] --agent <AGENT> <SOURCE>
+
+参数：
+  <SOURCE>
+
+选项：
+      --agent <AGENT>
+      --json                       输出 JSON，给脚本和 Agent 解析
+      --marketplace <MARKETPLACE>  仅 Claude Code：先显式添加原生支持的市场来源
+  -y, --yes                        确认删除这类不可撤销的操作
+  -h, --help                       显示帮助
+
+## skill-studio plugins enable
+
+启用个人配置中的插件（需要 --yes；不授予额外信任）
+
+用法：skill-studio plugins enable [选项] <PLUGIN>
+
+参数：
+  <PLUGIN>
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio plugins disable
+
+停用个人配置，保留包和数据（需要 --yes）
+
+用法：skill-studio plugins disable [选项] <PLUGIN>
+
+参数：
+  <PLUGIN>
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio plugins update
+
+使用原生命令更新一个插件；Git 有本地改动时拒绝（需要 --yes）
+
+用法：skill-studio plugins update [选项] <PLUGIN>
+
+参数：
+  <PLUGIN>
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio plugins uninstall
+
+从个人配置移除插件；缓存和数据由原生工具处理（需要 --yes）
+
+用法：skill-studio plugins uninstall [选项] <PLUGIN>
+
+参数：
+  <PLUGIN>
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
+## skill-studio plugins forget
+
+仅清除 Studio 停用记录，不改原生配置或文件（需要 --yes）
+
+用法：skill-studio plugins forget [选项] <PLUGIN>
+
+参数：
+  <PLUGIN>
+
+选项：
+      --json  输出 JSON，给脚本和 Agent 解析
+  -y, --yes   确认删除这类不可撤销的操作
+  -h, --help  显示帮助
+
 ## skill-studio settings
 
 设置：查看与修改管理策略、目录和备份保留份数
@@ -1151,6 +1326,8 @@ MCP 分组：一组 MCP，可为每个 Agent 单独启用，多个分组可以�
           显示帮助
       --manage-mcp <MANAGE_MCP>
           MCP 管理总开关 true/false（需要 --yes） [possible values: true, false]
+      --manage-plugins <MANAGE_PLUGINS>
+          插件原生管理总开关 true/false；关闭不改 Agent 现有插件（需要 --yes） [possible values: true, false]
       --preserve-manual-skills <PRESERVE_MANUAL_SKILLS>
           是否保留手动 skill true/false（需要 --yes） [possible values: true, false]
       --cli-enabled <CLI_ENABLED>

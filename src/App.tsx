@@ -7,6 +7,7 @@ import {
   type ViewId,
 } from "@/lib/initialView";
 import { McpGroupsPage } from "@/pages/McpGroupsPage";
+import { PluginsPage } from "@/pages/PluginsPage";
 import { McpProjectsPage } from "@/pages/McpProjectsPage";
 import {
   TargetPicker,
@@ -71,15 +72,24 @@ function AppContent() {
   const requestNavigation = useNavigationGuard();
   const { data: settings } = useSettings();
   const mcpEnabled = settings ? settings.manageMcp !== false : false;
+  const local = target.id === "local";
   const queryClient = useQueryClient();
   useSkillsAutoRefresh();
 
   const [initError, setInitError] = useState<string | null>(null);
-  const [view, setView] = useState<ViewId>(() => readInitialView());
+  const [view, setView] = useState<ViewId>(() =>
+    initialResource(settings) === "plugins" ? "hub" : readInitialView(),
+  );
   const [resource, setResource] = useState<Resource>(() =>
     initialResource(settings),
   );
-  const activeResource = mcpEnabled ? resource : "skills";
+  const [requestedPluginId, setRequestedPluginId] = useState<string | null>(
+    null,
+  );
+  const activeResource =
+    (resource === "mcp" && !mcpEnabled) || (resource === "plugins" && !local)
+      ? "skills"
+      : resource;
   useEffect(() => {
     localStorage.setItem(RESOURCE_STORAGE_KEY, resource);
   }, [resource]);
@@ -95,10 +105,14 @@ function AppContent() {
   );
 
   useEffect(() => {
-    if (settings?.manageMcp !== false) return;
-    setResource("skills");
-    if (view === "install") setView("hub");
-  }, [settings?.manageMcp, view]);
+    if (
+      (resource === "mcp" && settings?.manageMcp === false) ||
+      (resource === "plugins" && !local)
+    ) {
+      setResource("skills");
+      if (view === "install") setView("hub");
+    }
+  }, [settings?.manageMcp, resource, local, view]);
   useEffect(() => {
     // 设置和安装是临时页，不记成下次启动的落脚点。
     if (view !== "settings" && view !== "install") {
@@ -117,13 +131,18 @@ function AppContent() {
   const titles = useMemo<Record<string, string>>(
     () => ({
       ...VIEW_TITLES,
-      hub: activeResource === "mcp" ? "MCP Hub" : "Skill Hub",
+      hub:
+        activeResource === "plugins"
+          ? "Plugin Hub"
+          : activeResource === "mcp"
+            ? "MCP Hub"
+            : "Skill Hub",
     }),
     [activeResource],
   );
 
-  const navItems = useMemo<NavItem<ViewId>[]>(
-    () => [
+  const navItems = useMemo<NavItem<ViewId>[]>(() => {
+    const items: NavItem<ViewId>[] = [
       {
         id: "hub",
         label: VIEW_TITLES.hub,
@@ -139,25 +158,42 @@ function AppContent() {
         label: VIEW_TITLES.projects,
         icon: <FolderGit2 className="h-5 w-5" />,
       },
-    ],
-    [],
-  );
+    ];
+    return activeResource === "plugins"
+      ? items.filter((item) => item.id === "hub")
+      : items;
+  }, [activeResource]);
 
   const refresh = () => {
     void queryClient.invalidateQueries();
   };
 
+  const openPlugin = (id: string) =>
+    requestNavigation(() => {
+      setRequestedPluginId(id);
+      setResource("plugins");
+      setView("hub");
+    });
   const content = () => {
+    if (activeResource === "plugins" && view !== "settings") {
+      return (
+        <PluginsPage
+          requestedPluginId={requestedPluginId}
+          onRequestConsumed={() => setRequestedPluginId(null)}
+        />
+      );
+    }
     if (view === "groups") {
       return activeResource === "mcp" ? <McpGroupsPage /> : <GroupsPage />;
     }
     switch (view) {
       case "hub":
         return activeResource === "mcp" ? (
-          <McpPage />
+          <McpPage onOpenPlugin={openPlugin} />
         ) : (
           <LibraryPage
             onAdd={() => requestNavigation(() => setView("install"))}
+            onOpenPlugin={openPlugin}
           />
         );
       case "projects":
@@ -174,6 +210,7 @@ function AppContent() {
         return (
           <LibraryPage
             onAdd={() => requestNavigation(() => setView("install"))}
+            onOpenPlugin={openPlugin}
           />
         );
     }
@@ -199,11 +236,23 @@ function AppContent() {
   };
 
   const switchResource = (next: Resource) => {
-    if (next === activeResource || (next === "mcp" && !mcpEnabled)) return;
+    if (
+      next === activeResource ||
+      (next === "mcp" && !mcpEnabled) ||
+      (next === "plugins" && !local)
+    )
+      return;
     requestNavigation(() => {
-      if (view === "install") setView("hub");
-      // The toggle sits left (Skill) → right (MCP); slide content the same way.
-      setPageSlide({ x: next === "mcp" ? 14 : -14, y: 0 });
+      if (
+        view === "install" ||
+        (next === "plugins" && (view === "groups" || view === "projects"))
+      )
+        setView("hub");
+      const order: Resource[] = ["skills", "mcp", "plugins"];
+      setPageSlide({
+        x: Math.sign(order.indexOf(next) - order.indexOf(activeResource)) * 14,
+        y: 0,
+      });
       setResource(next);
     });
   };
@@ -261,25 +310,41 @@ function AppContent() {
                 className="grid h-[var(--app-toolbar-height)] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 px-6"
               >
                 <div className="flex min-w-0 items-center gap-2">
-                  {mcpEnabled && (
+                  {(mcpEnabled || local) && (
                     <div
                       role="group"
                       aria-label="资源类型"
                       data-tauri-no-drag
                       className="flex shrink-0 items-center rounded-lg bg-foreground/[0.05] p-0.5"
                     >
-                      {(["skills", "mcp"] as const).map((option) => (
-                        <button
-                          key={option}
-                          type="button"
-                          aria-label={option === "skills" ? "Skill" : "MCP"}
-                          aria-pressed={activeResource === option}
-                          onClick={() => switchResource(option)}
-                          className={`rounded-md px-2.5 py-1 text-xs font-medium leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${activeResource === option ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                        >
-                          {option === "skills" ? "Skill" : "MCP"}
-                        </button>
-                      ))}
+                      {(["skills", "mcp", "plugins"] as const)
+                        .filter(
+                          (option) =>
+                            (option !== "mcp" || mcpEnabled) &&
+                            (option !== "plugins" || local),
+                        )
+                        .map((option) => (
+                          <button
+                            key={option}
+                            type="button"
+                            aria-label={
+                              option === "skills"
+                                ? "Skill"
+                                : option === "mcp"
+                                  ? "MCP"
+                                  : "Plugin"
+                            }
+                            aria-pressed={activeResource === option}
+                            onClick={() => switchResource(option)}
+                            className={`rounded-md px-2.5 py-1 text-xs font-medium leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${activeResource === option ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                          >
+                            {option === "skills"
+                              ? "Skill"
+                              : option === "mcp"
+                                ? "MCP"
+                                : "Plugin"}
+                          </button>
+                        ))}
                     </div>
                   )}
                 </div>

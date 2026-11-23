@@ -164,6 +164,8 @@ export function useSkillsAutoRefresh() {
       queryKeys.skillBackups,
       queryKeys.hubBackups,
       queryKeys.mcpStatus,
+      queryKeys.plugins,
+      queryKeys.pluginCli,
     ])
       void qc.invalidateQueries({ queryKey });
     // Agent 目录覆盖、退出管理都在配置里；不重新探测各 Agent 的命令行
@@ -172,6 +174,15 @@ export function useSkillsAutoRefresh() {
   useTauriEvent("mcp-changed", () => {
     if (target.id !== "local") return;
     void qc.invalidateQueries({ queryKey: queryKeys.mcpStatus });
+  });
+  useTauriEvent("plugins-changed", () => {
+    if (target.id !== "local") return;
+    for (const queryKey of [
+      queryKeys.plugins,
+      queryKeys.skills,
+      queryKeys.mcpStatus,
+    ])
+      void qc.invalidateQueries({ queryKey });
   });
   useEffect(() => {
     if (target.id === "local" || !target.connected) return;
@@ -267,6 +278,17 @@ export function useUpdateSettings() {
         ? ("none" as const)
         : ("active" as const);
       void qc.invalidateQueries({ queryKey: queryKeys.config, refetchType });
+      if (
+        patch.managePlugins !== undefined ||
+        patch.agentDirOverrides !== undefined ||
+        visibilityOnly
+      ) {
+        void qc.invalidateQueries({ queryKey: queryKeys.plugins, refetchType });
+        void qc.invalidateQueries({
+          queryKey: queryKeys.pluginCli,
+          refetchType,
+        });
+      }
       if (
         patch.manageMcp !== undefined ||
         patch.agentDirOverrides !== undefined ||

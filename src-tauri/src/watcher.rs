@@ -20,6 +20,7 @@ pub const SKILLS_CHANGED_EVENT: &str = "skills-changed";
 pub const CONFIG_CHANGED_EVENT: &str = "config-changed";
 /// MCP 托管状态变了（含本进程的写入：重取一次 MCP 状态无妨）
 pub const MCP_CHANGED_EVENT: &str = "mcp-changed";
+pub const PLUGINS_CHANGED_EVENT: &str = "plugins-changed";
 const DEBOUNCE: Duration = Duration::from_millis(400);
 const CHECK_CONFIG: Duration = Duration::from_secs(1);
 const RECONCILE: Duration = Duration::from_secs(30);
@@ -182,6 +183,7 @@ pub fn spawn(app: AppHandle, state: AppState) -> Option<SkillWatcher> {
         let mut checked_config = Instant::now();
         let mut hierarchy_changed = false;
         let mut catalog_seen = file_version(&catalog);
+        let mut plugins_seen = plugin_versions(&state);
         while !stopped.load(Ordering::Relaxed) {
             match rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(Ok(event)) if is_interesting(&event) => {
@@ -202,6 +204,11 @@ pub fn spawn(app: AppHandle, state: AppState) -> Option<SkillWatcher> {
                     if let Err(e) = app.emit(event, ()) {
                         log::debug!("推送 {event} 失败: {e}");
                     }
+                }
+                let current_plugins = plugin_versions(&state);
+                if current_plugins != plugins_seen {
+                    plugins_seen = current_plugins;
+                    let _ = app.emit(PLUGINS_CHANGED_EVENT, ());
                 }
                 checked_config = Instant::now();
             }
@@ -229,6 +236,48 @@ pub fn spawn(app: AppHandle, state: AppState) -> Option<SkillWatcher> {
         }
     });
     Some(SkillWatcher { stop })
+}
+
+fn plugin_versions(state: &AppState) -> Vec<(PathBuf, FileVersion)> {
+    let config = state.config();
+    let mut files = vec![
+        state.studio().store().dir().join("plugins/catalog.json"),
+        state
+            .studio()
+            .store()
+            .dir()
+            .join("plugins/pending-toggle.json"),
+    ];
+    for agent in AGENTS {
+        if config
+            .settings
+            .disabled_agents
+            .iter()
+            .any(|id| id == agent.id)
+        {
+            continue;
+        }
+        let root = agent.resolved_config_dir(&config.settings.agent_dir_overrides);
+        for name in [
+            "settings.json",
+            "config.toml",
+            "opencode.json",
+            "opencode.jsonc",
+            "package.json",
+            "plugins/installed_plugins.json",
+            "plugins/known_marketplaces.json",
+            "npm/package-lock.json",
+        ] {
+            files.push(root.join(name));
+        }
+    }
+    files
+        .into_iter()
+        .map(|path| {
+            let version = file_version(&path);
+            (path, version)
+        })
+        .collect()
 }
 
 fn is_interesting(event: &notify::Event) -> bool {
@@ -259,6 +308,24 @@ fn directory_structure_changed(event: &notify::Event, watched: &HashSet<PathBuf>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugin_configuration_edits_change_only_the_plugin_file_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = skill_studio_core::services::store::Store::new(temp.path().join("studio"));
+        let mut config = skill_studio_core::models::config::AppConfig::default();
+        config.settings.agent_dir_overrides = AGENTS
+            .iter()
+            .map(|agent| (agent.id.to_string(), temp.path().join(agent.id)))
+            .collect();
+        skill_studio_core::fs::atomic::write_json_file(&store.config_path(), &config).unwrap();
+        let state = AppState::read_only(store).unwrap();
+        let before = plugin_versions(&state);
+        let path = temp.path().join("pi/settings.json");
+        skill_studio_core::fs::atomic::write_text_file(&path, "{\"packages\":[]}").unwrap();
+        assert_ne!(before, plugin_versions(&state));
+        assert!(!temp.path().join("studio/plugins").exists());
+    }
 
     #[test]
     fn content_edits_do_not_rebuild_directory_subscriptions_but_structure_changes_do() {

@@ -27,6 +27,7 @@ fn set(input: &SettingsSet, ctx: &Ctx) -> Result<Report, CliError> {
     let before = settings::get_settings(&state)?;
     let mut patch = SettingsPatch {
         manage_mcp: input.manage_mcp,
+        manage_plugins: input.manage_plugins,
         preserve_manual_skills: input.preserve_manual_skills,
         cli_skill_enabled: input.cli_enabled,
         default_link_mode: input.default_link_mode.map(Into::into),
@@ -92,6 +93,7 @@ fn set(input: &SettingsSet, ctx: &Ctx) -> Result<Report, CliError> {
     let isolated = patch.managed_agent.is_some()
         || patch.preserve_manual_skills.is_some()
         || patch.manage_mcp.is_some()
+        || patch.manage_plugins.is_some()
         || patch.cli_skill_enabled.is_some();
     if isolated && fields.len() > 1 {
         return Err(CliError::usage(

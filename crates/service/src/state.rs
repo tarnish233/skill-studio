@@ -378,6 +378,17 @@ impl AppState {
         })
     }
 
+    /// Native CLI IO holds the cross-process lock, never the in-memory read/write lock.
+    pub(crate) fn lock_native_config(&self) -> Result<(ConfigLock, AppConfig)> {
+        self.ensure_writable()?;
+        let lock = self.studio.store().lock_exclusive(self.lock_wait)?;
+        let config = self.studio.store().read()?.unwrap_or_default();
+        if self.interactive_cli && !config.settings.cli_skill_enabled {
+            return Err(Error::invalid("命令行工具已在 Skill Studio 设置中关闭"));
+        }
+        Ok((lock, config))
+    }
+
     /// 在写锁内改配置，成功后立刻落盘。
     ///
     /// 落盘失败会把内存里的改动一起报错返回 —— 让用户知道这次改动没有持久化，

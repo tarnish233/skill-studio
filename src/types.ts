@@ -205,6 +205,8 @@ export interface HubBackup {
 export interface Settings {
   disabledAgents?: string[];
   manageMcp?: boolean;
+  /** Native plugin writes are opt-in; inventory is always read-only. */
+  managePlugins?: boolean;
   showCodexBuiltinMcp?: boolean;
   cliSkillEnabled?: boolean;
   /** 关闭时因用户修改或现有引用而保留的内置 skill（未持久化） */
@@ -270,6 +272,7 @@ export interface LinkReport {
 export interface SettingsPatch {
   disabledAgents?: string[];
   manageMcp?: boolean;
+  managePlugins?: boolean;
   showCodexBuiltinMcp?: boolean;
   cliSkillEnabled?: boolean;
   defaultLinkMode?: LinkMode;

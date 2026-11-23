@@ -9,13 +9,15 @@ use clap::{ArgAction, CommandFactory, Parser, Subcommand};
 use crate::error::CliError;
 
 mod management;
+mod plugins;
 pub use management::{
     BackupKind, BackupsCommand, LinkChoice, McpAdvanced, ProjectSkillsCommand, SettingsCommand,
     SettingsSet,
 };
+pub use plugins::PluginsCommand;
 
 const ABOUT: &str =
-    "Skill Studio 命令行：查看和管理 Skill 与 MCP 的 Hub、分组与项目，按 Agent 启用。\n\
+    "Skill Studio 命令行：管理 Skill 与 MCP 的 Hub、分组与项目，以及本机 Plugin Hub。\n\
                      与桌面应用共用同一份配置，改动会实时出现在 Skill Studio 里。";
 
 const AFTER: &str = "\
@@ -78,6 +80,9 @@ pub enum Command {
     /// MCP：Hub 里的 MCP、MCP 分组与项目里的 MCP
     #[command(subcommand, arg_required_else_help = true)]
     Mcp(McpCommand),
+    /// Plugin Hub：本机原生插件、只读组件与原生生命周期管理
+    #[command(subcommand, arg_required_else_help = true)]
+    Plugins(PluginsCommand),
     /// 设置：查看与修改管理策略、目录和备份保留份数
     #[command(subcommand, arg_required_else_help = true)]
     Settings(SettingsCommand),
@@ -674,6 +679,13 @@ impl Command {
                 ProjectsCommand::List
                     | ProjectsCommand::Show { .. }
                     | ProjectsCommand::Skills(ProjectSkillsCommand::List { .. })
+            ),
+            Command::Plugins(c) => !matches!(
+                c,
+                PluginsCommand::List { .. }
+                    | PluginsCommand::Show { .. }
+                    | PluginsCommand::Inspect { .. }
+                    | PluginsCommand::Agents
             ),
             Command::Settings(c) => matches!(c, SettingsCommand::Set(_)),
             Command::Backups(c) => !matches!(c, BackupsCommand::List { .. }),

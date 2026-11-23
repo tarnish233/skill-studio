@@ -152,6 +152,12 @@ const separateRoutes = new Set([
   "get_app_version",
   "get_cli_info",
   "open_skill_document",
+  // Plugin Hub is deliberately not exposed through the SSH serve protocol yet.
+  "scan_plugins",
+  "probe_plugin_cli",
+  "inspect_plugin",
+  "plugin_operation",
+  "recover_plugin_write",
   "pick_directory",
   "reveal_path",
 ]);

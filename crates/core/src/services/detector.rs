@@ -64,6 +64,22 @@ const EXE_SUFFIXES: &[&str] = &[".cmd", ".exe", ".bat", ""];
 #[cfg(not(windows))]
 const EXE_SUFFIXES: &[&str] = &[""];
 
+/// Resolve a native CLI without running it; plugin operations must use the same GUI search roots.
+pub fn find_cli(command: &str) -> Option<PathBuf> {
+    let mut directories: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect())
+        .unwrap_or_default();
+    directories.extend(extra_search_dirs());
+    directories
+        .into_iter()
+        .flat_map(|dir| {
+            EXE_SUFFIXES
+                .iter()
+                .map(move |suffix| dir.join(format!("{command}{suffix}")))
+        })
+        .find(|path| path.is_file())
+}
+
 /// 跑 `<cmd> --version`，带超时。
 fn probe_version(program: &std::path::Path) -> CliProbe {
     let mut child = match Command::new(program)

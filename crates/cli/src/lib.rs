@@ -326,7 +326,11 @@ fn logged(args: &[OsString]) -> Vec<String> {
                 // clap 也接受短选项紧跟值：-eTOKEN=…、-HAuthorization: …、-e=TOKEN=…
                 _ => match attached(&arg) {
                     Some((flag, value)) => out.push(format!("{flag}{value}")),
-                    None => out.push(arg),
+                    None => out.push(if arg.contains("://") {
+                        redact::redact_url(&arg)
+                    } else {
+                        arg
+                    }),
                 },
             },
         }

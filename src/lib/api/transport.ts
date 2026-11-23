@@ -75,6 +75,18 @@ export async function invoke<T>(
   params: Record<string, unknown> = {},
 ): Promise<T> {
   const destination = target;
+  if (
+    destination.id !== "local" &&
+    [
+      "scan_plugins",
+      "probe_plugin_cli",
+      "inspect_plugin",
+      "plugin_operation",
+      "recover_plugin_write",
+    ].includes(method)
+  ) {
+    throw new Error("Plugin Hub 首版仅支持本机，不读取本机数据冒充服务器状态");
+  }
   const desktop = [
     "get_app_version",
     "get_cli_info",

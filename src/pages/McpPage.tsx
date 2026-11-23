@@ -1,4 +1,5 @@
 import { usePageReset } from "@/components/common/PageReset";
+import { PluginComponents } from "@/components/plugins/PluginDetails";
 import {
   SummaryAction,
   SummaryBar,
@@ -86,15 +87,17 @@ import {
  * MCP Hub：点卡片在页内展开这个服务的整页（连接、接入位置、可直接编辑的服务配置），
  * 「添加 MCP」同样在页内展开；标题栏与项目、分组详情同一套。
  */
-export function McpPage() {
+export function McpPage({
+  onOpenPlugin,
+}: { onOpenPlugin?: (id: string) => void } = {}) {
   return (
     <NavigationGuard>
-      <McpHub />
+      <McpHub onOpenPlugin={onOpenPlugin} />
     </NavigationGuard>
   );
 }
 /** 本机与服务器同一个页面；服务器上只有 Studio 网关不可用（见 REMOTE_GATEWAY_REASON） */
-function McpHub() {
+function McpHub({ onOpenPlugin }: { onOpenPlugin?: (id: string) => void }) {
   const requestNavigation = useNavigationGuard();
   const remote = useTarget().id !== "local";
   const { data: settings } = useSettings();
@@ -933,6 +936,7 @@ function McpHub() {
               没有匹配的 MCP
             </p>
           )}
+          <PluginComponents kind="mcp" onOpenPlugin={onOpenPlugin} />
         </div>
       </DetailTransition>
       {dialogs}

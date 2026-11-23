@@ -36,6 +36,9 @@ pub struct SettingsSet {
     /// MCP 管理总开关 true/false（需要 --yes）
     #[arg(long)]
     pub manage_mcp: Option<bool>,
+    /// 插件原生管理总开关 true/false；关闭不改 Agent 现有插件（需要 --yes）
+    #[arg(long)]
+    pub manage_plugins: Option<bool>,
     /// 是否保留手动 skill true/false（需要 --yes）
     #[arg(long)]
     pub preserve_manual_skills: Option<bool>,

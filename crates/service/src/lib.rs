@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod groups;
 pub mod mcp;
+pub mod plugins;
 pub mod projects;
 pub mod settings;
 pub mod skills;

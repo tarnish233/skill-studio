@@ -8,6 +8,7 @@ import {
   type SummaryOption,
 } from "@/components/common/SummaryBar";
 import { SkillVariantDetails } from "@/components/common/SkillVariantDetails";
+import { PluginComponents } from "@/components/plugins/PluginDetails";
 import { useSkillPreview } from "@/components/common/SkillPreview";
 import {
   SkillBackups,
@@ -95,7 +96,10 @@ function compactSearchText(value: string) {
     .replace(/[\s._/\\-]+/g, "");
 }
 
-export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
+export function LibraryPage({
+  onAdd,
+  onOpenPlugin,
+}: { onAdd?: () => void; onOpenPlugin?: (id: string) => void } = {}) {
   const { data: skills = [], isLoading } = useSkills();
   const { data: agents = [] } = useAgents();
   const { data: settings } = useSettings();
@@ -291,6 +295,7 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
       <>
         {tools}
         {summary}
+        <PluginComponents kind="skill" onOpenPlugin={onOpenPlugin} />
         <EmptyState
           icon={SkillStudioIcon}
           title="Skill Hub 还没有发现 skill"
@@ -583,6 +588,7 @@ export function LibraryPage({ onAdd }: { onAdd?: () => void } = {}) {
             </div>
           </details>
         )}
+        <PluginComponents kind="skill" onOpenPlugin={onOpenPlugin} />
       </div>
 
       <Dialog

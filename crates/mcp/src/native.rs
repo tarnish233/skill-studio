@@ -264,7 +264,7 @@ pub fn globally_disabled(doc: &Value, key: &str, agent: &str) -> bool {
             .as_array()
             .is_some_and(|names| names.iter().any(|name| name.as_str() == Some(key)))
 }
-fn unique_properties(object: &jsonc_parser::cst::CstObject) -> Result<()> {
+pub fn unique_properties(object: &jsonc_parser::cst::CstObject) -> Result<()> {
     let mut names = std::collections::HashSet::new();
     for property in object.properties() {
         if !names.insert(property.decoded_name()) {
@@ -273,7 +273,7 @@ fn unique_properties(object: &jsonc_parser::cst::CstObject) -> Result<()> {
     }
     Ok(())
 }
-fn cst_value(value: &Value) -> jsonc_parser::cst::CstInputValue {
+pub fn cst_value(value: &Value) -> jsonc_parser::cst::CstInputValue {
     use jsonc_parser::cst::CstInputValue as C;
     match value {
         Value::Null => C::Null,

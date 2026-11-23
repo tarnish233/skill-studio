@@ -1,6 +1,7 @@
 import {
   ServerSettings,
   ServerConnectionSetting,
+  useTarget,
 } from "@/components/targets/TargetProvider";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
@@ -24,6 +25,7 @@ import {
   FolderCog,
   Settings2,
   Plug,
+  Package,
   Power,
   SquareTerminal,
   Eye,
@@ -71,6 +73,7 @@ type SettingsTab =
  */
 export function SettingsPage() {
   const { data: settings } = useSettings();
+  const local = useTarget().id === "local";
   const { data: agents = [] } = useAgents();
   const { data: backups = [] } = useBackups();
   const { data: version } = useAppVersion();
@@ -216,6 +219,24 @@ export function SettingsPage() {
                 </SettingCard>
               )}
             </SettingsSection>
+            {local && (
+              <SettingsSection title="插件" icon={<Package />}>
+                <SettingCard
+                  title={<label htmlFor="manage-plugins">启用插件管理</label>}
+                  description="默认只读扫描。开启后允许本机 Claude Code、OpenCode、Pi 的原生插件操作；关闭只阻止 Studio 写入，不启停、卸载或迁移已有插件。Codex、Grok、DeepSeek Harness 插件首版只读。"
+                  icon={<Power />}
+                >
+                  <Switch
+                    id="manage-plugins"
+                    checked={settings.managePlugins ?? false}
+                    disabled={update.isPending}
+                    onCheckedChange={(value) =>
+                      update.mutate({ managePlugins: value })
+                    }
+                  />
+                </SettingCard>
+              </SettingsSection>
+            )}
             <SettingsSection
               title="命令行与内置 skill"
               icon={<SquareTerminal />}

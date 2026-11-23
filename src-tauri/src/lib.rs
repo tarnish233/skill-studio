@@ -72,6 +72,12 @@ pub fn run() {
             commands::get_cli_info,
             // agent
             commands::list_agents,
+            // Plugin Hub is local-only in this version, not an SSH management route.
+            commands::scan_plugins,
+            commands::probe_plugin_cli,
+            commands::inspect_plugin,
+            commands::plugin_operation,
+            commands::recover_plugin_write,
             // skill
             commands::scan_skills,
             commands::read_skill_document,

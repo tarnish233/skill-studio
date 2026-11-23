@@ -6,6 +6,8 @@ export const queryKeys = {
   agents: ["agents"] as const,
   agentProbe: ["agents", "cli-probe"] as const,
   skills: ["skills"] as const,
+  plugins: ["plugins", "local"] as const,
+  pluginCli: ["plugins-cli", "local"] as const,
   groups: ["groups"] as const,
   projects: ["projects"] as const,
   settings: ["settings"] as const,

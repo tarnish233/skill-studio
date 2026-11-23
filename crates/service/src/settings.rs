@@ -53,6 +53,7 @@ pub struct SettingsPatch {
     pub managed_agent: Option<ManagedAgentPatch>,
     pub show_codex_builtin_mcp: Option<bool>,
     pub manage_mcp: Option<bool>,
+    pub manage_plugins: Option<bool>,
     pub cli_skill_enabled: Option<bool>,
     pub default_link_mode: Option<LinkMode>,
     pub preserve_manual_skills: Option<bool>,
@@ -115,6 +116,7 @@ fn update_settings_with_builtin_snapshot(
             "保留手动 skill 策略",
         ),
         (patch.manage_mcp.is_some(), "MCP 管理开关"),
+        (patch.manage_plugins.is_some(), "插件管理开关"),
         (patch.cli_skill_enabled.is_some(), "CLI 与内置 skill 开关"),
     ] {
         if present && count > 1 {
@@ -166,6 +168,9 @@ fn update_settings_with_builtin_snapshot(
                 || patch.agent_dir_updates.is_some();
             let old_hub = studio.store().hub_dir(config);
             let s = &mut config.settings;
+            if let Some(enabled) = patch.manage_plugins {
+                s.manage_plugins = enabled;
+            }
             if let Some(show) = patch.show_codex_builtin_mcp {
                 s.show_codex_builtin_mcp = show;
             }

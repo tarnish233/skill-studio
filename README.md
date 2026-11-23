@@ -38,6 +38,7 @@ AppImage 需先在文件属性中允许作为程序执行，再双击打开。
 ## 功能
 
 - **Skill Hub**：集中查看、搜索和托管 Skills，预览内容与 Token 估算；支持在线搜索安装和本地目录导入。
+- **Plugin Hub**：本机只读识别原生与 Agent Plugins v1 包，关联展示包内 Skill/MCP；明确开启管理后可对已验证版本的 Claude Code、OpenCode、Pi 个人插件做安装、启用、更新、卸载，Codex、Grok、DeepSeek Harness 只读。不运行插件、不转换格式、不迁移或拆包。[使用说明](docs/plugins.md)
 - **MCP Hub**：自动扫描 Claude Code、Codex、OpenCode v2、Pi（原生 MCP，0.99.0+）与 Grok Build 配置，支持表单、JSON／TOML 和模板添加，一次同步多个 Agent；直连管理与共享授权网关可独立使用。[使用说明](docs/mcp.md)
 - **Agent 管理**：为 Claude Code、Codex、OpenCode、Pi、Grok Build 和 DeepSeek Harness 配置 Skills，按使用场景分组，一键启用或停用。
 - **项目配置**：为每个项目选择 Agent 和 Skills，让不同项目使用各自的配置。
@@ -116,6 +117,13 @@ skill-studio mcp groups enable 常用 --agent claude,codex
 skill-studio mcp projects add . --mcp context7 --claude local   # Claude Code 写到只给自己用的项目配置
 skill-studio mcp set github --env GITHUB_TOKEN=新的令牌            # 改完用 mcp groups apply 写进已启用的 Agent
 skill-studio mcp set github --cwd ~/work/app                   # 完整定义可用 --config 替换
+skill-studio plugins list --json                             # 原生插件声明、作用域与只读组件
+skill-studio plugins inspect /absolute/plugin --agent pi     # 不安装或执行代码
+skill-studio settings set --manage-plugins true --yes         # 只允许后续明确操作，不自动启用
+skill-studio plugins install npm:@example/pi-tools --agent pi --yes # 调用原生 CLI 安装到个人配置
+skill-studio plugins disable <列表中的ID> --yes                # 个人配置停用，保留原生包
+skill-studio plugins recover --yes                           # 只核对并完成管理记录
+
 skill-studio mcp search context7 --json                       # 官方 Registry，支持 --cursor
 skill-studio mcp test context7 --timeout 30 --json             # 一次性握手与工具列表验证
 ```

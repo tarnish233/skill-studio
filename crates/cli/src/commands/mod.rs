@@ -2,6 +2,7 @@ mod backups;
 mod doctor;
 mod groups;
 mod mcp;
+mod plugins;
 mod project_skills;
 mod projects;
 mod settings;
@@ -81,6 +82,7 @@ pub fn run(command: &Command, ctx: &Ctx) -> Result<Report, CliError> {
         Command::Groups(command) => groups::run(command, ctx),
         Command::Projects(command) => projects::run(command, ctx),
         Command::Mcp(command) => mcp::run(command, ctx),
+        Command::Plugins(command) => plugins::run(command, ctx),
         Command::Doctor => doctor::run(ctx),
         Command::Settings(command) => settings::run(command, ctx),
         Command::Backups(command) => backups::run(command, ctx),

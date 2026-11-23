@@ -1,6 +1,6 @@
 ---
 name: skill-studio
-description: 用 Skill Studio 命令行管理 Skill 与 MCP：安装或托管到 Hub、管理备份与设置、按分组或项目部署到 Claude Code、Codex、OpenCode、Pi、Grok、DeepSeek Harness，检查待应用修改与配置冲突。
+description: 用 Skill Studio 命令行管理 Skill、MCP 与本机 Plugin Hub：安装或托管到 Hub、管理备份与设置、按分组或项目部署到 Claude Code、Codex、OpenCode、Pi、Grok、DeepSeek Harness，检查待应用修改与配置冲突；插件只做安装、启停、更新、卸载。
 ---
 
 # Skill Studio
@@ -102,6 +102,30 @@ skill-studio mcp test context7 --timeout 30 --json
 网关测试须已有本机网关；CLI 不自动启动网关或打开授权。直连认证由 Agent 完成。
 SSE 测试仍由 Agent 完成。服务器仍只支持 Agent 直连；网关启停/OAuth 由桌面处理。
 密钥在输出和日志中隐藏；`--env/--config` 仍可能进入 shell 历史，避免放入分享记录。
+
+## 本机 Plugin Hub
+
+```bash
+skill-studio plugins list --json
+skill-studio plugins show <具体ID> --json
+skill-studio plugins inspect /绝对路径 --agent pi --json
+skill-studio plugins agents --json
+skill-studio settings set --manage-plugins true --yes
+skill-studio plugins install npm:@example/pi-tools --agent pi --yes
+skill-studio plugins install name@marketplace --agent claude --marketplace owner/repo --yes
+skill-studio plugins disable <ID> --yes
+skill-studio plugins enable <ID> --yes
+skill-studio plugins update <ID> --yes
+skill-studio plugins uninstall <ID> --yes
+skill-studio plugins forget <ID> --yes
+skill-studio plugins recover --yes
+```
+
+默认只读；开启管理不改变已有插件。只管理已验证版本的 Claude Code、OpenCode、Pi 个人配置，动作限于安装、启停、更新、卸载；其他现有 Agent 插件只读，不做插件分组、项目和 SSH 写入。原生安装/启用/更新可能执行本机代码，先说明影响并取得授权，再用 `--yes`；不跳过原生交互信任，不自动重载会话。
+
+插件保持原生完整包，不迁移真身、不拆包；组件只读关联，不能当独立 Skill 再部署。完整插件目录不能收录为 Skill。同名和多作用域按 ID 选择。OpenCode 启停只撤回/还原精确包声明，不猜插件 ID；Pi 停用保留包并记录原资源筛选。
+
+外部配置变化会拒绝覆盖。停用记录冲突时 `forget` 仅清 Studio 记录，原生配置不变；`recover` 仅按哈希完成待处理记录，不改 Agent。快照在 `~/.skill-studio/plugins/backups/`，不能恢复卸载的插件、运行数据或认证。CLI `pending: true` 不是安装/启用成功，插件操作不使用 Skill/MCP 的 `apply` 重试。
 
 ## 设置与备份
 

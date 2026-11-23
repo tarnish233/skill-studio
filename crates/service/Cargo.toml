@@ -12,6 +12,11 @@ serde_json.workspace = true
 log.workspace = true
 anyhow.workspace = true
 uuid = { version = "1.11", features = ["v4"] }
+sha2.workspace = true
+url = "2"
+jsonc-parser = { version = "0.33.2", features = ["cst", "serde"] }
+tokio = { version = "1", features = ["rt", "time", "process", "io-util", "signal"] }
+process-wrap = { version = "10", features = ["tokio1"] }
 [dev-dependencies]
 tempfile.workspace = true
 serial_test = "3"

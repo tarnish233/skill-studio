@@ -54,6 +54,10 @@ function defaultResult(command: string): unknown {
     case "list_backups":
     case "list_hub_backups":
       return [];
+    case "scan_plugins":
+      return { plugins: [], warnings: [], pending: false };
+    case "probe_plugin_cli":
+      return [];
     case "get_settings":
       return defaultSettings();
     case "get_app_version":
@@ -177,6 +181,7 @@ export function makeProject(
 export function defaultSettings(): Settings {
   return {
     manageMcp: true,
+    managePlugins: false,
     cliSkillEnabled: true,
     defaultLinkMode: "auto",
     language: "zh",
