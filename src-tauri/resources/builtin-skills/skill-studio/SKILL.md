@@ -5,11 +5,9 @@ description: 用 Skill Studio 命令行管理 Skill、MCP 与本机 Plugin Hub�
 
 # Skill Studio
 
-三层：**Hub（有什么）**、**分组**、**项目（给谁用）**。桌面和 CLI 共用
-`~/.skill-studio/`，改动会实时刷新。收录与托管都迁移原件；原入口仅留软链接，不额外启用 Agent。
+三层：**Hub（有什么）**、**分组**、**项目（给谁用）**。桌面和 CLI 共用 `~/.skill-studio/`，改动会实时刷新。收录与托管都迁移原件；原入口仅留软链接，不额外启用 Agent。
 
-**先查看，再修改。** 不要手改 Studio 或 Agent 的配置，也不要直接搬删 Skill：
-那会绕过配置锁、备份、来源记录和冲突检查。找不到命令时，在桌面设置里查看命令行位置。
+**先查看，再修改。** 不要手改 Studio 或 Agent 的配置，也不要直接搬删 Skill：那会绕过配置锁、备份、来源记录和冲突检查。找不到命令时，在桌面设置里查看命令行位置。
 
 ## 先看现状
 
@@ -26,8 +24,7 @@ skill-studio settings show
 skill-studio backups list                 # config / skill / hub / mcp 分别列出
 ```
 
-加 `--json` 给脚本解析，错误也有 `error.code/message/hint/candidates`。
-同名时不要猜：Skill 文件操作需按候选路径或 ID 选具体来源。
+加 `--json` 给脚本解析，错误也有 `error.code/message/hint/candidates`。 同名时不要猜：Skill 文件操作需按候选路径或 ID 选具体来源。
 DeepSeek Harness 的 Agent ID 是 `deepseek-harness`（可写 `dsh`）：只管理默认目录包，不管理平铺 `.md`、自定义 Profile Provider 或 MCP。
 专属根 `DSH_HOME/skills`、共享扫描根 `DSH_AGENTS_HOME/skills`；默认是 `~/.dsh/skills`、`~/.agents/skills`。项目写 `.dsh/skills`，须选择最近 Git 仓库根；部署前校验 Harness frontmatter，不改调用标志。
 
@@ -44,13 +41,8 @@ skill-studio skills delete ~/.claude/skills/my-skill --yes
 skill-studio skills prune --yes           # 清理失效引用，不删除文件
 ```
 
-`import`、`adopt` 与项目收录均将唯一真身迁入 Hub，原位置（含共享根）仅留软链接，失败回滚，不回退复制。
-策略挂起不阻止迁移，原有启停状态不变；部署副本不能当原件收录。分组和项目部署仍可复制。
-先用 `skills show <路径或ID> --json` 核对来源和 `policySuspended`；安装器注释不是 External 分类或挂起原因。
-被拒绝后按真实原因处理，不猜桌面解除入口、不换 ID 重试、不以复制替代托管；错误解释须明确纠正。
-`release` 将真身还原到原位置；退出 Agent 管理只撤部署和恢复策略，不复制还原原件。
-删除按列表中的具体来源操作，不跟随列表外的末级软链接；目录别名仍可用。
-普通目录保留备份；项目列表里的软链接只移除链接、不删除目标。
+`import`、`adopt` 与项目收录均将唯一真身迁入 Hub，原位置（含共享根）仅留软链接，失败回滚，不回退复制。 策略挂起不阻止迁移，原有启停状态不变；部署副本不能当原件收录。分组和项目部署仍可复制。 先用 `skills show <路径或ID> --json` 核对来源和 `policySuspended`；安装器注释不是 External 分类或挂起原因。
+被拒绝后按真实原因处理，不猜桌面解除入口、不换 ID 重试、不以复制替代托管；错误解释须明确纠正。 `release` 将真身还原到原位置；退出 Agent 管理只撤部署和恢复策略，不复制还原原件。 删除按列表中的具体来源操作，不跟随列表外的末级软链接；目录别名仍可用。 普通目录保留备份；项目列表里的软链接只移除链接、不删除目标。
 
 装完按需选分组或项目：
 
@@ -77,8 +69,7 @@ skill-studio projects skills adopt app ./原路径 --yes
 skill-studio projects skills delete app ./原路径 --yes
 ```
 
-原路径以列表为准。项目 `adopt` 与全局托管相同；被移出目录停用的原件须先恢复，不从备份复制收录。
-部署副本不能逐项删改，须从项目/分组移出成员或停用。
+原路径以列表为准。项目 `adopt` 与全局托管相同；被移出目录停用的原件须先恢复，不从备份复制收录。 部署副本不能逐项删改，须从项目/分组移出成员或停用。
 
 ## 管理 MCP
 
@@ -96,36 +87,27 @@ skill-studio mcp set context7 --config '{"type":"http","url":"https://mcp.contex
 skill-studio mcp test context7 --timeout 30 --json
 ```
 
-搜索返回 `items/nextCursor` 和可用安装命令；需手动配置的候选不会猜参数。
-完整编辑支持类型、直连/网关模式、工作目录、扩展字段、Client ID 与 scopes，见帮助。
-连接测试有总超时，只验证 Studio 的握手/工具列表，不代表 Agent 已重载或登录。
-网关测试须已有本机网关；CLI 不自动启动网关或打开授权。直连认证由 Agent 完成。
-SSE 测试仍由 Agent 完成。服务器仍只支持 Agent 直连；网关启停/OAuth 由桌面处理。
-密钥在输出和日志中隐藏；`--env/--config` 仍可能进入 shell 历史，避免放入分享记录。
+搜索返回 `items/nextCursor` 和可用安装命令；需手动配置的候选不会猜参数。 完整编辑支持类型、直连/网关模式、工作目录、扩展字段、Client ID 与 scopes，见帮助。 连接测试有总超时，只验证 Studio 的握手/工具列表，不代表 Agent 已重载或登录。 网关测试须已有本机网关；CLI 不自动启动网关或打开授权。直连认证由 Agent 完成。
+SSE 测试仍由 Agent 完成。服务器仍只支持 Agent 直连；网关启停/OAuth 由桌面处理。 密钥在输出和日志中隐藏；`--env/--config` 仍可能进入 shell 历史，避免放入分享记录。
 
 ## 本机 Plugin Hub
 
 ```bash
-skill-studio plugins list --json
+skill-studio plugins list --json              # 所有 Agent 的本机插件
 skill-studio plugins show <具体ID> --json
 skill-studio plugins inspect /绝对路径 --agent pi --json
 skill-studio plugins agents --json
 skill-studio settings set --manage-plugins true --yes
 skill-studio plugins install npm:@example/pi-tools --agent pi --yes
 skill-studio plugins install name@marketplace --agent claude --marketplace owner/repo --yes
-skill-studio plugins disable <ID> --yes
-skill-studio plugins enable <ID> --yes
-skill-studio plugins update <ID> --yes
-skill-studio plugins uninstall <ID> --yes
-skill-studio plugins forget <ID> --yes
-skill-studio plugins recover --yes
+skill-studio plugins disable|enable|update|uninstall <ID> --yes
+skill-studio plugins forget <ID> --yes        # 仅清停用记录
+skill-studio plugins recover --yes            # 仅按哈希完成待处理记录
 ```
 
-默认只读；开启管理不改变已有插件。只管理已验证版本的 Claude Code、OpenCode、Pi 个人配置，动作限于安装、启停、更新、卸载；其他现有 Agent 插件只读，不做插件分组、项目和 SSH 写入。原生安装/启用/更新可能执行本机代码，先说明影响并取得授权，再用 `--yes`；不跳过原生交互信任，不自动重载会话。
+默认只读；开启管理不改变已有插件。只管理已验证版本的 Claude Code、OpenCode、Pi 个人配置，动作限于安装、启停、更新、卸载；其他 Agent 插件只读，不做插件分组、项目和 SSH 写入。原生操作可能执行本机代码，先说明影响取得授权再用 `--yes`；不跳过原生交互信任，不自动重载会话。同名和多作用域按 ID 选择。外部配置变化会拒绝覆盖；`CLI pending: true` 不是安装成功。
 
-插件保持原生完整包，不迁移真身、不拆包；组件只读关联，不能当独立 Skill 再部署。完整插件目录不能收录为 Skill。同名和多作用域按 ID 选择。OpenCode 启停只撤回/还原精确包声明，不猜插件 ID；Pi 停用保留包并记录原资源筛选。
-
-外部配置变化会拒绝覆盖。停用记录冲突时 `forget` 仅清 Studio 记录，原生配置不变；`recover` 仅按哈希完成待处理记录，不改 Agent。快照在 `~/.skill-studio/plugins/backups/`，不能恢复卸载的插件、运行数据或认证。CLI `pending: true` 不是安装/启用成功，插件操作不使用 Skill/MCP 的 `apply` 重试。
+插件保持原生完整包，不迁移真身、不拆包；组件只读关联，不能当独立 Skill 部署，完整插件目录不能收录为 Skill。OpenCode 启停只撤回/还原精确包声明，不猜插件 ID；Pi 停用保留包并记录原资源筛选。快照在 `~/.skill-studio/plugins/backups/`，不能恢复卸载的插件、运行数据或认证。
 
 ## 设置与备份
 
@@ -143,10 +125,7 @@ skill-studio backups delete hub --unused --yes
 skill-studio backups delete mcp --unrestorable --yes
 ```
 
-管理开关和手动 Skill 策略必须分别保存；目录不自动迁移，使用中的目录不可改。
-CLI 关闭后不能通过 CLI 重新开启，必须回桌面。恢复网关接入须先在桌面开启管理。
-备份类型：`config` 配置、`skill` 删除文件、`hub` 托管完整快照、`mcp` MCP 配置。
-恢复不会覆盖同名文件或外部修改；使用中的完整快照不可删、不能单独恢复。
+管理开关和手动 Skill 策略必须分别保存；目录不自动迁移，使用中的目录不可改。 CLI 关闭后不能通过 CLI 重新开启，必须回桌面。恢复网关接入须先在桌面开启管理。 备份类型：`config` 配置、`skill` 删除文件、`hub` 托管完整快照、`mcp` MCP 配置。 恢复不会覆盖同名文件或外部修改；使用中的完整快照不可删、不能单独恢复。
 损坏配置时只允许显式 `backups list config` / `backups restore config`，不放行其他命令。
 
 ## 应用修改与删除
@@ -162,12 +141,8 @@ skill-studio projects delete app --yes       # 只移除记录，不动项目文
 skill-studio mcp remove context7 --yes        # 移出 Hub 并还原原配置
 ```
 
-正在使用的分组/项目先停用再删。收录/托管/删除/移除/恢复或管理策略变更需 `--yes`，
-**先向用户说明影响并取得确认**；不要把 `--yes` 当成用户授权。
-「原样留下」表示 Studio 不覆盖外部修改，需人工核对。
+正在使用的分组/项目先停用再删。收录/托管/删除/移除/恢复或管理策略变更需 `--yes`， **先向用户说明影响并取得确认**；不要把 `--yes` 当成用户授权。 「原样留下」表示 Studio 不覆盖外部修改，需人工核对。
 
 ## 退出码与重试
 
-0 成功；1 操作失败；2 用法错误；3 找不到或有歧义；4 写入冲突，重试；5 需要 `--yes`。
-`changed: false` 但 `pending: true`：记录没变，部署还欠着，运行 `apply`。
-完整参数见 `references/commands.md`（由 `skill-studio docs` 生成）。
+0 成功；1 操作失败；2 用法错误；3 找不到或有歧义；4 写入冲突，重试；5 需要 `--yes`。 `changed: false` 但 `pending: true`：记录没变，部署还欠着，运行 `apply`。 完整参数见 `references/commands.md`（由 `skill-studio docs` 生成）。
