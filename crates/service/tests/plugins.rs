@@ -171,7 +171,7 @@ fn plugin_writes_are_opt_in_and_confirmation_is_enforced() {
         .unwrap_err()
         .contains("未开启"));
     fixture.manage();
-    let mut input = PluginOperation {
+    let input = PluginOperation {
         action: PluginAction::Disable,
         agent_id: "pi".into(),
         plugin_id: Some(plugin.id),
@@ -185,8 +185,11 @@ fn plugin_writes_are_opt_in_and_confirmation_is_enforced() {
         .contains("确认"));
     #[cfg(unix)]
     {
-        input.confirmed = true;
-        assert!(plugins::plugin_operation(&fixture.state, input).is_ok());
+        let confirmed = PluginOperation {
+            confirmed: true,
+            ..input
+        };
+        assert!(plugins::plugin_operation(&fixture.state, confirmed).is_ok());
         assert_ne!(fs::read_to_string(&path).unwrap(), before);
     }
     #[cfg(not(unix))]
